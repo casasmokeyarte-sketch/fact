@@ -1,5 +1,5 @@
 ﻿import React, { useState } from 'react';
-import { printInvoiceDocument } from '../lib/printInvoice';
+import { printInvoiceDocument } from '../lib/printInvoice.js';
 
 export function HistorialModule({ sales, isAdmin, onDeleteInvoice, onLog }) {
     const [searchTerm, setSearchTerm] = useState('');

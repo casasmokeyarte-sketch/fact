@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { CLIENT_OCASIONAL, PAYMENT_MODES } from '../constants';
-import { printInvoiceDocument } from '../lib/printInvoice';
+import { printInvoiceDocument } from '../lib/printInvoice.js';
 
 export function PaymentSummary({
   subtotal,
