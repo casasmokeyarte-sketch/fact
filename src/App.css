@@ -1,0 +1,44 @@
+@media print {
+    body * {
+        visibility: hidden;
+    }
+
+    .app-container,
+    .app-container * {
+        visibility: hidden;
+    }
+
+    /* Show only a specific receipt if we had one, for now narrow layout */
+    .left-column,
+    .right-column,
+    header,
+    nav,
+    .btn,
+    .input-group,
+    .card h3,
+    .card h2 {
+        display: none !important;
+    }
+
+    .card {
+        visibility: visible;
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 58mm !important;
+        padding: 0 !important;
+        border: none !important;
+        box-shadow: none !important;
+    }
+
+    .card table {
+        font-size: 8pt;
+        width: 58mm !important;
+    }
+
+    .card * {
+        visibility: visible;
+        color: black !important;
+        background: transparent !important;
+    }
+}
