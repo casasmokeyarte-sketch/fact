@@ -1435,7 +1435,6 @@ function App() {
             <h1 style={{ margin: 0, fontSize: '2rem', color: '#1e293b' }}>Sistema de Facturacion Pro</h1>
             <div style={{ color: '#64748b', margin: '0.5rem 0 0', display: 'flex', alignItems: 'center', gap: '1rem' }}>
               {currentUser?.role || 'Usuario'}: <strong>{currentUser?.name || 'Sistema'}</strong> |
-              <span>{headerNow.toLocaleString('es-CO')}</span> |
               <ShiftManager
                 shift={shift}
                 onStartShift={onStartShift}
