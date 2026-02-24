@@ -1244,7 +1244,7 @@ function App() {
     const allowedMenuItems = currentRole === 'Administrador'
       ? menuItems
       : isCashierRole
-        ? menuItems.filter((item) => ['facturacion', 'inventario', 'codigos', 'clientes', 'cartera', 'historial', 'caja'].includes(item.tab))
+        ? menuItems.filter((item) => ['facturacion', 'inventario', 'codigos', 'clientes', 'cartera', 'historial', 'caja', 'trueque', 'gastos', 'notas'].includes(item.tab))
         : menuItems.filter(item => {
             const permission = currentUser?.permissions?.[item.tab];
             // Si el permiso es true (boolean) o un objeto (con sub-permisos), mostrar
