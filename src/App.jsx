@@ -143,7 +143,9 @@ const QUICK_LOOKUP_HISTORY_STORAGE_KEY = 'fact_quick_lookup_history';
 const PRODUCTS_CACHE_STORAGE_KEY = 'fact_products_cache';
 const CLIENTS_CACHE_STORAGE_KEY = 'fact_clients_cache';
 const INVOICE_SEQUENCE_STORAGE_KEY = 'fact_invoice_sequence';
+const PAYMENT_METHODS_STORAGE_KEY = 'fact_payment_methods';
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const DEFAULT_PAYMENT_METHODS = ['Efectivo', 'Credito', 'Transferencia', 'Tarjeta'];
 
 const isUuid = (value) => typeof value === 'string' && UUID_REGEX.test(value);
 
@@ -245,7 +247,21 @@ function App() {
   const [selectedClient, setSelectedClient] = useState(null); // Full client object if registered
   const [items, setItems] = useState([]);
   const [deliveryFee, setDeliveryFee] = useState(0);
-  const [paymentMethods, setPaymentMethods] = useState(['Efectivo', 'Credito', 'Transferencia', 'Tarjeta']);
+  const [paymentMethods, setPaymentMethods] = useState(() => {
+    try {
+      const raw = localStorage.getItem(PAYMENT_METHODS_STORAGE_KEY);
+      if (!raw) return [...DEFAULT_PAYMENT_METHODS];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [...DEFAULT_PAYMENT_METHODS];
+      const normalized = parsed
+        .map((m) => String(m || '').trim())
+        .filter(Boolean);
+      if (normalized.length === 0) return [...DEFAULT_PAYMENT_METHODS];
+      return Array.from(new Set(normalized));
+    } catch {
+      return [...DEFAULT_PAYMENT_METHODS];
+    }
+  });
   const [paymentMode, setPaymentMode] = useState('Efectivo');
   const [paymentRef, setPaymentRef] = useState('');
   const [quickScanCode, setQuickScanCode] = useState('');
@@ -660,6 +676,16 @@ function App() {
     if (!currentUser?.id) return;
     localStorage.setItem(getClientsCacheStorageKey(currentUser.id), JSON.stringify(dedupeClients(registeredClients || [])));
   }, [registeredClients, currentUser?.id]);
+
+  useEffect(() => {
+    const normalized = Array.from(
+      new Set((paymentMethods || []).map((m) => String(m || '').trim()).filter(Boolean))
+    );
+    localStorage.setItem(
+      PAYMENT_METHODS_STORAGE_KEY,
+      JSON.stringify(normalized.length > 0 ? normalized : DEFAULT_PAYMENT_METHODS)
+    );
+  }, [paymentMethods]);
 
   useEffect(() => {
     if (activeTab !== 'home' || !shift) return;
@@ -1581,6 +1607,7 @@ function App() {
             <CarteraModule
               currentUser={currentUser}
               clients={registeredClients}
+              paymentMethods={paymentMethods}
               cartera={cartera}
               setCartera={async (newCartera) => {
                 setCartera(newCartera);

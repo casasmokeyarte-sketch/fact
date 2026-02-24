@@ -1,16 +1,30 @@
 import React, { useState } from 'react';
 import { COMPANY_INFO } from '../constants';
 
-export function CarteraModule({ currentUser, clients = [], cartera, setCartera }) {
+export function CarteraModule({ currentUser, clients = [], paymentMethods = [], cartera, setCartera }) {
     const [abonoAmounts, setAbonoAmounts] = useState({});
+    const [abonoPaymentMethods, setAbonoPaymentMethods] = useState({});
+    const [abonoReferences, setAbonoReferences] = useState({});
     
     // Check if user is Cajero
     const isCajero = currentUser?.role === 'Cajero';
-    const canCancel = !isCajero && (currentUser?.permissions?.cartera?.cancelar !== false);
-    const canNotify = !isCajero && (currentUser?.permissions?.cartera?.notificar !== false);
+    const carteraPermission = currentUser?.permissions?.cartera;
+    const canCancel = !isCajero && (typeof carteraPermission === 'object' ? carteraPermission?.cancelar !== false : carteraPermission !== false);
+    const canNotify = typeof carteraPermission === 'object' ? carteraPermission?.notificar !== false : true;
+    const availablePaymentMethods = Array.isArray(paymentMethods) && paymentMethods.length > 0
+        ? paymentMethods
+        : ['Efectivo', 'Transferencia', 'Tarjeta'];
 
     const handleAbonoChange = (id, amount) => {
         setAbonoAmounts({ ...abonoAmounts, [id]: amount });
+    };
+
+    const handleAbonoMethodChange = (id, method) => {
+        setAbonoPaymentMethods({ ...abonoPaymentMethods, [id]: method });
+    };
+
+    const handleAbonoReferenceChange = (id, reference) => {
+        setAbonoReferences({ ...abonoReferences, [id]: reference });
     };
 
     const isClientBlocked = (invoice) => {
@@ -21,7 +35,58 @@ export function CarteraModule({ currentUser, clients = [], cartera, setCartera }
         return !!match?.blocked;
     };
 
-    const applyAbono = (id) => {
+    const printAbonoSupport = (inv, abono, nextBalance) => {
+        const popup = window.open('', '_blank', 'width=840,height=700');
+        if (!popup) return;
+
+        popup.document.open();
+        popup.document.write(`
+            <html>
+            <head>
+                <title>Comprobante Abono ${String(inv?.id || '')}</title>
+                <style>
+                    body { font-family: Arial, sans-serif; color: #0f172a; padding: 20px; }
+                    .card { border: 1px solid #cbd5e1; border-radius: 8px; padding: 16px; max-width: 760px; margin: 0 auto; }
+                    h2 { margin: 0 0 8px; }
+                    p { margin: 6px 0; }
+                    .muted { color: #64748b; }
+                    .total { font-size: 20px; font-weight: bold; margin-top: 10px; }
+                    .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+                    @media print {
+                        body { padding: 0; }
+                        .card { border: none; }
+                    }
+                </style>
+            </head>
+            <body>
+                <div class="card">
+                    <h2>${COMPANY_INFO.name}</h2>
+                    <p class="muted">Comprobante de Abono de Cartera</p>
+                    <hr />
+                    <p><strong>Factura:</strong> ${String(inv?.id || 'N/A')}</p>
+                    <p><strong>Cliente:</strong> ${String(inv?.clientName || 'N/A')}</p>
+                    <p><strong>Fecha:</strong> ${new Date(abono.date).toLocaleString()}</p>
+                    <p><strong>Metodo:</strong> ${String(abono.method || 'N/A')}</p>
+                    <p><strong>Referencia:</strong> ${String(abono.reference || 'N/A')}</p>
+                    <p><strong>Registrado por:</strong> ${String(abono.user || 'Sistema')}</p>
+                    <div class="meta">
+                        <p><strong>Saldo anterior:</strong> $${Number(inv?.balance || 0).toLocaleString()}</p>
+                        <p><strong>Abono:</strong> $${Number(abono.amount || 0).toLocaleString()}</p>
+                    </div>
+                    <p class="total">Saldo nuevo: $${Number(nextBalance || 0).toLocaleString()}</p>
+                    <hr />
+                    <p class="muted">Soporte generado por el sistema para control interno.</p>
+                </div>
+                <script>
+                    window.onload = function() { window.print(); }
+                </script>
+            </body>
+            </html>
+        `);
+        popup.document.close();
+    };
+
+    const applyAbono = async (id) => {
         const invoice = cartera.find((inv) => inv.id === id);
         if (invoice && isClientBlocked(invoice)) {
             alert("Este cliente esta bloqueado. No se permiten abonos hasta desbloquearlo.");
@@ -34,13 +99,28 @@ export function CarteraModule({ currentUser, clients = [], cartera, setCartera }
             alert("El abono no puede ser mayor al saldo pendiente.");
             return;
         }
+        const selectedMethod = String(abonoPaymentMethods[id] || availablePaymentMethods[0] || 'Efectivo').trim();
+        const reference = String(abonoReferences[id] || '').trim();
+        const requiresReference = !['efectivo', 'credito'].includes(selectedMethod.toLowerCase());
 
-        setCartera(cartera.map(inv => {
+        if (!selectedMethod) {
+            alert("Seleccione el metodo del abono.");
+            return;
+        }
+
+        if (requiresReference && !reference) {
+            alert("Ingrese referencia para este metodo de pago.");
+            return;
+        }
+
+        const updatedCartera = cartera.map(inv => {
             if (inv.id === id) {
                 const newBalance = inv.balance - amount;
                 const newAbono = {
                     id: Date.now(),
                     amount,
+                    method: selectedMethod,
+                    reference: reference || null,
                     date: new Date().toISOString(),
                     user: currentUser?.name || currentUser?.email || "Sistema"
                 };
@@ -52,8 +132,19 @@ export function CarteraModule({ currentUser, clients = [], cartera, setCartera }
                 };
             }
             return inv;
-        }));
+        });
+
+        await Promise.resolve(setCartera(updatedCartera));
+
+        const updatedInvoice = updatedCartera.find((inv) => inv.id === id);
+        const latestAbono = updatedInvoice?.abonos?.[0];
+        if (updatedInvoice && latestAbono) {
+            printAbonoSupport(invoice, latestAbono, updatedInvoice.balance);
+        }
+
         setAbonoAmounts({ ...abonoAmounts, [id]: '' });
+        setAbonoPaymentMethods({ ...abonoPaymentMethods, [id]: availablePaymentMethods[0] || 'Efectivo' });
+        setAbonoReferences({ ...abonoReferences, [id]: '' });
     };
 
     const cancelInvoice = (id) => {
@@ -148,6 +239,30 @@ export function CarteraModule({ currentUser, clients = [], cartera, setCartera }
                                                 disabled={blockedClient}
                                             />
                                         </div>
+                                        <div className="input-group" style={{ marginBottom: 0, minWidth: '180px' }}>
+                                            <label className="input-label">Metodo</label>
+                                            <select
+                                                className="input-field"
+                                                value={abonoPaymentMethods[inv.id] || availablePaymentMethods[0] || 'Efectivo'}
+                                                onChange={(e) => handleAbonoMethodChange(inv.id, e.target.value)}
+                                                disabled={blockedClient}
+                                            >
+                                                {availablePaymentMethods.map((method) => (
+                                                    <option key={method} value={method}>{method}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                        <div className="input-group" style={{ marginBottom: 0, minWidth: '220px' }}>
+                                            <label className="input-label">Referencia (opcional)</label>
+                                            <input
+                                                type="text"
+                                                className="input-field"
+                                                value={abonoReferences[inv.id] || ''}
+                                                onChange={(e) => handleAbonoReferenceChange(inv.id, e.target.value)}
+                                                placeholder="Comprobante / Nro"
+                                                disabled={blockedClient}
+                                            />
+                                        </div>
                                         <button className="btn btn-primary" onClick={() => applyAbono(inv.id)} disabled={blockedClient}>Abonar</button>
                                         {canCancel && <button className="btn btn-danger" onClick={() => cancelInvoice(inv.id)} disabled={blockedClient}>Cancelar Deuda</button>}
                                     </div>
@@ -159,7 +274,7 @@ export function CarteraModule({ currentUser, clients = [], cartera, setCartera }
                                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', fontSize: '0.85rem', color: '#475569' }}>
                                             {(inv.abonos || []).slice(0, 5).map((abono) => (
                                                 <div key={abono.id}>
-                                                    {new Date(abono.date).toLocaleString()} - ${Number(abono.amount || 0).toLocaleString()} - {abono.user || 'Sistema'}
+                                                    {new Date(abono.date).toLocaleString()} - ${Number(abono.amount || 0).toLocaleString()} - {abono.method || 'Metodo N/A'}{abono.reference ? ` (${abono.reference})` : ''} - {abono.user || 'Sistema'}
                                                 </div>
                                             ))}
                                         </div>
