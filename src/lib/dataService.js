@@ -30,6 +30,11 @@ function isClientDocumentUniqueError(error) {
   return String(error?.code || '') === '23505' && String(error?.message || '').includes('clients_document_key');
 }
 
+function isForeignKeyConstraintError(error) {
+  const blob = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`.toLowerCase();
+  return String(error?.code || '') === '23503' || blob.includes('foreign key');
+}
+
 function isNetworkFetchError(error) {
   const msg = String(error?.message || error || '').toLowerCase();
   return msg.includes('failed to fetch') || msg.includes('networkerror') || msg.includes('fetch');
@@ -201,7 +206,7 @@ export const dataService = {
     if (isUuid(id)) {
       const { error } = await withRetry(() => supabase.from('products').delete().eq('id', id));
       if (error) {
-        if (String(error?.code || '') === '23503') {
+        if (isForeignKeyConstraintError(error)) {
           const { error: archiveError } = await withRetry(() =>
             supabase.from('products').update({ status: 'inactivo' }).eq('id', id)
           );
@@ -216,7 +221,7 @@ export const dataService = {
     if (barcode) {
       const { error } = await withRetry(() => supabase.from('products').delete().eq('barcode', barcode));
       if (error) {
-        if (String(error?.code || '') === '23503') {
+        if (isForeignKeyConstraintError(error)) {
           const { error: archiveError } = await withRetry(() =>
             supabase.from('products').update({ status: 'inactivo' }).eq('barcode', barcode)
           );

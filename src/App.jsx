@@ -1458,7 +1458,7 @@ function App() {
                 lineHeight: 1.2
               }}
             >
-              <strong>BUILD 7e0ecce</strong>
+              <strong></strong>
               <span>{headerNow.toLocaleString('es-CO')}</span>
             </div>
             {activeTab !== 'home' && (
@@ -1756,7 +1756,12 @@ function App() {
                 } catch (e) {
                   console.error("Error eliminando producto en Supabase:", e);
                   const message = e?.message || 'Error desconocido';
-                  alert(`No se pudo eliminar el producto en la nube (conexion inestable).\n\nDetalle: ${message}`);
+                  const lower = String(message).toLowerCase();
+                  if (lower.includes('foreign key') || lower.includes('invoice_items_product_id_fkey')) {
+                    alert(`No se puede eliminar este producto porque ya tiene historial de facturas.\n\nSe recomienda dejarlo inactivo en lugar de borrarlo.`);
+                  } else {
+                    alert(`No se pudo eliminar el producto en la nube.\n\nDetalle: ${message}`);
+                  }
                   throw e;
                 } finally {
                   pendingProductsSyncRef.current = false;
