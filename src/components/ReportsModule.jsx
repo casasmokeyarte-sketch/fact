@@ -13,7 +13,8 @@ export function ReportsModule({
     purchases,
     cartera,
     users = [],
-    userCashBalances = {}
+    userCashBalances = {},
+    onLog
 }) {
     const [reportType, setReportType] = useState('ventas');
     const [filter, setFilter] = useState('');
@@ -71,10 +72,10 @@ export function ReportsModule({
             case 'bitacora':
                 return (
                     <table>
-                        <thead><tr><th>Fecha</th><th>Accion</th><th>Detalle</th></tr></thead>
+                        <thead><tr><th>Fecha</th><th>Usuario</th><th>Accion</th><th>Detalle</th></tr></thead>
                         <tbody>
                             {(logs || []).filter((l) => String(l?.details || '').toLowerCase().includes(f)).map((l, i) => (
-                                <tr key={i}><td>{new Date(l.timestamp).toLocaleString()}</td><td>{l.action}</td><td>{l.details}</td></tr>
+                                <tr key={i}><td>{new Date(l.timestamp).toLocaleString()}</td><td>{l.user_name || l.user || 'Sistema'}</td><td>{l.action}</td><td>{l.details}</td></tr>
                             ))}
                         </tbody>
                     </table>
@@ -473,7 +474,19 @@ export function ReportsModule({
                 <h2>Modulo de Reportes</h2>
                 <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                     {isCajero && <span className="alert alert-info" style={{ padding: '0.3rem 0.6rem', fontSize: '0.85em' }}>Solo Impresion</span>}
-                    <button className="btn btn-primary" onClick={() => window.print()}>Imprimir Reporte</button>
+                    <button
+                        className="btn btn-primary"
+                        onClick={() => {
+                            onLog?.({
+                                module: 'Reportes',
+                                action: 'Imprimir Reporte',
+                                details: `Tipo: ${reportType}`
+                            });
+                            window.print();
+                        }}
+                    >
+                        Imprimir Reporte
+                    </button>
                 </div>
             </div>
             <div className="card">

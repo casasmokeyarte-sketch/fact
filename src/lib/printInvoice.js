@@ -18,6 +18,13 @@ export function printInvoiceDocument(invoice, mode = '58mm') {
     invoice?.id ||
     'N/A'
   );
+  const invoiceUser = String(
+    invoice?.user_name ||
+    invoice?.user ||
+    invoice?.mixedDetails?.user_name ||
+    invoice?.mixedDetails?.user ||
+    'Sistema'
+  );
   const logoUrl = new URL(COMPANY_INFO.logo, window.location.origin).href;
   const itemsRows = (invoice?.items || [])
     .map((it) => `
@@ -92,6 +99,7 @@ export function printInvoiceDocument(invoice, mode = '58mm') {
               <div><strong>Cliente:</strong> ${escapeHtml(invoice?.clientName || 'Cliente Ocasional')}</div>
               <div><strong>Documento:</strong> ${escapeHtml(invoice?.clientDoc || 'N/A')}</div>
               <div><strong>Pago:</strong> ${escapeHtml(invoice?.paymentMode || 'N/A')}</div>
+              <div><strong>Atendio:</strong> ${escapeHtml(invoiceUser)}</div>
             </div>
           </div>
           <table>

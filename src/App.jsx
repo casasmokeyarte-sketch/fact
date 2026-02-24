@@ -811,11 +811,18 @@ function App() {
   };
 
   const addLog = async (logEntry) => {
+    const actorName = currentUser?.name || currentUser?.email || 'Sistema';
+    const baseDetails = String(logEntry?.details || '').trim();
+    const detailsWithActor = /usuario\s*:/i.test(baseDetails)
+      ? baseDetails
+      : [baseDetails, `Usuario: ${actorName}`].filter(Boolean).join(' | ');
+
     const fullLog = {
       ...logEntry,
       user_id: currentUser?.id || null,
       timestamp: new Date().toISOString(),
-      user_name: currentUser?.name || 'Sistema'
+      user_name: actorName,
+      details: detailsWithActor
     };
     setAuditLogs(prev => [fullLog, ...prev]);
     if (!currentUser?.id) return;
@@ -1109,7 +1116,12 @@ function App() {
       deliveryFee,
       total: finalTotal,
       paymentMode: finalMode,
-      mixedDetails: { ...(mixedData || {}), invoiceCode }, // { cash, credit, invoiceCode }
+      mixedDetails: {
+        ...(mixedData || {}),
+        invoiceCode,
+        user_name: currentUser?.name || currentUser?.email || 'Sistema',
+        user_id: currentUser?.id || null
+      }, // { cash, credit, invoiceCode, user_name }
       date: new Date().toISOString(),
       dueDate: dueDateObj.toISOString(),
       status: (paymentMode === PAYMENT_MODES.CREDITO || mixedData?.credit > 0) ? 'pendiente' : 'pagado',
@@ -1872,6 +1884,7 @@ function App() {
               cartera={cartera}
               users={users}
               userCashBalances={userCashBalances}
+              onLog={addLog}
             />
           )}
           {activeTab === 'bitacora' && <AuditLog logs={auditLogs} />}
