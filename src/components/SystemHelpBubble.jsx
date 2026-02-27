@@ -195,6 +195,8 @@ export function SystemHelpBubble({ currentUser, onLog }) {
   const latestAssistantQueryRef = useRef('');
   const isAskingRef = useRef(false);
   const submitAssistantQuestionRef = useRef(null);
+  const autoSendTimerRef = useRef(null);
+  const shouldResumeListeningAfterReplyRef = useRef(false);
   const [chatMessages, setChatMessages] = useState([
     {
       id: 'welcome',
@@ -245,6 +247,12 @@ export function SystemHelpBubble({ currentUser, onLog }) {
     isAskingRef.current = isAsking;
   }, [isAsking]);
 
+  const clearAutoSendTimer = () => {
+    if (!autoSendTimerRef.current) return;
+    window.clearTimeout(autoSendTimerRef.current);
+    autoSendTimerRef.current = null;
+  };
+
   useEffect(() => {
     const SpeechRecognitionApi = window.SpeechRecognition || window.webkitSpeechRecognition;
     const speechSynthesisApi = window?.speechSynthesis;
@@ -285,10 +293,6 @@ export function SystemHelpBubble({ currentUser, onLog }) {
     };
     recognition.onend = () => {
       setIsListening(false);
-      const pendingQuestion = String(latestAssistantQueryRef.current || '').trim();
-      if (keepListeningRef.current && handsFreeAutoSendRef.current && pendingQuestion && !isAskingRef.current) {
-        submitAssistantQuestionRef.current?.(pendingQuestion);
-      }
       if (keepListeningRef.current && continuousListeningRef.current && !isAskingRef.current) {
         window.setTimeout(() => {
           try {
@@ -320,11 +324,20 @@ export function SystemHelpBubble({ currentUser, onLog }) {
         latestAssistantQueryRef.current = merged;
         return merged;
       });
+      if (keepListeningRef.current && handsFreeAutoSendRef.current && !isAskingRef.current) {
+        clearAutoSendTimer();
+        autoSendTimerRef.current = window.setTimeout(() => {
+          const pendingQuestion = String(latestAssistantQueryRef.current || '').trim();
+          if (!pendingQuestion || isAskingRef.current) return;
+          submitAssistantQuestionRef.current?.(pendingQuestion);
+        }, 900);
+      }
     };
 
     recognitionRef.current = recognition;
     return () => {
       keepListeningRef.current = false;
+      clearAutoSendTimer();
       recognition.stop();
       recognitionRef.current = null;
       if (speechSynthesisApi) speechSynthesisApi.cancel();
@@ -332,17 +345,21 @@ export function SystemHelpBubble({ currentUser, onLog }) {
     };
   }, []);
 
-  const speakReply = (text) => {
+  const speakReply = async (text) => {
     if (!voiceReplyEnabled || !window?.speechSynthesis) return;
     const plainText = String(text || '').replace(/\s+/g, ' ').trim();
     if (!plainText) return;
-    const utterance = new SpeechSynthesisUtterance(plainText);
-    const chosenVoice = availableVoices.find((voice) => voice.name === selectedVoice);
-    utterance.voice = chosenVoice || null;
-    utterance.lang = chosenVoice?.lang || 'es-CO';
-    utterance.rate = speechRate;
-    window.speechSynthesis.cancel();
-    window.speechSynthesis.speak(utterance);
+    await new Promise((resolve) => {
+      const utterance = new SpeechSynthesisUtterance(plainText);
+      const chosenVoice = availableVoices.find((voice) => voice.name === selectedVoice);
+      utterance.voice = chosenVoice || null;
+      utterance.lang = chosenVoice?.lang || 'es-CO';
+      utterance.rate = speechRate;
+      utterance.onend = () => resolve();
+      utterance.onerror = () => resolve();
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(utterance);
+    });
   };
 
   const toggleListening = () => {
@@ -367,6 +384,18 @@ export function SystemHelpBubble({ currentUser, onLog }) {
   const submitAssistantQuestion = async (rawQuestion) => {
     const userQuestion = String(rawQuestion || '').trim();
     if (!userQuestion || isAskingRef.current) return;
+    clearAutoSendTimer();
+
+    if (keepListeningRef.current && handsFreeAutoSendRef.current && recognitionRef.current) {
+      shouldResumeListeningAfterReplyRef.current = true;
+      try {
+        recognitionRef.current.stop();
+      } catch {
+        // Ignore stop errors when recognition is not active.
+      }
+    } else {
+      shouldResumeListeningAfterReplyRef.current = false;
+    }
 
     const stamp = Date.now();
     setIsAsking(true);
@@ -423,7 +452,7 @@ export function SystemHelpBubble({ currentUser, onLog }) {
       ...prev,
       { id: `a-${stamp}`, role: 'assistant', text: assistantReply }
     ].slice(-10)));
-    speakReply(assistantReply);
+    await speakReply(assistantReply);
     onLog?.({
       module: 'Asistente Empresa',
       action: 'Respuesta',
@@ -431,7 +460,13 @@ export function SystemHelpBubble({ currentUser, onLog }) {
     });
     setIsAsking(false);
     isAskingRef.current = false;
-    if (keepListeningRef.current && continuousListeningRef.current && recognitionRef.current) {
+    if (
+      shouldResumeListeningAfterReplyRef.current &&
+      keepListeningRef.current &&
+      continuousListeningRef.current &&
+      recognitionRef.current
+    ) {
+      shouldResumeListeningAfterReplyRef.current = false;
       window.setTimeout(() => {
         try {
           recognitionRef.current.start();
@@ -530,7 +565,7 @@ export function SystemHelpBubble({ currentUser, onLog }) {
               x
             </button>
           </div>
-          <p className="system-help-chat-hint">Consulta solo temas del sistema o de CASA SMOKE.</p>
+          <p className="system-help-chat-hint">Consulta temas del sistema o de CASA SMOKE. Con Manos libres ON, se envia al pausar tu voz.</p>
           <div className="system-help-chat-toolbar">
             <button
               type="button"
