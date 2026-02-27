@@ -50,11 +50,14 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
     const handleLevelChange = (levelKey) => {
         const safeLevel = resolveCreditLevel(levelKey);
         const levelData = CREDIT_LEVELS[safeLevel] || CREDIT_LEVELS.ESTANDAR;
+        const resolvedLimit = safeLevel === 'CREDITO_SIN_DESCUENTO'
+            ? Number(newClient.creditLimit ?? 0)
+            : levelData.maxInvoice;
         setNewClient({
             ...newClient,
             creditLevel: safeLevel,
             discount: levelData.discount,
-            creditLimit: levelData.maxInvoice
+            creditLimit: resolvedLimit
         });
     };
 
@@ -72,6 +75,10 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
             approvedTerm: Number(newClient.approvedTerm ?? 30),
             discount: Number(newClient.discount ?? 0),
         };
+
+        if (normalizedClient.creditLevel === 'CREDITO_SIN_DESCUENTO' && normalizedClient.creditLimit <= 0) {
+            return alert("Para 'Linea de Credito (Sin descuento)' debe definir un cupo mayor a 0.");
+        }
 
         if (isEditing) {
             const matchDoc = editingDocument || normalizedClient.document;
@@ -315,7 +322,9 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
                             >
                                 {Object.entries(CREDIT_LEVELS).map(([key, data]) => (
                                     <option key={key} value={key}>
-                                        {key === 'CREDITO_SIN_DESCUENTO' ? 'Linea de Credito (Sin descuento)' : data.label} (Max: ${data.maxInvoice.toLocaleString()})
+                                        {key === 'CREDITO_SIN_DESCUENTO'
+                                            ? 'Linea de Credito (Sin descuento) - Cupo manual obligatorio'
+                                            : `${data.label} (Max: $${data.maxInvoice.toLocaleString()})`}
                                     </option>
                                 ))}
                             </select>

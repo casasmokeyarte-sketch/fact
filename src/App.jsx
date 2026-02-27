@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import './design-system.css'
 import { CLIENT_OCASIONAL, PAYMENT_MODES, COMPANY_INFO, CREDIT_LEVELS } from './constants'
 import { AuthPage } from './components/AuthPage'
@@ -147,6 +147,9 @@ const INVOICE_SEQUENCE_STORAGE_KEY = 'fact_invoice_sequence';
 const PAYMENT_METHODS_STORAGE_KEY = 'fact_payment_methods';
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DEFAULT_PAYMENT_METHODS = ['Efectivo', 'Credito', 'Transferencia', 'Tarjeta'];
+const REMOTE_AUTH_REQUEST_ACTION = 'Solicitud Autorizacion Remota';
+const REMOTE_AUTH_RESPONSE_ACTION = 'Respuesta Autorizacion Remota';
+const SHIFT_BOARD_ACTION = 'Pizarron Turnos';
 
 const isUuid = (value) => typeof value === 'string' && UUID_REGEX.test(value);
 
@@ -267,6 +270,18 @@ const dedupeProducts = (rows) => {
   ]));
 };
 
+const parseStructuredAuditDetails = (details) => {
+  const raw = String(details || '').trim();
+  if (!raw) return null;
+  const withoutActor = raw.replace(/\s*\|\s*Usuario:\s*.*$/i, '').trim();
+  try {
+    const parsed = JSON.parse(withoutActor);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
 function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
@@ -312,6 +327,9 @@ function App() {
   const [quickLookupResult, setQuickLookupResult] = useState(null);
   const [quickLookupHistory, setQuickLookupHistory] = useState([]);
   const [quickTrayOpen, setQuickTrayOpen] = useState(true);
+  const [remoteAuthPanelOpen, setRemoteAuthPanelOpen] = useState(false);
+  const [shiftBoardText, setShiftBoardText] = useState('');
+  const [shiftBoardReplyDrafts, setShiftBoardReplyDrafts] = useState({});
   const quickScanInputRef = useRef(null);
   const quickScanBufferRef = useRef('');
   const quickScanLastKeyAtRef = useRef(0);
@@ -877,6 +895,212 @@ function App() {
     }
   };
 
+  const canModerateRemoteAuth = ['Administrador', 'Supervisor'].includes(normalizeRole(currentUser?.role));
+
+  const remoteAuthState = useMemo(() => {
+    const requestsById = new Map();
+    const responsesByRequestId = new Map();
+
+    (auditLogs || []).forEach((log) => {
+      const payload = parseStructuredAuditDetails(log?.details);
+      if (!payload) return;
+
+      if (log?.action === REMOTE_AUTH_REQUEST_ACTION && payload?.kind === 'REMOTE_AUTH_REQUEST' && payload?.requestId) {
+        requestsById.set(payload.requestId, {
+          ...payload,
+          createdAt: log?.timestamp || new Date().toISOString(),
+          logId: log?.id || null,
+        });
+      }
+
+      if (log?.action === REMOTE_AUTH_RESPONSE_ACTION && payload?.kind === 'REMOTE_AUTH_RESPONSE' && payload?.requestId) {
+        const previous = responsesByRequestId.get(payload.requestId);
+        const prevTime = new Date(previous?.respondedAt || 0).getTime();
+        const currTime = new Date(payload?.respondedAt || log?.timestamp || 0).getTime();
+        if (!previous || currTime >= prevTime) {
+          responsesByRequestId.set(payload.requestId, {
+            ...payload,
+            respondedAt: payload?.respondedAt || log?.timestamp || new Date().toISOString(),
+          });
+        }
+      }
+    });
+
+    const requests = Array.from(requestsById.values())
+      .map((req) => {
+        const response = responsesByRequestId.get(req.requestId) || null;
+        const status = response?.decision === 'APPROVED'
+          ? 'APPROVED'
+          : response?.decision === 'REJECTED'
+            ? 'REJECTED'
+            : 'PENDING';
+        return { ...req, response, status };
+      })
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+    const decisionByRequestId = requests.reduce((acc, req) => {
+      if (req.status !== 'PENDING') {
+        acc[req.requestId] = req.status;
+      }
+      return acc;
+    }, {});
+
+    return { requests, decisionByRequestId };
+  }, [auditLogs]);
+
+  const pendingRemoteAuthRequests = useMemo(
+    () => (remoteAuthState.requests || []).filter((r) => r.status === 'PENDING'),
+    [remoteAuthState.requests]
+  );
+
+  const createRemoteAuthRequest = async (payload) => {
+    const requestId = `AUTH-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+    const details = JSON.stringify({
+      kind: 'REMOTE_AUTH_REQUEST',
+      requestId,
+      requesterUserId: currentUser?.id || null,
+      requesterName: currentUser?.name || currentUser?.email || 'Cajero',
+      requestedAt: new Date().toISOString(),
+      ...payload,
+    });
+    await addLog({
+      module: 'Autorizaciones',
+      action: REMOTE_AUTH_REQUEST_ACTION,
+      details
+    });
+    return requestId;
+  };
+
+  const respondRemoteAuthRequest = async (request, decision) => {
+    const note = prompt(
+      decision === 'APPROVED'
+        ? 'Nota para aprobar (opcional):'
+        : 'Motivo de rechazo (opcional):'
+    ) || '';
+    const details = JSON.stringify({
+      kind: 'REMOTE_AUTH_RESPONSE',
+      requestId: request?.requestId,
+      requesterUserId: request?.requesterUserId || null,
+      requesterName: request?.requesterName || 'Usuario',
+      decision,
+      note: String(note || '').trim(),
+      respondedAt: new Date().toISOString(),
+      responderUserId: currentUser?.id || null,
+      responderName: currentUser?.name || currentUser?.email || 'Administrador',
+    });
+    await addLog({
+      module: 'Autorizaciones',
+      action: REMOTE_AUTH_RESPONSE_ACTION,
+      details
+    });
+  };
+
+  const shiftBoardNotes = useMemo(() => {
+    const notesById = new Map();
+    const repliesByNote = new Map();
+    const statusByNote = new Map();
+
+    (auditLogs || []).forEach((log) => {
+      if (log?.action !== SHIFT_BOARD_ACTION) return;
+      const payload = parseStructuredAuditDetails(log?.details);
+      if (!payload || !payload?.noteId) return;
+
+      if (payload.kind === 'SHIFT_BOARD_NOTE') {
+        notesById.set(payload.noteId, {
+          ...payload,
+          createdAt: payload?.createdAt || log?.timestamp || new Date().toISOString(),
+        });
+      }
+
+      if (payload.kind === 'SHIFT_BOARD_REPLY') {
+        const bucket = repliesByNote.get(payload.noteId) || [];
+        bucket.push({
+          ...payload,
+          createdAt: payload?.createdAt || log?.timestamp || new Date().toISOString(),
+        });
+        repliesByNote.set(payload.noteId, bucket);
+      }
+
+      if (payload.kind === 'SHIFT_BOARD_STATUS') {
+        statusByNote.set(payload.noteId, {
+          ...payload,
+          changedAt: payload?.changedAt || log?.timestamp || new Date().toISOString(),
+        });
+      }
+    });
+
+    return Array.from(notesById.values())
+      .map((note) => {
+        const status = statusByNote.get(note.noteId);
+        const replies = (repliesByNote.get(note.noteId) || [])
+          .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+        return {
+          ...note,
+          resolved: !!status?.resolved,
+          statusChangedBy: status?.changedByName || '',
+          statusChangedAt: status?.changedAt || '',
+          replies,
+          lastActivityAt: status?.changedAt || replies[replies.length - 1]?.createdAt || note.createdAt
+        };
+      })
+      .sort((a, b) => new Date(b.lastActivityAt).getTime() - new Date(a.lastActivityAt).getTime())
+      .slice(0, 20);
+  }, [auditLogs]);
+
+  const postShiftBoardNote = async () => {
+    const text = String(shiftBoardText || '').trim();
+    if (!text) return;
+    const noteId = `NOTE-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+
+    await addLog({
+      module: 'Comunicacion',
+      action: SHIFT_BOARD_ACTION,
+      details: JSON.stringify({
+        kind: 'SHIFT_BOARD_NOTE',
+        noteId,
+        text,
+        createdAt: new Date().toISOString(),
+        createdByUserId: currentUser?.id || null,
+        createdByName: currentUser?.name || currentUser?.email || 'Usuario'
+      })
+    });
+    setShiftBoardText('');
+  };
+
+  const postShiftBoardReply = async (noteId) => {
+    const text = String(shiftBoardReplyDrafts?.[noteId] || '').trim();
+    if (!text) return;
+    await addLog({
+      module: 'Comunicacion',
+      action: SHIFT_BOARD_ACTION,
+      details: JSON.stringify({
+        kind: 'SHIFT_BOARD_REPLY',
+        noteId,
+        replyId: `REPLY-${Date.now()}-${Math.floor(Math.random() * 100000)}`,
+        text,
+        createdAt: new Date().toISOString(),
+        createdByUserId: currentUser?.id || null,
+        createdByName: currentUser?.name || currentUser?.email || 'Usuario'
+      })
+    });
+    setShiftBoardReplyDrafts((prev) => ({ ...prev, [noteId]: '' }));
+  };
+
+  const toggleShiftBoardResolved = async (note) => {
+    await addLog({
+      module: 'Comunicacion',
+      action: SHIFT_BOARD_ACTION,
+      details: JSON.stringify({
+        kind: 'SHIFT_BOARD_STATUS',
+        noteId: note?.noteId,
+        resolved: !note?.resolved,
+        changedAt: new Date().toISOString(),
+        changedByUserId: currentUser?.id || null,
+        changedByName: currentUser?.name || currentUser?.email || 'Usuario'
+      })
+    });
+  };
+
   const handleLogin = (user, pass) => {
     const foundUser = users.find(u => u.username === user && u.password === pass);
     if (foundUser) {
@@ -1425,6 +1649,89 @@ function App() {
               ))}
             </div>
           )}
+
+          <div className="card" style={{ marginTop: '0.9rem', padding: '0.85rem', backgroundColor: '#f8fafc' }}>
+            <h4 style={{ margin: '0 0 0.45rem', fontSize: '1rem' }}>Pizarron de Turnos</h4>
+            <p style={{ margin: '0 0 0.6rem', fontSize: '0.82rem', color: '#64748b' }}>
+              Deje pendientes, novedades y respuestas para el siguiente turno.
+            </p>
+            <textarea
+              className="input-field"
+              rows={2}
+              value={shiftBoardText}
+              onChange={(e) => setShiftBoardText(e.target.value)}
+              placeholder="Ej: Cliente Pepe queda pendiente de pago. Cobrar cuando llegue."
+            />
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '0.45rem' }}>
+              <button className="btn btn-primary" onClick={postShiftBoardNote}>Publicar Nota</button>
+            </div>
+
+            <div style={{ marginTop: '0.75rem', maxHeight: '260px', overflowY: 'auto', display: 'grid', gap: '0.55rem' }}>
+              {shiftBoardNotes.length === 0 && (
+                <div style={{ fontSize: '0.84rem', color: '#64748b' }}>No hay notas en la pizarra.</div>
+              )}
+              {shiftBoardNotes.map((note) => (
+                <div
+                  key={note.noteId}
+                  style={{
+                    border: '1px solid #e2e8f0',
+                    borderRadius: '8px',
+                    padding: '0.55rem',
+                    backgroundColor: note.resolved ? '#f1f5f9' : '#ffffff'
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.4rem', marginBottom: '0.25rem' }}>
+                    <strong style={{ fontSize: '0.84rem' }}>{note.createdByName || 'Usuario'}</strong>
+                    <span style={{ fontSize: '0.74rem', color: '#64748b' }}>{new Date(note.createdAt).toLocaleString()}</span>
+                  </div>
+                  <div style={{ fontSize: '0.84rem', marginBottom: '0.35rem' }}>{note.text}</div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.4rem', marginBottom: '0.35rem' }}>
+                    <span
+                      style={{
+                        fontSize: '0.74rem',
+                        padding: '0.12rem 0.45rem',
+                        borderRadius: '999px',
+                        backgroundColor: note.resolved ? '#dcfce7' : '#fee2e2',
+                        color: note.resolved ? '#166534' : '#991b1b'
+                      }}
+                    >
+                      {note.resolved ? 'Resuelta' : 'Pendiente'}
+                    </span>
+                    <button
+                      className="btn"
+                      style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem' }}
+                      onClick={() => toggleShiftBoardResolved(note)}
+                    >
+                      {note.resolved ? 'Reabrir' : 'Marcar Resuelta'}
+                    </button>
+                  </div>
+
+                  {note.replies.length > 0 && (
+                    <div style={{ marginBottom: '0.35rem', display: 'grid', gap: '0.25rem' }}>
+                      {note.replies.map((reply) => (
+                        <div key={reply.replyId} style={{ fontSize: '0.78rem', backgroundColor: '#f8fafc', borderRadius: '6px', padding: '0.3rem 0.45rem' }}>
+                          <strong>{reply.createdByName || 'Usuario'}:</strong> {reply.text}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div style={{ display: 'flex', gap: '0.35rem' }}>
+                    <input
+                      className="input-field"
+                      style={{ fontSize: '0.8rem', padding: '0.35rem 0.45rem' }}
+                      value={shiftBoardReplyDrafts[note.noteId] || ''}
+                      onChange={(e) => setShiftBoardReplyDrafts((prev) => ({ ...prev, [note.noteId]: e.target.value }))}
+                      placeholder="Responder..."
+                    />
+                    <button className="btn" style={{ padding: '0.25rem 0.55rem', fontSize: '0.75rem' }} onClick={() => postShiftBoardReply(note.noteId)}>
+                      Responder
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
           </aside>
         </div>
 
@@ -1534,7 +1841,7 @@ function App() {
               />
             </div>
           </div>
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <div style={{ display: 'flex', gap: '0.5rem', position: 'relative' }}>
             <div
               style={{
                 display: 'flex',
@@ -1552,6 +1859,20 @@ function App() {
               <strong></strong>
               <span>{headerNow.toLocaleString('es-CO')}</span>
             </div>
+            {canModerateRemoteAuth && (
+              <button
+                className="btn"
+                onClick={() => setRemoteAuthPanelOpen((prev) => !prev)}
+                style={{
+                  backgroundColor: pendingRemoteAuthRequests.length > 0 ? '#fee2e2' : '#f1f5f9',
+                  color: pendingRemoteAuthRequests.length > 0 ? '#991b1b' : '#334155',
+                  border: pendingRemoteAuthRequests.length > 0 ? '1px solid #fecaca' : '1px solid #cbd5e1'
+                }}
+                title="Solicitudes remotas de autorizacion"
+              >
+                Autorizaciones {pendingRemoteAuthRequests.length > 0 ? `(${pendingRemoteAuthRequests.length})` : ''}
+              </button>
+            )}
             {activeTab !== 'home' && (
               <button
                 className="btn btn-primary"
@@ -1569,6 +1890,49 @@ function App() {
             >
               Salir
             </button>
+            {canModerateRemoteAuth && remoteAuthPanelOpen && (
+              <div
+                className="card"
+                style={{
+                  position: 'absolute',
+                  top: '48px',
+                  right: 0,
+                  width: '460px',
+                  maxHeight: '65vh',
+                  overflowY: 'auto',
+                  zIndex: 20,
+                  boxShadow: '0 18px 40px rgba(15, 23, 42, 0.2)'
+                }}
+              >
+                <h3 style={{ marginTop: 0, marginBottom: '0.75rem' }}>Solicitudes de Autorizacion</h3>
+                {pendingRemoteAuthRequests.length === 0 && (
+                  <p style={{ margin: 0, color: '#64748b' }}>No hay solicitudes pendientes.</p>
+                )}
+                {pendingRemoteAuthRequests.map((req) => (
+                  <div key={req.requestId} style={{ border: '1px solid #e2e8f0', borderRadius: '8px', padding: '0.7rem', marginBottom: '0.6rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem' }}>
+                      <strong>{req.requesterName || 'Cajero'}</strong>
+                      <span style={{ color: '#64748b', fontSize: '0.82rem' }}>{new Date(req.createdAt).toLocaleString()}</span>
+                    </div>
+                    <p style={{ margin: '0.4rem 0', fontSize: '0.9rem' }}>
+                      <strong>Motivo:</strong> {req.reasonLabel || req.reasonType || 'Autorizacion manual'}
+                    </p>
+                    <p style={{ margin: '0.2rem 0', fontSize: '0.88rem' }}>
+                      <strong>Contexto:</strong> Cliente {req.clientName || 'N/A'} | Total ${Number(req.total || 0).toLocaleString()} | Pago {req.paymentMode || 'N/A'}
+                    </p>
+                    {req.note && (
+                      <p style={{ margin: '0.35rem 0', fontSize: '0.88rem', color: '#334155' }}>
+                        <strong>Nota cajero:</strong> {req.note}
+                      </p>
+                    )}
+                    <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.55rem' }}>
+                      <button className="btn btn-primary" onClick={() => respondRemoteAuthRequest(req, 'APPROVED')}>Aprobar</button>
+                      <button className="btn" style={{ backgroundColor: '#fee2e2', color: '#991b1b' }} onClick={() => respondRemoteAuthRequest(req, 'REJECTED')}>Rechazar</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </header>
@@ -1663,6 +2027,9 @@ function App() {
                   selectedClientAvailableCredit={selectedClientAvailableCredit}
                   items={items}
                   adminPass={users.find(u => u.username === 'Admin')?.password || 'Admin'}
+                  currentUser={currentUser}
+                  onCreateRemoteAuthRequest={createRemoteAuthRequest}
+                  remoteAuthDecisionByRequestId={remoteAuthState.decisionByRequestId}
                 />
               </div>
             </main>
