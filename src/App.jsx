@@ -54,9 +54,14 @@ const DEFAULT_PERMISSIONS = {
 };
 
 const normalizeRole = (role) => {
-  const normalized = String(role || '').trim().toLowerCase();
+  const normalized = String(role || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
   if (!normalized) return 'Administrador';
   if (normalized === 'administrador' || normalized === 'admin') return 'Administrador';
+  if (normalized.includes('supervisor')) return 'Supervisor';
   if (normalized.includes('cajer')) return 'Cajero';
   return String(role).trim();
 };
@@ -134,6 +139,24 @@ const normalizePermissionsForRole = (role, permissions) => {
     };
   }
 
+  if (normalizedRole === 'Supervisor') {
+    return {
+      ...base,
+      inventario: true,
+      codigos: true,
+      reportes: true,
+      bitacora: true,
+      facturacion: true,
+      clientes: true,
+      cartera: true,
+      caja: true,
+      historial: true,
+      gastos: true,
+      notas: true,
+      config: false
+    };
+  }
+
   return base;
 };
 
@@ -150,6 +173,7 @@ const AUTH_REQUEST_LOG_PREFIX = 'AUTH_REQUEST_EVENT::';
 const BOARD_NOTE_LOG_PREFIX = 'BOARD_NOTE_EVENT::';
 const INVOICE_DRAFTS_STORAGE_KEY = 'fact_invoice_drafts';
 const NOTIFICATIONS_SEEN_AT_STORAGE_KEY = 'fact_notifications_seen_at';
+const BOARD_NOTES_SEEN_AT_STORAGE_KEY = 'fact_board_notes_seen_at';
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const isUuid = (value) => typeof value === 'string' && UUID_REGEX.test(value);
@@ -419,6 +443,11 @@ function App() {
     return Number.isFinite(raw) ? raw : 0;
   });
   const lastNotificationSoundAtRef = useRef(0);
+  const [boardNotesSeenAt, setBoardNotesSeenAt] = useState(() => {
+    const raw = Number(localStorage.getItem(BOARD_NOTES_SEEN_AT_STORAGE_KEY) || 0);
+    return Number.isFinite(raw) ? raw : 0;
+  });
+  const lastBoardNoteSoundAtRef = useRef(0);
 
   const getActiveTabStorageKey = (userId) => `${ACTIVE_TAB_STORAGE_KEY}_${userId}`;
   const getQuickTrayStorageKey = (userId) => `${QUICK_TRAY_OPEN_STORAGE_KEY}_${userId || 'anon'}`;
@@ -830,6 +859,10 @@ function App() {
   }, [notificationsSeenAt]);
 
   useEffect(() => {
+    localStorage.setItem(BOARD_NOTES_SEEN_AT_STORAGE_KEY, String(Number(boardNotesSeenAt || 0)));
+  }, [boardNotesSeenAt]);
+
+  useEffect(() => {
     const syncedFromCloud = buildRemoteAuthRequestsFromLogs(auditLogs || []);
     if (syncedFromCloud.length === 0) return;
     setRemoteAuthRequests((prev) => mergeRemoteAuthRequests(prev, syncedFromCloud));
@@ -1145,6 +1178,8 @@ function App() {
   }, {});
 
   const boardNotes = useMemo(() => buildBoardNotesFromLogs(auditLogs || []), [auditLogs]);
+  const latestBoardNoteAt = Number(new Date(boardNotes?.[0]?.createdAt || 0).getTime() || 0);
+  const hasBoardAttention = latestBoardNoteAt > Number(boardNotesSeenAt || 0);
 
   const canManageAuth = ['Administrador', 'Supervisor'].includes(normalizeRole(currentUser?.role));
   const notifications = useMemo(() => {
@@ -1207,6 +1242,12 @@ function App() {
     if (latest > Number(notificationsSeenAt || 0)) playSound('notify');
     lastNotificationSoundAtRef.current = latest;
   }, [notifications, notificationsSeenAt]);
+
+  useEffect(() => {
+    if (!latestBoardNoteAt || latestBoardNoteAt <= Number(lastBoardNoteSoundAtRef.current || 0)) return;
+    if (latestBoardNoteAt > Number(boardNotesSeenAt || 0)) playSound('notify');
+    lastBoardNoteSoundAtRef.current = latestBoardNoteAt;
+  }, [latestBoardNoteAt, boardNotesSeenAt]);
 
   const handleLogin = (user, pass) => {
     const foundUser = users.find(u => u.username === user && u.password === pass);
@@ -1645,11 +1686,14 @@ function App() {
 
     const currentRole = normalizeRole(currentUser?.role);
     const isCashierRole = currentRole === 'Cajero';
+    const isSupervisorRole = currentRole === 'Supervisor';
 
     const allowedMenuItems = currentRole === 'Administrador'
       ? menuItems
       : isCashierRole
         ? menuItems.filter((item) => ['facturacion', 'inventario', 'codigos', 'clientes', 'cartera', 'historial', 'caja', 'trueque', 'gastos', 'notas'].includes(item.tab))
+        : isSupervisorRole
+          ? menuItems.filter((item) => ['facturacion', 'inventario', 'codigos', 'clientes', 'cartera', 'historial', 'caja', 'reportes', 'bitacora', 'trueque', 'gastos', 'notas', 'cierres'].includes(item.tab))
         : menuItems.filter(item => {
             const permission = currentUser?.permissions?.[item.tab];
             // Si el permiso es true (boolean) o un objeto (con sub-permisos), mostrar
@@ -2424,6 +2468,13 @@ function App() {
       <OperationsBoardBubble
         notes={boardNotes}
         onCreateNote={onCreateBoardNote}
+        hasAttention={hasBoardAttention}
+        onOpenChange={(isOpen) => {
+          if (!isOpen) return;
+          if (latestBoardNoteAt > Number(boardNotesSeenAt || 0)) {
+            setBoardNotesSeenAt(latestBoardNoteAt);
+          }
+        }}
       />
       <SystemHelpBubble currentUser={currentUser} onLog={addLog} />
     </div>
