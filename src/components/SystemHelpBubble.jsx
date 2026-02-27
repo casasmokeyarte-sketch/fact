@@ -1,5 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { COMPANY_INFO } from '../constants';
+import { COMPANY_LEGAL_DOCS } from '../lib/companyLegalDocs';
 
 const MODULE_GUIDES = [
   {
@@ -171,12 +172,29 @@ const buildScopedAnswer = (rawQuestion) => {
   return 'Puedo ayudarte con: Facturacion, Inventario, Compras, Clientes, Caja, Reportes, permisos, jornada y datos oficiales de la empresa.';
 };
 
-export function SystemHelpBubble() {
+export function SystemHelpBubble({ currentUser, onLog }) {
   const [isOpen, setIsOpen] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [assistantQuery, setAssistantQuery] = useState('');
   const [isAsking, setIsAsking] = useState(false);
+  const [voiceSupported, setVoiceSupported] = useState(false);
+  const [speechSynthesisSupported, setSpeechSynthesisSupported] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const [continuousListening, setContinuousListening] = useState(true);
+  const [handsFreeAutoSend, setHandsFreeAutoSend] = useState(true);
+  const [voiceReplyEnabled, setVoiceReplyEnabled] = useState(true);
+  const [availableVoices, setAvailableVoices] = useState([]);
+  const [selectedVoice, setSelectedVoice] = useState('');
+  const [speechRate, setSpeechRate] = useState(1);
+  const [micError, setMicError] = useState('');
+  const recognitionRef = useRef(null);
+  const keepListeningRef = useRef(false);
+  const continuousListeningRef = useRef(true);
+  const handsFreeAutoSendRef = useRef(true);
+  const latestAssistantQueryRef = useRef('');
+  const isAskingRef = useRef(false);
+  const submitAssistantQuestionRef = useRef(null);
   const [chatMessages, setChatMessages] = useState([
     {
       id: 'welcome',
@@ -203,20 +221,167 @@ export function SystemHelpBubble() {
     `Correo: ${COMPANY_INFO.email}`,
     `Modulos soportados: ${MODULE_GUIDES.map((g) => g.title).join(', ')}`,
     `Atajos de ayuda: ${QUICK_HELP.join(' | ')}`,
+    `Documentos oficiales registrados: ${COMPANY_LEGAL_DOCS.map((doc) => `${doc.title} [${doc.category}] (${doc.path})`).join(' | ')}`,
   ].join('\n');
 
-  const askAssistant = async (event) => {
-    event.preventDefault();
-    const userQuestion = assistantQuery.trim();
-    if (!userQuestion || isAsking) return;
+  const toShortText = (value, max = 180) => {
+    const text = String(value || '').trim().replace(/\s+/g, ' ');
+    return text.length > max ? `${text.slice(0, max)}...` : text;
+  };
+
+  useEffect(() => {
+    continuousListeningRef.current = continuousListening;
+  }, [continuousListening]);
+
+  useEffect(() => {
+    handsFreeAutoSendRef.current = handsFreeAutoSend;
+  }, [handsFreeAutoSend]);
+
+  useEffect(() => {
+    latestAssistantQueryRef.current = assistantQuery;
+  }, [assistantQuery]);
+
+  useEffect(() => {
+    isAskingRef.current = isAsking;
+  }, [isAsking]);
+
+  useEffect(() => {
+    const SpeechRecognitionApi = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const speechSynthesisApi = window?.speechSynthesis;
+    setSpeechSynthesisSupported(Boolean(speechSynthesisApi));
+
+    if (speechSynthesisApi) {
+      const syncVoices = () => {
+        const voices = speechSynthesisApi.getVoices() || [];
+        const ordered = voices
+          .slice()
+          .sort((a, b) => Number((b.lang || '').toLowerCase().startsWith('es')) - Number((a.lang || '').toLowerCase().startsWith('es')));
+        setAvailableVoices(ordered);
+        setSelectedVoice((prev) => {
+          if (prev && ordered.some((voice) => voice.name === prev)) return prev;
+          const preferred = ordered.find((voice) => String(voice.lang || '').toLowerCase().startsWith('es'));
+          return preferred?.name || ordered[0]?.name || '';
+        });
+      };
+
+      syncVoices();
+      speechSynthesisApi.onvoiceschanged = syncVoices;
+    }
+
+    if (!SpeechRecognitionApi) {
+      setVoiceSupported(false);
+      return;
+    }
+
+    setVoiceSupported(true);
+    const recognition = new SpeechRecognitionApi();
+    recognition.lang = 'es-CO';
+    recognition.interimResults = true;
+    recognition.continuous = true;
+
+    recognition.onstart = () => {
+      setMicError('');
+      setIsListening(true);
+    };
+    recognition.onend = () => {
+      setIsListening(false);
+      const pendingQuestion = String(latestAssistantQueryRef.current || '').trim();
+      if (keepListeningRef.current && handsFreeAutoSendRef.current && pendingQuestion && !isAskingRef.current) {
+        submitAssistantQuestionRef.current?.(pendingQuestion);
+      }
+      if (keepListeningRef.current && continuousListeningRef.current && !isAskingRef.current) {
+        window.setTimeout(() => {
+          try {
+            recognition.start();
+          } catch {
+            setMicError('Se detuvo el microfono. Pulsa Microfono para continuar.');
+          }
+        }, 220);
+      }
+    };
+    recognition.onerror = (event) => {
+      const map = {
+        'not-allowed': 'Debes habilitar permiso de microfono para usar voz.',
+        'audio-capture': 'No se detecto microfono disponible.',
+        'network': 'No se pudo procesar el audio por red inestable.',
+      };
+      setMicError(map[event.error] || 'No fue posible usar el microfono.');
+    };
+    recognition.onresult = (event) => {
+      const text = Array.from(event.results || [])
+        .slice(event.resultIndex || 0)
+        .filter((result) => result?.isFinal)
+        .map((result) => result?.[0]?.transcript || '')
+        .join(' ')
+        .trim();
+      if (!text) return;
+      setAssistantQuery((prev) => {
+        const merged = prev ? `${prev} ${text}` : text;
+        latestAssistantQueryRef.current = merged;
+        return merged;
+      });
+    };
+
+    recognitionRef.current = recognition;
+    return () => {
+      keepListeningRef.current = false;
+      recognition.stop();
+      recognitionRef.current = null;
+      if (speechSynthesisApi) speechSynthesisApi.cancel();
+      if (speechSynthesisApi?.onvoiceschanged) speechSynthesisApi.onvoiceschanged = null;
+    };
+  }, []);
+
+  const speakReply = (text) => {
+    if (!voiceReplyEnabled || !window?.speechSynthesis) return;
+    const plainText = String(text || '').replace(/\s+/g, ' ').trim();
+    if (!plainText) return;
+    const utterance = new SpeechSynthesisUtterance(plainText);
+    const chosenVoice = availableVoices.find((voice) => voice.name === selectedVoice);
+    utterance.voice = chosenVoice || null;
+    utterance.lang = chosenVoice?.lang || 'es-CO';
+    utterance.rate = speechRate;
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(utterance);
+  };
+
+  const toggleListening = () => {
+    setMicError('');
+    if (!voiceSupported || !recognitionRef.current) {
+      setMicError('Este navegador no soporta reconocimiento de voz.');
+      return;
+    }
+    if (isListening) {
+      keepListeningRef.current = false;
+      recognitionRef.current.stop();
+      return;
+    }
+    keepListeningRef.current = true;
+    try {
+      recognitionRef.current.start();
+    } catch {
+      setMicError('No se pudo iniciar el microfono. Intenta de nuevo.');
+    }
+  };
+
+  const submitAssistantQuestion = async (rawQuestion) => {
+    const userQuestion = String(rawQuestion || '').trim();
+    if (!userQuestion || isAskingRef.current) return;
 
     const stamp = Date.now();
     setIsAsking(true);
+    isAskingRef.current = true;
     setChatMessages((prev) => ([
       ...prev,
       { id: `u-${stamp}`, role: 'user', text: userQuestion }
     ].slice(-10)));
     setAssistantQuery('');
+    latestAssistantQueryRef.current = '';
+    onLog?.({
+      module: 'Asistente Empresa',
+      action: 'Pregunta',
+      details: `${currentUser?.name || 'Usuario'}: ${toShortText(userQuestion)}`
+    });
 
     let assistantReply = buildScopedAnswer(userQuestion);
     const canUseElectronAI = Boolean(window?.companyAI?.ask);
@@ -245,6 +410,9 @@ export function SystemHelpBubble() {
         if (response.ok) {
           const result = await response.json();
           if (result?.answer) assistantReply = String(result.answer);
+        } else if (response.status === 429) {
+          const result = await response.json().catch(() => ({}));
+          assistantReply = String(result?.answer || 'Demasiadas consultas. Espera un momento e intenta de nuevo.');
         }
       } catch {
         assistantReply = `${assistantReply} (Respaldo local: no se pudo conectar con API web.)`;
@@ -255,7 +423,32 @@ export function SystemHelpBubble() {
       ...prev,
       { id: `a-${stamp}`, role: 'assistant', text: assistantReply }
     ].slice(-10)));
+    speakReply(assistantReply);
+    onLog?.({
+      module: 'Asistente Empresa',
+      action: 'Respuesta',
+      details: `${currentUser?.name || 'Usuario'}: ${toShortText(assistantReply)}`
+    });
     setIsAsking(false);
+    isAskingRef.current = false;
+    if (keepListeningRef.current && continuousListeningRef.current && recognitionRef.current) {
+      window.setTimeout(() => {
+        try {
+          recognitionRef.current.start();
+        } catch {
+          // Ignore duplicate-start errors when recognition already restarted.
+        }
+      }, 220);
+    }
+  };
+
+  useEffect(() => {
+    submitAssistantQuestionRef.current = submitAssistantQuestion;
+  }, [submitAssistantQuestion]);
+
+  const askAssistant = async (event) => {
+    event.preventDefault();
+    await submitAssistantQuestion(assistantQuery);
   };
 
   return (
@@ -338,6 +531,83 @@ export function SystemHelpBubble() {
             </button>
           </div>
           <p className="system-help-chat-hint">Consulta solo temas del sistema o de CASA SMOKE.</p>
+          <div className="system-help-chat-toolbar">
+            <button
+              type="button"
+              className="system-help-chat-voice"
+              onClick={() => setVoiceReplyEnabled((prev) => !prev)}
+              title={voiceReplyEnabled ? 'Desactivar lectura en voz' : 'Activar lectura en voz'}
+            >
+              {voiceReplyEnabled ? 'Voz respuesta: ON' : 'Voz respuesta: OFF'}
+            </button>
+            <button
+              type="button"
+              className="system-help-chat-voice"
+              onClick={() => setContinuousListening((prev) => !prev)}
+              title={continuousListening ? 'Desactivar dictado continuo' : 'Activar dictado continuo'}
+            >
+              {continuousListening ? 'Dictado continuo: ON' : 'Dictado continuo: OFF'}
+            </button>
+            <button
+              type="button"
+              className="system-help-chat-voice"
+              onClick={() => setHandsFreeAutoSend((prev) => !prev)}
+              title={handsFreeAutoSend ? 'Desactivar envio automatico por voz' : 'Activar envio automatico por voz'}
+            >
+              {handsFreeAutoSend ? 'Manos libres: ON' : 'Manos libres: OFF'}
+            </button>
+            <button
+              type="button"
+              className="system-help-chat-clear"
+              onClick={() => {
+                setChatMessages([
+                  {
+                    id: `welcome-${Date.now()}`,
+                    role: 'assistant',
+                    text: 'Historial limpiado. Te sigo ayudando con temas del sistema y de la empresa.'
+                  }
+                ]);
+                onLog?.({
+                  module: 'Asistente Empresa',
+                  action: 'Limpiar chat',
+                  details: `${currentUser?.name || 'Usuario'} limpio el historial del chat`
+                });
+              }}
+            >
+              Limpiar chat
+            </button>
+          </div>
+          {micError && <p className="system-help-chat-mic-error">{micError}</p>}
+          {!voiceSupported && <p className="system-help-chat-mic-error">Tu navegador no soporta microfono por voz en este chat.</p>}
+          {voiceReplyEnabled && speechSynthesisSupported && (
+            <div className="system-help-chat-voice-config">
+              <label htmlFor="voice-select">Voz</label>
+              <select
+                id="voice-select"
+                className="system-help-chat-select"
+                value={selectedVoice}
+                onChange={(event) => setSelectedVoice(event.target.value)}
+              >
+                {availableVoices.map((voice) => (
+                  <option key={`${voice.name}-${voice.lang}`} value={voice.name}>
+                    {voice.name} ({voice.lang})
+                  </option>
+                ))}
+              </select>
+              <label htmlFor="voice-rate">Velocidad</label>
+              <input
+                id="voice-rate"
+                className="system-help-chat-range"
+                type="range"
+                min="0.7"
+                max="1.3"
+                step="0.1"
+                value={speechRate}
+                onChange={(event) => setSpeechRate(Number(event.target.value))}
+              />
+              <span className="system-help-chat-rate">{speechRate.toFixed(1)}x</span>
+            </div>
+          )}
           <div className="system-help-chat-log" aria-live="polite">
             {chatMessages.map((msg) => (
               <div key={msg.id} className={`system-help-chat-msg ${msg.role === 'user' ? 'user' : 'assistant'}`}>
@@ -353,6 +623,16 @@ export function SystemHelpBubble() {
               placeholder="Escribe tu pregunta..."
               disabled={isAsking}
             />
+            <button
+              type="button"
+              className={`system-help-chat-mic ${isListening ? 'listening' : ''}`}
+              onClick={toggleListening}
+              disabled={isAsking}
+              aria-label={isListening ? 'Detener microfono' : 'Activar microfono'}
+              title={isListening ? 'Detener microfono' : 'Hablar por microfono'}
+            >
+              {isListening ? 'Detener' : 'Microfono'}
+            </button>
             <button type="submit" className="system-help-chat-send" disabled={isAsking}>
               {isAsking ? 'Consultando...' : 'Enviar'}
             </button>
