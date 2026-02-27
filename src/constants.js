@@ -13,7 +13,8 @@ export const PAYMENT_MODES = {
     CONTADO: 'Efectivo',
     CREDITO: 'Credito',
     TRANSFERENCIA: 'Transferencia',
-    TARJETA: 'Tarjeta'
+    TARJETA: 'Tarjeta',
+    OTROS: 'Otros'
 };
 
 export const CREDIT_LEVELS = {

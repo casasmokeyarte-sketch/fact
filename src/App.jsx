@@ -149,7 +149,7 @@ const PAYMENT_METHODS_STORAGE_KEY = 'fact_payment_methods';
 const SOUND_ENABLED_STORAGE_KEY = 'fact_sound_enabled';
 const SOUND_VOLUME_STORAGE_KEY = 'fact_sound_volume';
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const DEFAULT_PAYMENT_METHODS = ['Efectivo', 'Credito', 'Transferencia', 'Tarjeta'];
+const DEFAULT_PAYMENT_METHODS = ['Efectivo', 'Credito', 'Transferencia', 'Tarjeta', 'Otros'];
 const REMOTE_AUTH_REQUEST_ACTION = 'Solicitud Autorizacion Remota';
 const REMOTE_AUTH_RESPONSE_ACTION = 'Respuesta Autorizacion Remota';
 const SHIFT_BOARD_ACTION = 'Pizarron Turnos';
@@ -1199,9 +1199,23 @@ function App() {
       else if (sale.paymentMode === PAYMENT_MODES.CREDITO) acc.credit += total;
       else if (sale.paymentMode === PAYMENT_MODES.TRANSFERENCIA) acc.transfer += total;
       else if (sale.paymentMode === PAYMENT_MODES.TARJETA) acc.card += total;
+      else if (sale.paymentMode === PAYMENT_MODES.OTROS) acc.other += total;
       else if (sale.paymentMode === 'Mixto') {
-        acc.cash += Number(sale.mixedDetails?.cash) || 0;
-        acc.credit += Number(sale.mixedDetails?.credit) || 0;
+        const parts = Array.isArray(sale?.mixedDetails?.parts) ? sale.mixedDetails.parts : null;
+        if (parts && parts.length > 0) {
+          parts.forEach((part) => {
+            const amount = Number(part?.amount || 0);
+            const method = String(part?.method || '').trim();
+            if (method === PAYMENT_MODES.CONTADO) acc.cash += amount;
+            else if (method === PAYMENT_MODES.CREDITO) acc.credit += amount;
+            else if (method === PAYMENT_MODES.TRANSFERENCIA) acc.transfer += amount;
+            else if (method === PAYMENT_MODES.TARJETA) acc.card += amount;
+            else acc.other += amount;
+          });
+        } else {
+          acc.cash += Number(sale.mixedDetails?.cash) || 0;
+          acc.credit += Number(sale.mixedDetails?.credit) || 0;
+        }
       } else {
         acc.other += total;
       }
@@ -1390,7 +1404,7 @@ function App() {
     return `SSOT-${String(next).padStart(4, '0')}`;
   };
 
-  const handleFacturar = async (mixedData = null, extraDiscount = 0) => {
+  const handleFacturar = async (mixedData = null, extraDiscount = 0, paymentMeta = null) => {
     if (items.length === 0) {
       playSound('warn');
       return alert("Agregue productos primero");
@@ -1408,11 +1422,48 @@ function App() {
       }
     }
 
-    // Reference validation for non-Cash/Credit
-    const needsRef = ![PAYMENT_MODES.CONTADO, PAYMENT_MODES.CREDITO].includes(paymentMode);
+    // Reference validation for non-Cash/Credit (single payment mode)
+    const needsRef = !mixedData && ![PAYMENT_MODES.CONTADO, PAYMENT_MODES.CREDITO].includes(paymentMode);
     if (needsRef && !paymentRef) {
       playSound('warn');
       return alert("Debe ingresar el numero de referencia de la transferencia");
+    }
+
+    if (!mixedData && paymentMode === PAYMENT_MODES.OTROS && !String(paymentMeta?.otherPaymentDetail || '').trim()) {
+      playSound('warn');
+      return alert('Debe especificar el medio exacto para metodo "Otros".');
+    }
+
+    if (mixedData) {
+      const parts = Array.isArray(mixedData.parts) ? mixedData.parts : [];
+      if (parts.length < 2) {
+        playSound('warn');
+        return alert('Pago mixto invalido: faltan componentes de pago.');
+      }
+
+      const partsTotal = parts.reduce((sum, part) => sum + (Number(part?.amount || 0)), 0);
+      if (Math.abs(partsTotal - (subtotal + deliveryFee - extraDiscount)) > 1) {
+        playSound('warn');
+        return alert('Pago mixto invalido: el total de los metodos no coincide con la factura.');
+      }
+
+      const invalidReferencePart = parts.find((part) =>
+        ![PAYMENT_MODES.CONTADO, PAYMENT_MODES.CREDITO].includes(String(part?.method || '').trim()) &&
+        !String(part?.reference || '').trim()
+      );
+      if (invalidReferencePart) {
+        playSound('warn');
+        return alert(`Debe ingresar referencia para el metodo ${invalidReferencePart.method}.`);
+      }
+
+      const invalidOtherPart = parts.find((part) =>
+        String(part?.method || '').trim() === PAYMENT_MODES.OTROS &&
+        !String(part?.otherDetail || '').trim()
+      );
+      if (invalidOtherPart) {
+        playSound('warn');
+        return alert('En metodo "Otros" del pago mixto debe indicar el medio exacto.');
+      }
     }
 
     // Credit Limit check (Individual Invoice Max)
@@ -1451,6 +1502,11 @@ function App() {
       paymentMode: finalMode,
       mixedDetails: {
         ...(mixedData || {}),
+        ...(paymentMeta || {}),
+        ...(mixedData ? {} : {
+          payment_reference: String(paymentRef || '').trim() || null,
+          payment_method_detail: String(paymentMeta?.otherPaymentDetail || '').trim() || null,
+        }),
         invoiceCode,
         user_name: currentUser?.name || currentUser?.email || 'Sistema',
         user_id: currentUser?.id || null

@@ -3,6 +3,17 @@ import { CLIENT_OCASIONAL, PAYMENT_MODES } from '../constants';
 import { printInvoiceDocument } from '../lib/printInvoice.js';
 import { playSound } from '../lib/soundService';
 
+const CASH_MODE = PAYMENT_MODES.CONTADO;
+const CREDIT_MODE = PAYMENT_MODES.CREDITO;
+const OTHER_MODE = PAYMENT_MODES.OTROS || 'Otros';
+
+const isCreditMode = (mode) => mode === CREDIT_MODE;
+const isCashMode = (mode) => mode === CASH_MODE;
+const requiresReference = (mode) => ![CASH_MODE, CREDIT_MODE].includes(mode);
+const requiresOtherDetail = (mode) => mode === OTHER_MODE;
+
+const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+
 export function PaymentSummary({
   subtotal,
   deliveryFee,
@@ -32,35 +43,58 @@ export function PaymentSummary({
     return String(role || '').trim();
   };
 
+  const normalizedRole = normalizeRole(currentUser?.role);
+  const shouldUseRemoteAuth = !!onCreateRemoteAuthRequest && !['Administrador', 'Supervisor'].includes(normalizedRole);
+
   const [extraDiscount, setExtraDiscount] = useState(0);
   const [authNote, setAuthNote] = useState('');
   const [activeRemoteRequestId, setActiveRemoteRequestId] = useState('');
   const [isRequestingRemoteAuth, setIsRequestingRemoteAuth] = useState(false);
-  const total = subtotal + (Number(deliveryFee) || 0) - (Number(extraDiscount) || 0);
-  const normalizedRole = normalizeRole(currentUser?.role);
-  const isOcasional = clientName === CLIENT_OCASIONAL;
-  const isStandardClient = (selectedClient?.creditLevel || selectedClient?.credit_level) === 'ESTANDAR';
-  const shouldUseRemoteAuth = !!onCreateRemoteAuthRequest && !['Administrador', 'Supervisor'].includes(normalizedRole);
-
   const [cashReceived, setCashReceived] = useState(0);
   const [isMixed, setIsMixed] = useState(false);
-  const [mixedCash, setMixedCash] = useState(0);
+  const [otherPaymentDetail, setOtherPaymentDetail] = useState('');
+  const [mixedModeA, setMixedModeA] = useState(CASH_MODE);
+  const [mixedModeB, setMixedModeB] = useState(CREDIT_MODE);
+  const [mixedAmountA, setMixedAmountA] = useState(0);
+  const [mixedRefA, setMixedRefA] = useState('');
+  const [mixedRefB, setMixedRefB] = useState('');
+  const [mixedOtherA, setMixedOtherA] = useState('');
+  const [mixedOtherB, setMixedOtherB] = useState('');
 
-  const vuelta = cashReceived > total ? cashReceived - total : 0;
+  const paymentMethodsWithOther = Array.from(
+    new Set([...(paymentMethods || []), OTHER_MODE].filter(Boolean))
+  );
 
-  const isCredit = paymentMode === PAYMENT_MODES.CREDITO || isMixed;
-  const creditPortion = isMixed ? (total - mixedCash) : (paymentMode === PAYMENT_MODES.CREDITO ? total : 0);
+  const total = subtotal + (Number(deliveryFee) || 0) - (Number(extraDiscount) || 0);
+  const safeMixedAmountA = clamp(Number(mixedAmountA) || 0, 0, Math.max(0, total));
+  const mixedAmountB = Math.max(0, total - safeMixedAmountA);
 
-  const clientLimit = selectedClient?.creditLimit || 0;
+  const mixedCreditPortion =
+    (isCreditMode(mixedModeA) ? safeMixedAmountA : 0) +
+    (isCreditMode(mixedModeB) ? mixedAmountB : 0);
+  const mixedCashPortion =
+    (isCashMode(mixedModeA) ? safeMixedAmountA : 0) +
+    (isCashMode(mixedModeB) ? mixedAmountB : 0);
+
+  const creditPortion = isMixed ? mixedCreditPortion : (paymentMode === CREDIT_MODE ? total : 0);
+  const isCredit = creditPortion > 0;
+  const clientLimit = Number(selectedClient?.creditLimit || 0);
   const limitExceeded = isCredit && creditPortion > clientLimit;
   const excess = creditPortion - clientLimit;
-  const hasGift = items.some(item => item.isGift);
+
+  const isOcasional = clientName === CLIENT_OCASIONAL;
+  const isStandardClient = (selectedClient?.creditLevel || selectedClient?.credit_level) === 'ESTANDAR';
+  const vuelta = cashReceived > total ? cashReceived - total : 0;
+
+  const hasGift = items.some((item) => item.isGift);
   const hasExtraDiscount = Number(extraDiscount) > 0;
-  const isTransferWithoutRef = ![PAYMENT_MODES.CONTADO, PAYMENT_MODES.CREDITO].includes(paymentMode) && !paymentRef;
+  const isTransferWithoutRef = !isMixed && requiresReference(paymentMode) && !paymentRef;
   const needsApproval = hasGift || hasExtraDiscount || isTransferWithoutRef;
+
   const currentRemoteDecision = activeRemoteRequestId
     ? remoteAuthDecisionByRequestId?.[activeRemoteRequestId]
     : null;
+
   const reasonType = hasGift
     ? 'REGALO'
     : hasExtraDiscount
@@ -68,6 +102,7 @@ export function PaymentSummary({
       : isTransferWithoutRef
         ? 'TRANSFERENCIA_SIN_REFERENCIA'
         : 'OTRO';
+
   const reasonLabel = hasGift
     ? 'Regalo'
     : hasExtraDiscount
@@ -106,7 +141,7 @@ export function PaymentSummary({
             note: String(authNote || '').trim(),
             clientName,
             total: Number(total || 0),
-            paymentMode: isMixed ? 'Mixto' : paymentMode,
+            paymentMode: isMixed ? `Mixto (${mixedModeA} + ${mixedModeB})` : paymentMode,
           });
           if (requestId) {
             setActiveRemoteRequestId(requestId);
@@ -119,7 +154,9 @@ export function PaymentSummary({
         return;
       }
 
-      const pass = prompt(`Requiere Autorizacion Admin (${hasGift ? 'Regalo' : hasExtraDiscount ? 'Descuento' : 'Sin Ref Transferencia'}):\nIngrese clave de administrador:`);
+      const pass = prompt(
+        `Requiere Autorizacion Admin (${hasGift ? 'Regalo' : hasExtraDiscount ? 'Descuento' : 'Sin Ref Transferencia'}):\nIngrese clave de administrador:`
+      );
       if (pass === adminPass || pass === 'admin123') {
         playSound('success');
         action();
@@ -127,24 +164,68 @@ export function PaymentSummary({
         playSound('error');
         alert('Clave incorrecta o accion cancelada.');
       }
-    } else {
-      action();
+      return;
     }
+
+    action();
   };
 
   const onFinalFacturar = () => {
-    if (isStandardClient && (paymentMode === PAYMENT_MODES.CREDITO || isMixed)) {
+    if (isStandardClient && creditPortion > 0) {
       return alert('Cliente en nivel ESTANDAR no puede facturar a credito.');
     }
 
     if (isMixed) {
-      if (mixedCash >= total) return alert('El monto del abono debe ser menor al total para ser mixto');
-      if (limitExceeded) return alert('El monto restante a credito supera el limite permitido.');
-      onFacturar({ cash: mixedCash, credit: total - mixedCash, discount: extraDiscount });
-    } else {
-      if (limitExceeded) return alert('El monto de la factura supera el limite de credito permitido.');
-      onFacturar(null, extraDiscount);
+      if (safeMixedAmountA <= 0 || safeMixedAmountA >= total) {
+        return alert('En pago mixto debe definir un monto parcial mayor a 0 y menor al total.');
+      }
+      if (!mixedModeA || !mixedModeB || mixedModeA === mixedModeB) {
+        return alert('En pago mixto seleccione dos metodos diferentes.');
+      }
+
+      const parts = [
+        { method: mixedModeA, amount: safeMixedAmountA, reference: mixedRefA, otherDetail: mixedOtherA },
+        { method: mixedModeB, amount: mixedAmountB, reference: mixedRefB, otherDetail: mixedOtherB },
+      ];
+
+      const invalidReference = parts.find((part) => requiresReference(part.method) && !String(part.reference || '').trim());
+      if (invalidReference) {
+        return alert(`Debe ingresar numero de referencia para ${invalidReference.method} en pago mixto.`);
+      }
+
+      const invalidOther = parts.find((part) => requiresOtherDetail(part.method) && !String(part.otherDetail || '').trim());
+      if (invalidOther) {
+        return alert('Cuando use metodo "Otros" debe describir el medio exacto.');
+      }
+
+      if (limitExceeded) return alert('El monto a credito supera el limite permitido.');
+
+      onFacturar(
+        {
+          cash: mixedCashPortion,
+          credit: mixedCreditPortion,
+          discount: extraDiscount,
+          parts,
+          splitSummary: `${mixedModeA}: ${safeMixedAmountA.toLocaleString()} | ${mixedModeB}: ${mixedAmountB.toLocaleString()}`,
+        },
+        extraDiscount
+      );
+      return;
     }
+
+    if (requiresOtherDetail(paymentMode) && !String(otherPaymentDetail || '').trim()) {
+      return alert('En metodo "Otros" debe escribir el medio de pago exacto.');
+    }
+    if (requiresReference(paymentMode) && !String(paymentRef || '').trim()) {
+      return alert('Debe ingresar numero de referencia para este metodo de pago.');
+    }
+    if (limitExceeded) return alert('El monto de la factura supera el limite de credito permitido.');
+
+    onFacturar(
+      null,
+      extraDiscount,
+      { otherPaymentDetail: String(otherPaymentDetail || '').trim() }
+    );
   };
 
   React.useEffect(() => {
@@ -161,6 +242,31 @@ export function PaymentSummary({
     }
   }, [activeRemoteRequestId, currentRemoteDecision]);
 
+  React.useEffect(() => {
+    if (isOcasional && paymentMode === CREDIT_MODE) {
+      setPaymentMode(CASH_MODE);
+    }
+  }, [isOcasional, paymentMode, setPaymentMode]);
+
+  React.useEffect(() => {
+    if (isStandardClient) {
+      if (paymentMode === CREDIT_MODE) {
+        setPaymentMode(CASH_MODE);
+      }
+      if (isMixed && (mixedModeA === CREDIT_MODE || mixedModeB === CREDIT_MODE)) {
+        setMixedModeB(CASH_MODE);
+      }
+    }
+  }, [isStandardClient, paymentMode, isMixed, mixedModeA, mixedModeB, setPaymentMode]);
+
+  React.useEffect(() => {
+    if (!isMixed) return;
+    const fallbackA = paymentMethodsWithOther[0] || CASH_MODE;
+    const fallbackB = paymentMethodsWithOther[1] || CREDIT_MODE;
+    if (!paymentMethodsWithOther.includes(mixedModeA)) setMixedModeA(fallbackA);
+    if (!paymentMethodsWithOther.includes(mixedModeB)) setMixedModeB(fallbackB);
+  }, [isMixed, paymentMethodsWithOther, mixedModeA, mixedModeB]);
+
   const handlePrintInvoice = (mode) => {
     const previewInvoice = {
       id: `PRE-${Date.now()}`,
@@ -168,28 +274,11 @@ export function PaymentSummary({
       clientDoc: selectedClient?.document || 'N/A',
       items,
       total,
-      paymentMode: isMixed ? 'Mixto' : paymentMode,
+      paymentMode: isMixed ? `Mixto (${mixedModeA} + ${mixedModeB})` : paymentMode,
       date: new Date().toISOString(),
     };
     printInvoiceDocument(previewInvoice, mode);
   };
-
-  React.useEffect(() => {
-    if (isOcasional && paymentMode === PAYMENT_MODES.CREDITO) {
-      setPaymentMode(PAYMENT_MODES.CONTADO);
-    }
-  }, [isOcasional, paymentMode, setPaymentMode]);
-
-  React.useEffect(() => {
-    if (isStandardClient) {
-      if (paymentMode === PAYMENT_MODES.CREDITO) {
-        setPaymentMode(PAYMENT_MODES.CONTADO);
-      }
-      if (isMixed) {
-        setIsMixed(false);
-      }
-    }
-  }, [isStandardClient, paymentMode, isMixed, setPaymentMode]);
 
   return (
     <div className="card" style={{ position: 'sticky', top: '2rem' }}>
@@ -232,7 +321,9 @@ export function PaymentSummary({
       <div className="input-group">
         <label className="input-label">Domicilio ($)</label>
         <input
-          type="number" className="input-field" value={deliveryFee}
+          type="number"
+          className="input-field"
+          value={deliveryFee}
           onChange={(e) => setDeliveryFee(Number(e.target.value))}
         />
       </div>
@@ -240,7 +331,9 @@ export function PaymentSummary({
       <div className="input-group" style={{ border: '2px solid #fee2e2' }}>
         <label className="input-label">Descuento Extraordinario ($)</label>
         <input
-          type="number" className="input-field" value={extraDiscount}
+          type="number"
+          className="input-field"
+          value={extraDiscount}
           onChange={(e) => setExtraDiscount(Number(e.target.value))}
           placeholder="Requiere aprobacion admin"
         />
@@ -270,7 +363,9 @@ export function PaymentSummary({
       <div className="input-group" style={{ border: '2px solid #e2e8f0', padding: '10px', borderRadius: '8px' }}>
         <label className="input-label">Efectivo Recibido (Abono / Pago)</label>
         <input
-          type="number" className="input-field" value={cashReceived}
+          type="number"
+          className="input-field"
+          value={cashReceived}
           onChange={(e) => setCashReceived(Number(e.target.value))}
           placeholder="Ej: 100000"
         />
@@ -282,10 +377,10 @@ export function PaymentSummary({
           <input
             type="checkbox"
             checked={isMixed}
-            onChange={e => setIsMixed(e.target.checked)}
+            onChange={(e) => setIsMixed(e.target.checked)}
             disabled={isStandardClient}
           />
-          <strong>Pago Mixto (Abono Cash + Credito)</strong>
+          <strong>Pago Mixto (Metodo libre)</strong>
         </label>
       </div>
 
@@ -297,24 +392,92 @@ export function PaymentSummary({
 
       {isMixed && (
         <div style={{ backgroundColor: '#f1f5f9', padding: '10px', borderRadius: '8px', marginBottom: '1rem' }}>
-          <div className="input-group">
-            <label className="input-label">Monto del Abono (Efectivo)</label>
-            <input type="number" className="input-field" value={mixedCash} onChange={e => setMixedCash(Number(e.target.value))} />
+          <div style={{ display: 'grid', gap: '0.6rem' }}>
+            <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>Pago 1</div>
+            <div className="input-group">
+              <label className="input-label">Metodo 1</label>
+              <select className="input-field" value={mixedModeA} onChange={(e) => setMixedModeA(e.target.value)}>
+                {paymentMethodsWithOther.map((mode) => (
+                  <option key={`mix-a-${mode}`} value={mode}>{mode}</option>
+                ))}
+              </select>
+            </div>
+            <div className="input-group">
+              <label className="input-label">Monto Metodo 1</label>
+              <input
+                type="number"
+                className="input-field"
+                value={safeMixedAmountA}
+                onChange={(e) => setMixedAmountA(Number(e.target.value))}
+              />
+            </div>
+            {requiresReference(mixedModeA) && (
+              <div className="input-group">
+                <label className="input-label">Referencia Metodo 1</label>
+                <input className="input-field" value={mixedRefA} onChange={(e) => setMixedRefA(e.target.value)} />
+              </div>
+            )}
+            {requiresOtherDetail(mixedModeA) && (
+              <div className="input-group">
+                <label className="input-label">Detalle Metodo 1 (Otros)</label>
+                <input className="input-field" value={mixedOtherA} onChange={(e) => setMixedOtherA(e.target.value)} placeholder="Ej: Nequi, PayPal, Bono, etc." />
+              </div>
+            )}
+
+            <div style={{ marginTop: '0.45rem', fontWeight: 600, fontSize: '0.9rem' }}>Pago 2 (restante)</div>
+            <div className="input-group">
+              <label className="input-label">Metodo 2</label>
+              <select className="input-field" value={mixedModeB} onChange={(e) => setMixedModeB(e.target.value)}>
+                {paymentMethodsWithOther.map((mode) => (
+                  <option key={`mix-b-${mode}`} value={mode}>{mode}</option>
+                ))}
+              </select>
+            </div>
+            <div className="input-group">
+              <label className="input-label">Monto Metodo 2 (auto)</label>
+              <input type="number" className="input-field" value={mixedAmountB} readOnly />
+            </div>
+            {requiresReference(mixedModeB) && (
+              <div className="input-group">
+                <label className="input-label">Referencia Metodo 2</label>
+                <input className="input-field" value={mixedRefB} onChange={(e) => setMixedRefB(e.target.value)} />
+              </div>
+            )}
+            {requiresOtherDetail(mixedModeB) && (
+              <div className="input-group">
+                <label className="input-label">Detalle Metodo 2 (Otros)</label>
+                <input className="input-field" value={mixedOtherB} onChange={(e) => setMixedOtherB(e.target.value)} placeholder="Ej: Nequi, PayPal, Bono, etc." />
+              </div>
+            )}
           </div>
-          <p style={{ margin: 0, fontSize: '0.9em' }}>Saldo que quedara a Credito: <strong style={{ color: limitExceeded ? '#ef4444' : '#10b981' }}>${creditPortion.toLocaleString()}</strong></p>
+
+          <p style={{ margin: '0.35rem 0 0', fontSize: '0.9em' }}>
+            Monto a credito en mixto: <strong style={{ color: limitExceeded ? '#ef4444' : '#10b981' }}>${creditPortion.toLocaleString()}</strong>
+          </p>
         </div>
       )}
 
       <div className="input-group">
         <label className="input-label">Metodo de Pago Principal</label>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
-          {paymentMethods.map(mode => (
-            <label key={mode} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.9em', opacity: (isOcasional && mode === PAYMENT_MODES.CREDITO) || (isStandardClient && mode === PAYMENT_MODES.CREDITO) ? 0.5 : 1 }}>
+          {paymentMethodsWithOther.map((mode) => (
+            <label
+              key={mode}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.4rem',
+                fontSize: '0.9em',
+                opacity: (isOcasional && mode === CREDIT_MODE) || (isStandardClient && mode === CREDIT_MODE) ? 0.5 : 1
+              }}
+            >
               <input
-                type="radio" name="paymentMode" value={mode}
+                type="radio"
+                name="paymentMode"
+                value={mode}
                 checked={paymentMode === mode}
                 onChange={() => setPaymentMode(mode)}
-                disabled={(isOcasional && mode === PAYMENT_MODES.CREDITO) || (isStandardClient && mode === PAYMENT_MODES.CREDITO) || isMixed}
+                disabled={(isOcasional && mode === CREDIT_MODE) || (isStandardClient && mode === CREDIT_MODE) || isMixed}
               />
               {mode}
             </label>
@@ -322,13 +485,28 @@ export function PaymentSummary({
         </div>
       </div>
 
-      {![PAYMENT_MODES.CONTADO, PAYMENT_MODES.CREDITO].includes(paymentMode) && (
+      {!isMixed && requiresReference(paymentMode) && (
         <div className="input-group">
           <label className="input-label">Nro de Referencia</label>
           <input
-            type="text" className="input-field" required
+            type="text"
+            className="input-field"
+            required
             value={paymentRef}
             onChange={(e) => setPaymentRef(e.target.value)}
+          />
+        </div>
+      )}
+
+      {!isMixed && requiresOtherDetail(paymentMode) && (
+        <div className="input-group">
+          <label className="input-label">Detalle del medio (Otros)</label>
+          <input
+            type="text"
+            className="input-field"
+            value={otherPaymentDetail}
+            onChange={(e) => setOtherPaymentDetail(e.target.value)}
+            placeholder="Ej: Nequi, Daviplata, App empresarial, etc."
           />
         </div>
       )}
@@ -384,3 +562,4 @@ export function PaymentSummary({
     </div>
   );
 }
+

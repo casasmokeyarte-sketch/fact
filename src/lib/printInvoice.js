@@ -35,6 +35,47 @@ export function printInvoiceDocument(invoice, mode = '58mm') {
       </tr>
     `)
     .join('');
+  const mixedParts = Array.isArray(invoice?.mixedDetails?.parts) ? invoice.mixedDetails.parts : [];
+  const paymentRef = String(
+    invoice?.mixedDetails?.payment_reference ||
+    invoice?.paymentRef ||
+    ''
+  ).trim();
+  const paymentMethodDetail = String(
+    invoice?.mixedDetails?.payment_method_detail ||
+    invoice?.mixedDetails?.otherPaymentDetail ||
+    ''
+  ).trim();
+
+  const mixedDetailsHtml = mixedParts.length > 0
+    ? `
+      <div class="pay-details">
+        <div><strong>Desglose Mixto:</strong></div>
+        ${mixedParts.map((part, idx) => {
+          const method = String(part?.method || 'N/A');
+          const amount = Number(part?.amount || 0).toLocaleString('es-CO');
+          const ref = String(part?.reference || '').trim();
+          const otherDetail = String(part?.otherDetail || '').trim();
+          return `
+            <div>
+              ${idx + 1}) ${escapeHtml(method)}: $${amount}
+              ${ref ? ` | Ref: ${escapeHtml(ref)}` : ''}
+              ${otherDetail ? ` | Detalle: ${escapeHtml(otherDetail)}` : ''}
+            </div>
+          `;
+        }).join('')}
+      </div>
+    `
+    : '';
+
+  const singlePaymentExtraHtml = !mixedParts.length && (paymentRef || paymentMethodDetail)
+    ? `
+      <div class="pay-details">
+        ${paymentRef ? `<div><strong>Referencia:</strong> ${escapeHtml(paymentRef)}</div>` : ''}
+        ${paymentMethodDetail ? `<div><strong>Detalle medio:</strong> ${escapeHtml(paymentMethodDetail)}</div>` : ''}
+      </div>
+    `
+    : '';
 
   const popup = window.open('', '_blank', 'width=1000,height=780');
   if (!popup) {
@@ -77,6 +118,7 @@ export function printInvoiceDocument(invoice, mode = '58mm') {
           th, td { border-bottom: 1px solid #e5e7eb; padding: 6px; font-size: 12px; }
           th { text-align: left; background: #f9fafb; }
           .total { text-align: right; margin-top: 10px; font-weight: 700; }
+          .pay-details { margin-top: 8px; font-size: 11px; color: #374151; }
           .footer { margin-top: 12px; font-size: 10px; color: #4b5563; text-align: center; }
           ${pageCss}
         </style>
@@ -112,6 +154,8 @@ export function printInvoiceDocument(invoice, mode = '58mm') {
             </thead>
             <tbody>${itemsRows}</tbody>
           </table>
+          ${mixedDetailsHtml}
+          ${singlePaymentExtraHtml}
           <div class="total">TOTAL: $${Number(invoice?.total || 0).toLocaleString('es-CO')}</div>
           <div class="footer">Gracias por su compra</div>
         </div>
