@@ -41,6 +41,10 @@ function isNetworkFetchError(error) {
   return msg.includes('failed to fetch') || msg.includes('networkerror') || msg.includes('fetch');
 }
 
+function isUndefinedColumnError(error) {
+  return String(error?.code || '') === '42703';
+}
+
 async function withRetry(operation, retries = 2, delayMs = 450) {
   let lastError;
   for (let attempt = 0; attempt <= retries; attempt += 1) {
@@ -436,9 +440,17 @@ export const dataService = {
 
   async saveInvoice(invoice, items) {
     const userId = invoice?.user_id || await getAuthUserId();
+    const userName = invoice?.user_name || invoice?.user || null;
+
+    const baseMixedDetails = invoice.mixed_details ?? invoice.mixedDetails ?? null;
+    const mergedMixedDetails = {
+      ...(baseMixedDetails && typeof baseMixedDetails === 'object' ? baseMixedDetails : {}),
+      user_name: userName || undefined,
+    };
 
     const invoicePayload = {
       user_id: invoice.user_id || userId,
+      user_name: userName,
       client_id: isUuid(invoice.client_id) ? invoice.client_id : null,
       client_name: invoice.client_name ?? invoice.clientName ?? null,
       client_doc: invoice.client_doc ?? invoice.clientDoc ?? null,
@@ -446,7 +458,7 @@ export const dataService = {
       delivery_fee: Number(invoice.delivery_fee ?? invoice.deliveryFee ?? 0),
       total: Number(invoice.total || 0),
       payment_mode: invoice.payment_mode ?? invoice.paymentMode ?? null,
-      mixed_details: invoice.mixed_details ?? invoice.mixedDetails ?? null,
+      mixed_details: mergedMixedDetails,
       date: invoice.date || new Date().toISOString(),
       due_date: invoice.due_date ?? invoice.dueDate ?? null,
       status: invoice.status || 'pagado',
@@ -459,7 +471,18 @@ export const dataService = {
         : supabase.from('invoices').insert(invoicePayload)
     ).select();
 
-    const { data: invData, error: invError } = await invoiceQuery;
+    let { data: invData, error: invError } = await invoiceQuery;
+    if (invError && isUndefinedColumnError(invError)) {
+      const { user_name, ...fallbackInvoicePayload } = invoicePayload;
+      const fallbackQuery = (
+        isUpdate
+          ? supabase.from('invoices').upsert({ id: invoice.id, ...fallbackInvoicePayload })
+          : supabase.from('invoices').insert(fallbackInvoicePayload)
+      ).select();
+      const retry = await fallbackQuery;
+      invData = retry.data;
+      invError = retry.error;
+    }
     if (invError) throw formatDbError(invError, 'invoices.insert/upsert');
 
     const invoiceId = invData[0].id;
@@ -502,6 +525,7 @@ export const dataService = {
     const payload = {
       id: expense.id,
       user_id: expense.user_id || userId,
+      user_name: expense.user_name ?? expense.user ?? null,
       date: expense.date || new Date().toISOString(),
       category: expense.category ?? expense.type ?? 'Otros',
       amount: Number(expense.amount ?? 0),
@@ -509,7 +533,13 @@ export const dataService = {
     };
 
     const insertPayload = removeInvalidUuidId(payload);
-    const { data, error } = await supabase.from('expenses').insert(insertPayload).select();
+    let { data, error } = await supabase.from('expenses').insert(insertPayload).select();
+    if (error && isUndefinedColumnError(error)) {
+      const { user_name, ...fallbackPayload } = insertPayload;
+      const retry = await supabase.from('expenses').insert(fallbackPayload).select();
+      data = retry.data;
+      error = retry.error;
+    }
     if (error) throw error;
     return data;
   },
@@ -533,6 +563,7 @@ export const dataService = {
     const payload = {
       id: purchase.id,
       user_id: purchase.user_id || userId,
+      user_name: purchase.user_name ?? purchase.user ?? null,
       invoice_number: purchase.invoice_number ?? purchase.invoiceNumber ?? null,
       supplier: purchase.supplier ?? null,
       product_id: isUuid(purchase.product_id)
@@ -547,7 +578,13 @@ export const dataService = {
     };
 
     const insertPayload = removeInvalidUuidId(payload);
-    const { data, error } = await supabase.from('purchases').insert(insertPayload).select();
+    let { data, error } = await supabase.from('purchases').insert(insertPayload).select();
+    if (error && isUndefinedColumnError(error)) {
+      const { user_name, ...fallbackPayload } = insertPayload;
+      const retry = await supabase.from('purchases').insert(fallbackPayload).select();
+      data = retry.data;
+      error = retry.error;
+    }
     if (error) throw error;
     return data;
   },
@@ -585,6 +622,8 @@ export const dataService = {
 
     return (data || []).map((s) => ({
       id: s.id,
+      user_id: s.user_id ?? null,
+      user_name: s.user_name ?? s.user ?? null,
       startTime: s.start_time,
       endTime: s.end_time,
       initialCash: Number(s.initial_cash ?? 0),
@@ -594,7 +633,7 @@ export const dataService = {
       discrepancy: Number(s.discrepancy ?? 0),
       authorized: !!s.authorized,
       reportText: s.report_text ?? '',
-      user: 'Sistema',
+      user: s.user_name ?? s.user ?? null,
     }));
   },
 
@@ -603,6 +642,7 @@ export const dataService = {
     const payload = {
       id: shift.id,
       user_id: shift.user_id || userId,
+      user_name: shift.user_name ?? shift.user ?? null,
       start_time: shift.start_time ?? shift.startTime ?? null,
       end_time: shift.end_time ?? shift.endTime ?? new Date().toISOString(),
       initial_cash: Number(shift.initial_cash ?? shift.initialCash ?? 0),
@@ -615,13 +655,25 @@ export const dataService = {
     };
 
     if (isUuid(payload.id)) {
-      const { data, error } = await supabase.from('shift_history').upsert(payload).select();
+      let { data, error } = await supabase.from('shift_history').upsert(payload).select();
+      if (error && isUndefinedColumnError(error)) {
+        const { user_name, ...fallbackPayload } = payload;
+        const retry = await supabase.from('shift_history').upsert(fallbackPayload).select();
+        data = retry.data;
+        error = retry.error;
+      }
       if (error) throw error;
       return data;
     }
 
     const insertPayload = removeInvalidUuidId(payload);
-    const { data, error } = await supabase.from('shift_history').insert(insertPayload).select();
+    let { data, error } = await supabase.from('shift_history').insert(insertPayload).select();
+    if (error && isUndefinedColumnError(error)) {
+      const { user_name, ...fallbackPayload } = insertPayload;
+      const retry = await supabase.from('shift_history').insert(fallbackPayload).select();
+      data = retry.data;
+      error = retry.error;
+    }
     if (error) throw error;
     return data;
   },

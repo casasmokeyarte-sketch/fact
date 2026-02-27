@@ -685,17 +685,48 @@ function App() {
       });
       setStock({ bodega: bStock, ventas: vStock });
 
+      const userNameById = {};
+      (dbLogs || []).forEach((log) => {
+        const uid = String(log?.user_id || '').trim();
+        const uname = String(log?.user_name || log?.user || '').trim();
+        if (uid && uname && !userNameById[uid]) userNameById[uid] = uname;
+      });
+      if (currentUser?.id && currentUser?.name) {
+        userNameById[String(currentUser.id)] = currentUser.name;
+      }
+
+      const enrichedSales = (dbSales || []).map((sale) => ({
+        ...sale,
+        user_name: sale?.user_name || sale?.user || userNameById[String(sale?.user_id || '')] || null,
+      }));
+
+      const enrichedExpenses = (dbExpenses || []).map((expense) => ({
+        ...expense,
+        user_name: expense?.user_name || expense?.user || userNameById[String(expense?.user_id || '')] || null,
+      }));
+
+      const enrichedPurchases = (dbPurchases || []).map((purchase) => ({
+        ...purchase,
+        user_name: purchase?.user_name || purchase?.user || userNameById[String(purchase?.user_id || '')] || null,
+      }));
+
+      const enrichedShiftHistory = (dbShiftHistory || []).map((shiftRow) => ({
+        ...shiftRow,
+        user_name: shiftRow?.user_name || shiftRow?.user || userNameById[String(shiftRow?.user_id || '')] || null,
+        user: shiftRow?.user || shiftRow?.user_name || userNameById[String(shiftRow?.user_id || '')] || 'Sistema',
+      }));
+
       if (!pendingClientsSyncRef.current) {
         setRegisteredClients(dedupeClients(dbClients || []));
       }
-      setSalesHistory(dbSales || []);
-      setExpenses(dbExpenses || []);
-      setPurchases(dbPurchases || []);
+      setSalesHistory(enrichedSales);
+      setExpenses(enrichedExpenses);
+      setPurchases(enrichedPurchases);
       setAuditLogs(dbLogs || []);
-      setShiftHistory(dbShiftHistory || []);
+      setShiftHistory(enrichedShiftHistory);
 
       // Reconstruct carteras/debts from invoices
-      const pendingSales = (dbSales || []).filter(s => s.status === 'pendiente');
+      const pendingSales = enrichedSales.filter(s => s.status === 'pendiente');
       setCartera(pendingSales);
     } catch (err) {
       console.error("Error cargando datos de Supabase:", err);
@@ -1344,6 +1375,8 @@ function App() {
       discrepancy: data.discrepancy,
       authorized: data.authorized,
       user: currentUser?.name || 'Sistema',
+      user_name: currentUser?.name || currentUser?.email || 'Sistema',
+      user_id: currentUser?.id || null,
       reportText: reportText
     };
 
@@ -2116,7 +2149,11 @@ function App() {
                 setPurchases(newPurchases);
                 if (newPurchases.length > purchases.length) {
                   try {
-                    await dataService.savePurchase({ ...newPurchases[0], user_id: currentUser?.id });
+                    await dataService.savePurchase({
+                      ...newPurchases[0],
+                      user_id: currentUser?.id,
+                      user_name: currentUser?.name || currentUser?.email || 'Sistema'
+                    });
                   } catch (e) {
                     console.error("Error guardando compra en Supabase:", e);
                     const message = e?.message || 'Error desconocido';
@@ -2356,7 +2393,11 @@ function App() {
                 // If it's a new expense (length increased), save the last one
                 if (newExpenses.length > expenses.length) {
                   try {
-                    await dataService.saveExpense(newExpenses[0]);
+                    await dataService.saveExpense({
+                      ...newExpenses[0],
+                      user_id: currentUser?.id,
+                      user_name: currentUser?.name || currentUser?.email || 'Sistema'
+                    });
                   } catch (err) {
                     console.error("Error persistiendo gasto en Supabase:", err);
                   }
