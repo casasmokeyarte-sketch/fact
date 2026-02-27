@@ -1,4 +1,5 @@
 import { supabase } from './supabaseClient';
+import { CREDIT_LEVELS } from '../constants';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -87,6 +88,25 @@ function normalizeCreditLevel(value) {
   return String(value ?? '').trim().toUpperCase();
 }
 
+function normalizeCreditLevelKey(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\(.*?\)/g, '')
+    .replace(/[^a-zA-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .toUpperCase();
+}
+
+function resolveCreditLevel(value) {
+  const normalized = normalizeCreditLevelKey(value || 'ESTANDAR');
+  if (CREDIT_LEVELS[normalized]) return normalized;
+  const byLabel = Object.entries(CREDIT_LEVELS).find(([, level]) =>
+    normalizeCreditLevelKey(level?.label) === normalized
+  );
+  return byLabel?.[0] || 'ESTANDAR';
+}
+
 export const dataService = {
   async getNextInvoiceCode(prefix = 'SSOT') {
     const safePrefix = String(prefix || 'SSOT').toUpperCase();
@@ -141,12 +161,14 @@ export const dataService = {
     };
 
     if (isUuid(payload.id)) {
-      const { data, error } = await withRetry(() => supabase.from('products').upsert(payload).select());
+      // Do not overwrite owner on existing products.
+      const { user_id, ...updatePayload } = payload;
+      const { data, error } = await withRetry(() => supabase.from('products').upsert(updatePayload).select());
       if (!error) return data;
 
       if (!isBarcodeUniqueError(error) || !payload.barcode) throw error;
 
-      const fallbackUpdatePayload = removeInvalidUuidId(payload);
+      const fallbackUpdatePayload = removeInvalidUuidId(updatePayload);
       const { data: byBarcodeData, error: byBarcodeError } = await withRetry(() =>
         supabase.from('products').update(fallbackUpdatePayload).eq('barcode', payload.barcode).select()
       );
@@ -179,15 +201,13 @@ export const dataService = {
     return byBarcodeData;
   },
 
-  async updateProductStockById(productId, changes, userId) {
+  async updateProductStockById(productId, changes) {
     if (!isUuid(productId)) {
       throw new Error('ID de producto invalido para actualizar stock');
     }
 
-    const payload = {
-      ...changes,
-      ...(userId ? { user_id: userId } : {}),
-    };
+    // Stock updates must not reassign product owner.
+    const payload = { ...changes };
 
     const { data, error } = await supabase
       .from('products')
@@ -243,7 +263,7 @@ export const dataService = {
 
     return (data || []).map((c) => ({
       ...c,
-      creditLevel: c.credit_level ?? 'ESTANDAR',
+      creditLevel: resolveCreditLevel(c.credit_level ?? 'ESTANDAR'),
       creditLimit: Number(c.credit_limit ?? 0),
       approvedTerm: Number(c.approved_term ?? 30),
       discount: Number(c.discount ?? 0),
@@ -268,12 +288,12 @@ export const dataService = {
       existingByDocument = existing || null;
     }
 
-    const providedCreditLevel = client.credit_level ?? client.creditLevel;
-    const providedCreditLimit = client.credit_limit ?? client.creditLimit;
-    const providedApprovedTerm = client.approved_term ?? client.approvedTerm;
+    const providedCreditLevel = client.creditLevel ?? client.credit_level;
+    const providedCreditLimit = client.creditLimit ?? client.credit_limit;
+    const providedApprovedTerm = client.approvedTerm ?? client.approved_term;
     const providedDiscount = client.discount;
-    const existingLevel = normalizeCreditLevel(existingByDocument?.credit_level || 'ESTANDAR');
-    const incomingLevel = normalizeCreditLevel(providedCreditLevel || '');
+    const existingLevel = normalizeCreditLevel(resolveCreditLevel(existingByDocument?.credit_level || 'ESTANDAR'));
+    const incomingLevel = normalizeCreditLevel(resolveCreditLevel(providedCreditLevel || 'ESTANDAR'));
     const incomingLimit = Number(providedCreditLimit ?? 0);
     const incomingDiscount = Number(providedDiscount ?? 0);
 
@@ -286,8 +306,8 @@ export const dataService = {
       incomingDiscount <= 0;
 
     const resolvedCreditLevel = accidentalDowngradeToStandard
-      ? existingByDocument.credit_level
-      : (providedCreditLevel ?? existingByDocument?.credit_level ?? 'ESTANDAR');
+      ? resolveCreditLevel(existingByDocument.credit_level)
+      : resolveCreditLevel(providedCreditLevel ?? existingByDocument?.credit_level ?? 'ESTANDAR');
 
     const resolvedCreditLimit = accidentalDowngradeToStandard
       ? Number(existingByDocument?.credit_limit ?? 0)

@@ -196,7 +196,7 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
     };
 
     const handleFinishCount = () => {
-        onLog?.({ module: 'Inventario', action: 'Conteo FAsico', details: 'Realizado inventario de control' });
+        onLog?.({ module: 'Inventario', action: 'Conteo Fisicoco', details: 'Realizado inventario de control' });
         window.print();
         setView('list');
     };
@@ -231,7 +231,7 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
     return (
         <div className="inventory-module">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <h2>GestiAn de Inventario Pro</h2>
+                <h2>Gestiòn de Inventario Pro</h2>
                 <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                     {canExport && (
                     <div className="btn-group">
@@ -280,7 +280,7 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
                                 <input name="unit" defaultValue={editingProduct?.unit || 'un'} className="input-field" placeholder="Ej: un, kg, lt" />
                             </div>
                             <div className="input-group">
-                                <label className="input-label">CategorAa</label>
+                                <label className="input-label">Categorias</label>
                                 <select name="category" defaultValue={editingProduct?.category} className="input-field">
                                     {categories.map((cat, idx) => (
                                         <option key={`${cat}-${idx}`} value={cat}>{cat}</option>
@@ -302,7 +302,7 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
 
             {view === 'count' && (
                 <div className="card printable-area">
-                    <h3>Hacer Inventario (Conteo FAsico)</h3>
+                    <h3>Hacer Inventario (Conteo Fisicoco)</h3>
                     <p>Ingrese las cantidades reales encontradas en el punto de venta.</p>
                     <table>
                         <thead>

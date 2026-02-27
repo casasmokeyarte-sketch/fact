@@ -69,13 +69,13 @@ export function SettingsModule({
 
     const handleAddCategory = () => {
         if (!newCategory) return;
-        if (categories.includes(newCategory)) return alert("La categorAa ya existe");
+        if (categories.includes(newCategory)) return alert("La Categorias ya existe");
         setCategories([...categories, newCategory]);
         setNewCategory('');
     };
 
     const handleRemoveCategory = (cat) => {
-        if (cat === 'General') return alert("No se puede eliminar la categorAa General");
+        if (cat === 'General') return alert("No se puede eliminar la Categorias General");
         setCategories(categories.filter(c => c !== cat));
     };
 
@@ -86,7 +86,7 @@ export function SettingsModule({
             <nav style={{ display: 'flex', gap: '1rem', marginBottom: '1.5rem' }}>
                 <button className={`btn ${subTab === 'usuarios' ? 'btn-primary' : ''}`} onClick={() => setSubTab('usuarios')}>Usuarios</button>
                 <button className={`btn ${subTab === 'pagos' ? 'btn-primary' : ''}`} onClick={() => setSubTab('pagos')}>Pagos</button>
-                <button className={`btn ${subTab === 'categorias' ? 'btn-primary' : ''}`} onClick={() => setSubTab('categorias')}>CategorAas</button>
+                <button className={`btn ${subTab === 'categorias' ? 'btn-primary' : ''}`} onClick={() => setSubTab('categorias')}>Categoriass</button>
                 <button className={`btn ${subTab === 'sistema' ? 'btn-primary' : ''}`} onClick={() => setSubTab('sistema')}>Sistema</button>
             </nav>
 
@@ -240,11 +240,11 @@ export function SettingsModule({
 
             {subTab === 'categorias' && (
                 <div className="card">
-                    <h3 style={{ marginTop: 0 }}>Gestionar CategorAas</h3>
-                    <p>Defina las categorAas de productos para organizar su inventario.</p>
+                    <h3 style={{ marginTop: 0 }}>Gestionar Categoriass</h3>
+                    <p>Defina las Categoriass de productos para organizar su inventario.</p>
                     <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.5rem' }}>
                         <input
-                            type="text" className="input-field" placeholder="Nueva categorAa (ej: Bebidas, Ropa)"
+                            type="text" className="input-field" placeholder="Nueva Categorias (ej: Bebidas, Ropa)"
                             value={newCategory} onChange={e => setNewCategory(e.target.value)}
                         />
                         <button className="btn btn-primary" onClick={handleAddCategory}>Agregar</button>

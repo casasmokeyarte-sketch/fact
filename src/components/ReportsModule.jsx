@@ -1,5 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { COMPANY_INFO } from '../constants';
+import { printReportHtml } from '../lib/printReports';
 
 export function ReportsModule({
     currentUser,
@@ -18,6 +19,7 @@ export function ReportsModule({
 }) {
     const [reportType, setReportType] = useState('ventas');
     const [filter, setFilter] = useState('');
+    const reportCanvasRef = useRef(null);
 
     const filterStorageKey = `fact_filter_reports_${currentUser?.id || 'anon'}`;
     const reportTypeStorageKey = `fact_report_type_${currentUser?.id || 'anon'}`;
@@ -468,6 +470,21 @@ export function ReportsModule({
         }
     };
 
+    const handlePrintReport = (mode = 'a4') => {
+        const contentHtml = reportCanvasRef.current?.innerHTML || '<p>Sin informacion para imprimir.</p>';
+        onLog?.({
+            module: 'Reportes',
+            action: 'Imprimir Reporte',
+            details: `Tipo: ${reportType} | Formato: ${mode.toUpperCase()}`
+        });
+        printReportHtml({
+            title: `Reporte de ${reportType}`,
+            subtitle: `Generado el ${new Date().toLocaleString()}`,
+            contentHtml,
+            mode
+        });
+    };
+
     return (
         <div className="reports-module">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }} className="no-print">
@@ -476,17 +493,11 @@ export function ReportsModule({
                     {isCajero && <span className="alert alert-info" style={{ padding: '0.3rem 0.6rem', fontSize: '0.85em' }}>Solo Impresion</span>}
                     <button
                         className="btn btn-primary"
-                        onClick={() => {
-                            onLog?.({
-                                module: 'Reportes',
-                                action: 'Imprimir Reporte',
-                                details: `Tipo: ${reportType}`
-                            });
-                            window.print();
-                        }}
+                        onClick={() => handlePrintReport('58mm')}
                     >
-                        Imprimir Reporte
+                        Imprimir 58mm
                     </button>
+                    <button className="btn" onClick={() => handlePrintReport('a4')}>Imprimir A4</button>
                 </div>
             </div>
             <div className="card">
@@ -511,7 +522,7 @@ export function ReportsModule({
                         onChange={(e) => setFilter(e.target.value)}
                     />
                 </div>
-                <div className="report-canvas printable-area" style={{ maxHeight: '600px', overflow: 'auto' }}>
+                <div ref={reportCanvasRef} className="report-canvas printable-area" style={{ maxHeight: '600px', overflow: 'auto' }}>
                     <CompanyHeader />
                     {renderTable()}
                 </div>

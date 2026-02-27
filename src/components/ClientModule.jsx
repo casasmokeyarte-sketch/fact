@@ -5,6 +5,7 @@ import { INITIAL_REGISTERED_CLIENT, CREDIT_LEVELS, COMPANY_INFO } from '../const
 export function ClientModule({ currentUser, clients, setClients, cartera, salesHistory, onLog }) {
     const [newClient, setNewClient] = useState(INITIAL_REGISTERED_CLIENT);
     const [isEditing, setIsEditing] = useState(false);
+    const [editingDocument, setEditingDocument] = useState('');
     const [selectedClientReport, setSelectedClientReport] = useState(null);
     const [searchTerm, setSearchTerm] = useState('');
     const filterStorageKey = `fact_filter_clients_${currentUser?.id || 'anon'}`;
@@ -18,6 +19,23 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
     const onlyStandard = isCajero || currentUser?.permissions?.clientes?.solo_estandar;
     const canBlockClient = isAdmin;
 
+    const normalizeCreditLevelKey = (value) => String(value || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/\(.*?\)/g, '')
+        .replace(/[^a-zA-Z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '')
+        .toUpperCase();
+
+    const resolveCreditLevel = (rawLevel) => {
+        const normalized = normalizeCreditLevelKey(rawLevel || 'ESTANDAR');
+        if (CREDIT_LEVELS[normalized]) return normalized;
+        const byLabel = Object.entries(CREDIT_LEVELS).find(([, level]) =>
+            normalizeCreditLevelKey(level?.label) === normalized
+        );
+        return byLabel?.[0] || 'ESTANDAR';
+    };
+
     useEffect(() => {
         if (!currentUser?.id) return;
         const saved = localStorage.getItem(filterStorageKey);
@@ -30,10 +48,11 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
     }, [searchTerm, currentUser?.id]);
 
     const handleLevelChange = (levelKey) => {
-        const levelData = CREDIT_LEVELS[levelKey];
+        const safeLevel = resolveCreditLevel(levelKey);
+        const levelData = CREDIT_LEVELS[safeLevel] || CREDIT_LEVELS.ESTANDAR;
         setNewClient({
             ...newClient,
-            creditLevel: levelKey,
+            creditLevel: safeLevel,
             discount: levelData.discount,
             creditLimit: levelData.maxInvoice
         });
@@ -43,13 +62,26 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
         e.preventDefault();
         if (!newClient.name || !newClient.document) return alert("Nombre y Documento son obligatorios");
 
+        const { credit_level, credit_limit, approved_term, ...cleanClient } = (newClient || {});
+        const normalizedClient = {
+            ...cleanClient,
+            name: String(newClient.name || '').trim(),
+            document: String(newClient.document || '').trim(),
+            creditLevel: resolveCreditLevel(newClient.creditLevel),
+            creditLimit: Number(newClient.creditLimit ?? 0),
+            approvedTerm: Number(newClient.approvedTerm ?? 30),
+            discount: Number(newClient.discount ?? 0),
+        };
+
         if (isEditing) {
-            setClients(clients.map(c => c.document === newClient.document ? newClient : c));
+            const matchDoc = editingDocument || normalizedClient.document;
+            setClients(clients.map(c => String(c.document || '').trim() === String(matchDoc || '').trim() ? normalizedClient : c));
             setIsEditing(false);
+            setEditingDocument('');
             onLog?.({ module: 'Clientes', action: 'Editar Cliente', details: `Se editA a: ${newClient.name}` });
         } else {
-            if (clients.find(c => c.document === newClient.document)) return alert("Documento ya existe");
-            const clientToAdd = { ...newClient, id: Date.now(), blocked: false };
+            if (clients.find(c => String(c.document || '').trim() === normalizedClient.document)) return alert("Documento ya existe");
+            const clientToAdd = { ...normalizedClient, id: Date.now(), blocked: false };
             setClients([...clients, clientToAdd]);
             onLog?.({ module: 'Clientes', action: 'Crear Cliente', details: `Se creA a: ${newClient.name}` });
         }
@@ -282,7 +314,9 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
                                 onChange={e => handleLevelChange(e.target.value)}
                             >
                                 {Object.entries(CREDIT_LEVELS).map(([key, data]) => (
-                                    <option key={key} value={key}>{data.label} (Max: ${data.maxInvoice.toLocaleString()})</option>
+                                    <option key={key} value={key}>
+                                        {key === 'CREDITO_SIN_DESCUENTO' ? 'Linea de Credito (Sin descuento)' : data.label} (Max: ${data.maxInvoice.toLocaleString()})
+                                    </option>
                                 ))}
                             </select>
                         </div>
@@ -303,7 +337,7 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
                         </>
                         )}
                         <button type="submit" className="btn btn-primary" style={{ width: '100%' }}>{isEditing ? 'Actualizar' : 'Guardar Cliente'}</button>
-                        {isEditing && <button className="btn" onClick={() => { setIsEditing(false); setNewClient(INITIAL_REGISTERED_CLIENT) }} style={{ width: '100%', marginTop: '0.5rem' }}>Cancelar</button>}
+                        {isEditing && <button className="btn" onClick={() => { setIsEditing(false); setEditingDocument(''); setNewClient(INITIAL_REGISTERED_CLIENT) }} style={{ width: '100%', marginTop: '0.5rem' }}>Cancelar</button>}
                     </form>
                 </div>
 
@@ -372,7 +406,26 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
                                     <td style={{ padding: '0.5rem', textAlign: 'right' }}>${c.creditLimit.toLocaleString()}</td>
                                     <td style={{ padding: '0.5rem', textAlign: 'right', display: 'flex', gap: '0.3rem', justifyContent: 'flex-end' }}>
                                         {canEdit && (
-                                            <button className="btn" style={{ padding: '0.2rem 0.5rem', fontSize: '0.8em' }} onClick={() => { setIsEditing(true); setNewClient(c) }}>{'\u270F\uFE0F'}</button>
+                                            <button
+                                                className="btn"
+                                                style={{ padding: '0.2rem 0.5rem', fontSize: '0.8em' }}
+                                                onClick={() => {
+                                                    setIsEditing(true);
+                                                    setEditingDocument(String(c.document || '').trim());
+                                                    setNewClient({
+                                                        ...c,
+                                                        creditLevel: resolveCreditLevel(c.creditLevel || c.credit_level),
+                                                        creditLimit: Number(c.creditLimit ?? c.credit_limit ?? 0),
+                                                        approvedTerm: Number(c.approvedTerm ?? c.approved_term ?? 30),
+                                                        discount: Number(c.discount ?? 0),
+                                                        credit_level: undefined,
+                                                        credit_limit: undefined,
+                                                        approved_term: undefined,
+                                                    });
+                                                }}
+                                            >
+                                                {'\u270F\uFE0F'}
+                                            </button>
                                         )}
                                         <button className="btn" style={{ padding: '0.2rem 0.5rem', fontSize: '0.8em', backgroundColor: '#e2e8f0' }} onClick={() => setSelectedClientReport(c)}>{'\uD83D\uDCCA'}</button>
                                         {canBlockClient && (

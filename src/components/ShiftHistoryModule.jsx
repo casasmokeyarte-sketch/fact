@@ -1,42 +1,12 @@
 import React, { useState } from 'react';
-import { COMPANY_INFO } from '../constants';
+import { printShiftClosure } from '../lib/printReports';
 
 export function ShiftHistoryModule({ shiftHistory, onLog }) {
     const [selectedShift, setSelectedShift] = useState(null);
 
-    const handlePrint = (shift) => {
-        const printWindow = window.open('', '_blank');
-        printWindow.document.write(`
-            <html>
-                <head>
-                    <title>ReimpresiAn Cierre de Caja</title>
-                    <style>
-                        body { font-family: 'Courier New', Courier, monospace; width: 58mm; margin: 0; padding: 10px; font-size: 12px; }
-                        pre { white-space: pre-wrap; word-wrap: break-word; }
-                        @media print {
-                            @page { margin: 0; }
-                        }
-                    </style>
-                </head>
-                <body>
-                    <div style="text-align:center; border-bottom:1px dashed #000; padding-bottom:8px; margin-bottom:8px;">
-                        <img src="${COMPANY_INFO.logo}" alt="Logo" style="max-width:48px; margin-bottom:4px;" />
-                        <div style="font-weight:700; font-size:11px;">${COMPANY_INFO.name}</div>
-                        <div style="font-size:10px;">NIT: ${COMPANY_INFO.nit}</div>
-                        <div style="font-size:10px;">${COMPANY_INFO.address}</div>
-                        <div style="font-size:10px;">Tel: ${COMPANY_INFO.phone}</div>
-                    </div>
-                    <pre>${shift.reportText}</pre>
-                    <div style="margin-top: 20px; border-top: 1px dashed #000; padding-top: 10px; text-align: center;">
-                        REIMPRESIAN<br/>
-                        ${new Date().toLocaleString()}
-                    </div>
-                </body>
-            </html>
-        `);
-        printWindow.document.close();
-        printWindow.print();
-        onLog?.({ module: 'Cierres', action: 'Reimprimir Cierre', details: `Cierre #${shift.id} reimpreso.` });
+    const handlePrint = (shift, mode = '58mm') => {
+        printShiftClosure(shift, mode);
+        onLog?.({ module: 'Cierres', action: 'Reimprimir Cierre', details: `Cierre #${shift.id} reimpreso (${mode.toUpperCase()}).` });
     };
 
     return (
@@ -68,7 +38,8 @@ export function ShiftHistoryModule({ shiftHistory, onLog }) {
                                     </td>
                                     <td style={{ padding: '0.5rem', textAlign: 'center' }}>
                                         <button className="btn" onClick={() => setSelectedShift(shift)}>{'\uD83D\uDC41\uFE0F'} Ver</button>
-                                        <button className="btn" style={{ marginLeft: '5px' }} onClick={() => handlePrint(shift)}>{'\uD83D\uDDA8\uFE0F'} Reimprimir</button>
+                                        <button className="btn" style={{ marginLeft: '5px' }} onClick={() => handlePrint(shift, '58mm')}>{'\uD83D\uDDA8\uFE0F'} 58mm</button>
+                                        <button className="btn" style={{ marginLeft: '5px' }} onClick={() => handlePrint(shift, 'a4')}>{'\uD83D\uDDA8\uFE0F'} A4</button>
                                     </td>
                                 </tr>
                             ))
@@ -95,7 +66,8 @@ export function ShiftHistoryModule({ shiftHistory, onLog }) {
                             {selectedShift.reportText}
                         </pre>
                         <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
-                            <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => handlePrint(selectedShift)}>{'\uD83D\uDDA8\uFE0F'} Imprimir</button>
+                            <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => handlePrint(selectedShift, '58mm')}>{'\uD83D\uDDA8\uFE0F'} 58mm</button>
+                            <button className="btn" style={{ flex: 1 }} onClick={() => handlePrint(selectedShift, 'a4')}>{'\uD83D\uDDA8\uFE0F'} A4</button>
                             <button className="btn" style={{ flex: 1 }} onClick={() => setSelectedShift(null)}>Cerrar</button>
                         </div>
                     </div>

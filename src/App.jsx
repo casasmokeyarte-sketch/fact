@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import './design-system.css'
-import { CLIENT_OCASIONAL, PAYMENT_MODES, COMPANY_INFO } from './constants'
+import { CLIENT_OCASIONAL, PAYMENT_MODES, COMPANY_INFO, CREDIT_LEVELS } from './constants'
 import { AuthPage } from './components/AuthPage'
 import { onAuthStateChange, getCurrentUser, signOut } from './lib/authService'
 import { ClientSelector } from './components/ClientSelector'
@@ -25,6 +25,7 @@ import { HistorialModule } from './components/HistorialModule'
 import { ReportsModule } from './components/ReportsModule'
 import { ShiftHistoryModule } from './components/ShiftHistoryModule'
 import { SystemHelpBubble } from './components/SystemHelpBubble'
+import { printShiftClosure } from './lib/printReports'
 
 import { dataService } from './lib/dataService'
 import { getProfile } from './lib/databaseService'
@@ -158,11 +159,54 @@ const normalizeClientDraft = (client) => ({
   ...client,
   document: String(client?.document || '').trim(),
   name: String(client?.name || '').trim(),
-  creditLevel: String(client?.creditLevel || client?.credit_level || 'ESTANDAR').trim() || 'ESTANDAR',
+  creditLevel: resolveCreditLevel(client?.creditLevel || client?.credit_level || 'ESTANDAR'),
   creditLimit: Number(client?.creditLimit ?? client?.credit_limit ?? 0),
   approvedTerm: Number(client?.approvedTerm ?? client?.approved_term ?? 30),
   discount: Number(client?.discount ?? 0),
 });
+
+const normalizeCreditLevelKey = (value) => String(value || '')
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .replace(/\(.*?\)/g, '')
+  .replace(/[^a-zA-Z0-9]+/g, '_')
+  .replace(/^_+|_+$/g, '')
+  .toUpperCase();
+
+const resolveCreditLevel = (value) => {
+  const levelKey = normalizeCreditLevelKey(value || 'ESTANDAR');
+  if (CREDIT_LEVELS[levelKey]) return levelKey;
+  const byLabel = Object.entries(CREDIT_LEVELS).find(([, level]) =>
+    normalizeCreditLevelKey(level?.label) === levelKey
+  );
+  return byLabel?.[0] || 'ESTANDAR';
+};
+
+const getClientAutoDiscount = (client) => {
+  if (!client) return 0;
+
+  const explicitDiscount = Number(client?.discount ?? 0);
+  if (Number.isFinite(explicitDiscount) && explicitDiscount > 0) {
+    return explicitDiscount;
+  }
+
+  const levelRaw = client?.creditLevel ?? client?.credit_level ?? 'ESTANDAR';
+  const levelKey = resolveCreditLevel(levelRaw);
+  return Number(CREDIT_LEVELS[levelKey]?.discount ?? 0);
+};
+
+const applyClientDiscountToItem = (item, discountPercent) => {
+  const basePrice = Number(item?.originalPrice ?? item?.price ?? 0);
+  const quantity = Number(item?.quantity ?? 0);
+  const discountedUnitPrice = basePrice * (1 - (Number(discountPercent) || 0) / 100);
+
+  return {
+    ...item,
+    originalPrice: basePrice,
+    price: discountedUnitPrice,
+    total: discountedUnitPrice * quantity
+  };
+};
 
 const dedupeClients = (rows) => {
   const byDoc = new Map();
@@ -741,7 +785,7 @@ function App() {
     if (!prod) return;
     try {
       const field = type === 'bodega' ? 'warehouse_stock' : 'stock';
-      await dataService.updateProductStockById(prod.id, { [field]: Number(newValue) || 0 }, currentUser?.id);
+      await dataService.updateProductStockById(prod.id, { [field]: Number(newValue) || 0 });
     } catch (e) {
       console.error(`Sync ${type} error:`, e);
     }
@@ -1015,6 +1059,9 @@ function App() {
     };
     persistShift();
 
+    // Abre de inmediato el dialogo de imprimir/guardar para el soporte del cierre.
+    printShiftClosure(shiftData, 'a4');
+
     alert("Jornada cerrada con exito.");
 
     setUserCashBalance(currentUser, data.physicalCash);
@@ -1025,10 +1072,8 @@ function App() {
   };
 
   const handleAddItem = (item) => {
-    // Apply client discount if applicable
-    const discount = selectedClient ? selectedClient.discount : 0;
-    const discountedPrice = item.price * (1 - discount / 100);
-    setItems([...items, { ...item, price: discountedPrice, originalPrice: item.price, total: discountedPrice * item.quantity }]);
+    const clientDiscount = getClientAutoDiscount(selectedClient);
+    setItems([...items, applyClientDiscountToItem(item, clientDiscount)]);
 
     addLog({
       module: 'Facturacion',
@@ -1036,6 +1081,14 @@ function App() {
       details: `Se agrego ${item.name} (${item.quantity})`
     });
   };
+
+  const selectedClientAutoDiscount = getClientAutoDiscount(selectedClient);
+
+  useEffect(() => {
+    setItems((prevItems) =>
+      prevItems.map((item) => applyClientDiscountToItem(item, selectedClientAutoDiscount))
+    );
+  }, [selectedClientAutoDiscount]);
 
   const handleRemoveItem = (index) => {
     const item = items[index];
@@ -1143,7 +1196,7 @@ function App() {
       const prod = products.find(p => p.id === item.id);
       if (prod) {
         dataService
-          .updateProductStockById(prod.id, { stock: Number(newStockVentas[item.id]) || 0 }, currentUser?.id)
+          .updateProductStockById(prod.id, { stock: Number(newStockVentas[item.id]) || 0 })
           .catch(e => console.error("Error updating stock on SALE:", e));
       }
     });
@@ -1655,8 +1708,7 @@ function App() {
                     try {
                       await dataService.updateProductStockById(
                         prod.id,
-                        { warehouse_stock: Number(newBodega[changedId]) || 0 },
-                        currentUser?.id
+                        { warehouse_stock: Number(newBodega[changedId]) || 0 }
                       );
                     } catch (e) { console.error("Sync bodega error:", e); }
                   }

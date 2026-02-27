@@ -83,7 +83,7 @@ export function GastosModule({ expenses, setExpenses, onLog, setActiveTab }) {
                     <div style={{ marginBottom: '3rem', minHeight: '100px', border: '1px solid #ccc', padding: '1rem' }}>
                         <p><strong>CONCEPTO DE:</strong></p>
                         <p>{selectedReceipt.description}</p>
-                        <p style={{ marginTop: '1rem', color: '#666', fontSize: '0.9rem' }}>CategorAa: {selectedReceipt.type}</p>
+                        <p style={{ marginTop: '1rem', color: '#666', fontSize: '0.9rem' }}>Categorias: {selectedReceipt.type}</p>
                     </div>
 
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4rem', marginTop: '5rem' }}>

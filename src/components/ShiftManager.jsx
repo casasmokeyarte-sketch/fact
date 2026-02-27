@@ -2,24 +2,29 @@ import React, { useState } from 'react';
 
 export function ShiftManager({ shift, onStartShift, onEndShift, salesTotal }) {
     const [showReconciliation, setShowReconciliation] = useState(false);
-    const [physicalCash, setPhysicalCash] = useState(0);
+    const [physicalCashInput, setPhysicalCashInput] = useState('');
     const [adminAuth, setAdminAuth] = useState('');
 
+    const parseMoneyInput = (value) => Number(String(value || '').replace(/[^\d]/g, '')) || 0;
+
     const theoreticalBalance = shift ? (shift.initialCash + salesTotal) : 0;
+    const physicalCash = parseMoneyInput(physicalCashInput);
     const discrepancy = physicalCash - theoreticalBalance;
 
     const handleEndAttempt = () => {
         if (Math.abs(discrepancy) > 1) {
-            const pass = prompt("DESCUADRE DETECTADO. Si no coincide con lo fAsico, no puede cerrar. Ingrese clave Admin para autorizar cierre con descuadre:");
+            const pass = prompt("DESCUADRE DETECTADO. Si no coincide con lo Fisicoco, no puede cerrar. Ingrese clave Admin para autorizar cierre con descuadre:");
             if (pass === 'Admin') {
                 onEndShift({ physicalCash, theoreticalBalance, discrepancy, authorized: true });
                 setShowReconciliation(false);
+                setPhysicalCashInput('');
             } else {
                 alert("Clave incorrecta o no autorizada. Debe cuadrar la caja.");
             }
         } else {
             onEndShift({ physicalCash, theoreticalBalance, discrepancy: 0, authorized: false });
             setShowReconciliation(false);
+            setPhysicalCashInput('');
         }
     };
 
@@ -74,11 +79,13 @@ export function ShiftManager({ shift, onStartShift, onEndShift, salesTotal }) {
                         </div>
 
                         <div className="input-group">
-                            <label className="input-label">Efectivo FAsico Real ($)</label>
+                            <label className="input-label">Efectivo Fisicoco Real ($)</label>
                             <input
-                                type="number" className="input-field"
-                                value={physicalCash}
-                                onChange={e => setPhysicalCash(Number(e.target.value))}
+                                type="text" className="input-field"
+                                value={physicalCashInput}
+                                onChange={(e) => setPhysicalCashInput(e.target.value)}
+                                inputMode="numeric"
+                                placeholder="Ej: 150000"
                                 style={{ fontSize: '1.5rem', height: 'auto' }}
                             />
                         </div>

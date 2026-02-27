@@ -18,6 +18,7 @@ export const PAYMENT_MODES = {
 
 export const CREDIT_LEVELS = {
     ESTANDAR: { label: 'EstAndar (Sin Credito)', discount: 0, maxInvoice: 0 },
+    CREDITO_SIN_DESCUENTO: { label: 'Credito Sin Descuento', discount: 0, maxInvoice: 0 },
     NIVEL_1: { label: 'Nivel 1', discount: 5, maxInvoice: 150000 },
     NIVEL_2: { label: 'Nivel 2', discount: 10, maxInvoice: 270000 },
     NIVEL_3: { label: 'Nivel 3', discount: 15, maxInvoice: 350000 },
