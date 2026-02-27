@@ -230,7 +230,24 @@ export function SystemHelpBubble() {
           assistantReply = String(result.answer);
         }
       } catch {
-        assistantReply = `${assistantReply} (Usando respaldo local: no se pudo conectar al asistente remoto.)`;
+        assistantReply = `${assistantReply} (Respaldo local: no se pudo conectar con Electron.)`;
+      }
+    } else if (isSystemScopedQuestion(userQuestion)) {
+      try {
+        const response = await fetch('/api/company-ai', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            question: userQuestion,
+            context: buildAssistantContext(),
+          }),
+        });
+        if (response.ok) {
+          const result = await response.json();
+          if (result?.answer) assistantReply = String(result.answer);
+        }
+      } catch {
+        assistantReply = `${assistantReply} (Respaldo local: no se pudo conectar con API web.)`;
       }
     }
 
