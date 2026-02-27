@@ -161,12 +161,21 @@ export const dataService = {
     };
 
     if (isUuid(payload.id)) {
-      // Do not overwrite owner on existing products.
+      // Do not overwrite owner on existing products. Update first; insert only if missing.
       const { user_id, ...updatePayload } = payload;
-      const { data, error } = await withRetry(() => supabase.from('products').upsert(updatePayload).select());
-      if (!error) return data;
+      const { data: updatedData, error: updateError } = await withRetry(() =>
+        supabase.from('products').update(updatePayload).eq('id', payload.id).select()
+      );
+      if (updateError) throw updateError;
+      if ((updatedData || []).length > 0) return updatedData;
 
-      if (!isBarcodeUniqueError(error) || !payload.barcode) throw error;
+      const insertWithIdPayload = { ...removeInvalidUuidId(payload), id: payload.id };
+      const { data: insertedData, error: insertError } = await withRetry(() =>
+        supabase.from('products').insert(insertWithIdPayload).select()
+      );
+      if (!insertError) return insertedData;
+
+      if (!isBarcodeUniqueError(insertError) || !payload.barcode) throw insertError;
 
       const fallbackUpdatePayload = removeInvalidUuidId(updatePayload);
       const { data: byBarcodeData, error: byBarcodeError } = await withRetry(() =>
