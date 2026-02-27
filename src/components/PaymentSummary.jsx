@@ -17,12 +17,29 @@ export function PaymentSummary({
   selectedClientPendingBalance = 0,
   selectedClientAvailableCredit = 0,
   items,
-  adminPass
+  adminPass,
+  currentUser,
+  onCreateRemoteAuthRequest,
+  remoteAuthDecisionByRequestId = {}
 }) {
+  const normalizeRole = (role) => {
+    const normalized = String(role || '').trim().toLowerCase();
+    if (!normalized) return '';
+    if (normalized === 'administrador' || normalized === 'admin') return 'Administrador';
+    if (normalized.includes('supervisor')) return 'Supervisor';
+    if (normalized.includes('cajer')) return 'Cajero';
+    return String(role || '').trim();
+  };
+
   const [extraDiscount, setExtraDiscount] = useState(0);
+  const [authNote, setAuthNote] = useState('');
+  const [activeRemoteRequestId, setActiveRemoteRequestId] = useState('');
+  const [isRequestingRemoteAuth, setIsRequestingRemoteAuth] = useState(false);
   const total = subtotal + (Number(deliveryFee) || 0) - (Number(extraDiscount) || 0);
+  const normalizedRole = normalizeRole(currentUser?.role);
   const isOcasional = clientName === CLIENT_OCASIONAL;
   const isStandardClient = (selectedClient?.creditLevel || selectedClient?.credit_level) === 'ESTANDAR';
+  const shouldUseRemoteAuth = !!onCreateRemoteAuthRequest && !['Administrador', 'Supervisor'].includes(normalizedRole);
 
   const [cashReceived, setCashReceived] = useState(0);
   const [isMixed, setIsMixed] = useState(false);
@@ -36,15 +53,67 @@ export function PaymentSummary({
   const clientLimit = selectedClient?.creditLimit || 0;
   const limitExceeded = isCredit && creditPortion > clientLimit;
   const excess = creditPortion - clientLimit;
+  const hasGift = items.some(item => item.isGift);
+  const hasExtraDiscount = Number(extraDiscount) > 0;
+  const isTransferWithoutRef = ![PAYMENT_MODES.CONTADO, PAYMENT_MODES.CREDITO].includes(paymentMode) && !paymentRef;
+  const needsApproval = hasGift || hasExtraDiscount || isTransferWithoutRef;
+  const currentRemoteDecision = activeRemoteRequestId
+    ? remoteAuthDecisionByRequestId?.[activeRemoteRequestId]
+    : null;
+  const reasonType = hasGift
+    ? 'REGALO'
+    : hasExtraDiscount
+      ? 'DESCUENTO_EXTRA'
+      : isTransferWithoutRef
+        ? 'TRANSFERENCIA_SIN_REFERENCIA'
+        : 'OTRO';
+  const reasonLabel = hasGift
+    ? 'Regalo'
+    : hasExtraDiscount
+      ? 'Descuento extraordinario'
+      : isTransferWithoutRef
+        ? 'Transferencia sin referencia'
+        : 'Autorizacion manual';
 
-  const handleAuthAction = (action) => {
-    const hasGift = items.some(item => item.isGift);
-    const hasExtraDiscount = Number(extraDiscount) > 0;
-    const isTransferWithoutRef = ![PAYMENT_MODES.CONTADO, PAYMENT_MODES.CREDITO].includes(paymentMode) && !paymentRef;
-
-    const needsApproval = hasGift || hasExtraDiscount || isTransferWithoutRef;
-
+  const handleAuthAction = async (action) => {
     if (needsApproval) {
+      if (shouldUseRemoteAuth) {
+        if (activeRemoteRequestId) {
+          if (currentRemoteDecision === 'APPROVED') {
+            setActiveRemoteRequestId('');
+            setAuthNote('');
+            action();
+            return;
+          }
+          if (currentRemoteDecision === 'REJECTED') {
+            setActiveRemoteRequestId('');
+            alert('La solicitud fue rechazada por Administracion.');
+            return;
+          }
+          alert('La solicitud sigue pendiente de respuesta de Administracion.');
+          return;
+        }
+
+        try {
+          setIsRequestingRemoteAuth(true);
+          const requestId = await onCreateRemoteAuthRequest({
+            reasonType,
+            reasonLabel,
+            note: String(authNote || '').trim(),
+            clientName,
+            total: Number(total || 0),
+            paymentMode: isMixed ? 'Mixto' : paymentMode,
+          });
+          if (requestId) {
+            setActiveRemoteRequestId(requestId);
+            alert('Solicitud enviada. Esperando respuesta de Administracion.');
+          }
+        } finally {
+          setIsRequestingRemoteAuth(false);
+        }
+        return;
+      }
+
       const pass = prompt(`Requiere Autorizacion Admin (${hasGift ? 'Regalo' : hasExtraDiscount ? 'Descuento' : 'Sin Ref Transferencia'}):\nIngrese clave de administrador:`);
       if (pass === adminPass || pass === 'admin123') {
         action();
@@ -70,6 +139,18 @@ export function PaymentSummary({
       onFacturar(null, extraDiscount);
     }
   };
+
+  React.useEffect(() => {
+    if (!activeRemoteRequestId) return;
+    if (currentRemoteDecision === 'REJECTED') {
+      alert('Administracion rechazo la solicitud de autorizacion.');
+      setActiveRemoteRequestId('');
+      return;
+    }
+    if (currentRemoteDecision === 'APPROVED') {
+      alert('Autorizacion aprobada. Ya puede facturar.');
+    }
+  }, [activeRemoteRequestId, currentRemoteDecision]);
 
   const handlePrintInvoice = (mode) => {
     const previewInvoice = {
@@ -156,6 +237,27 @@ export function PaymentSummary({
         />
       </div>
 
+      {shouldUseRemoteAuth && needsApproval && (
+        <div className="card" style={{ backgroundColor: '#fff7ed', border: '1px solid #fed7aa', marginBottom: '1rem' }}>
+          <p style={{ margin: '0 0 0.5rem', fontWeight: 600 }}>Autorizacion remota requerida</p>
+          <p style={{ margin: '0 0 0.5rem', fontSize: '0.85rem', color: '#9a3412' }}>
+            Motivo: {reasonLabel}
+          </p>
+          <textarea
+            className="input-field"
+            rows={2}
+            value={authNote}
+            onChange={(e) => setAuthNote(e.target.value)}
+            placeholder="Nota breve para administracion (opcional)"
+          />
+          {activeRemoteRequestId && (
+            <p style={{ margin: '0.5rem 0 0', fontSize: '0.82rem', color: '#334155' }}>
+              Estado solicitud: {currentRemoteDecision === 'APPROVED' ? 'Aprobada' : currentRemoteDecision === 'REJECTED' ? 'Rechazada' : 'Pendiente'} ({activeRemoteRequestId})
+            </p>
+          )}
+        </div>
+      )}
+
       <div className="input-group" style={{ border: '2px solid #e2e8f0', padding: '10px', borderRadius: '8px' }}>
         <label className="input-label">Efectivo Recibido (Abono / Pago)</label>
         <input
@@ -226,10 +328,10 @@ export function PaymentSummary({
         <button
           className="btn btn-primary"
           style={{ flex: 1, backgroundColor: limitExceeded ? '#94a3b8' : '' }}
-          onClick={() => handleAuthAction(onFinalFacturar)}
-          disabled={limitExceeded}
+          onClick={() => { handleAuthAction(onFinalFacturar); }}
+          disabled={limitExceeded || isRequestingRemoteAuth}
         >
-          {limitExceeded ? 'Limite Excedido' : 'Facturar'}
+          {limitExceeded ? 'Limite Excedido' : isRequestingRemoteAuth ? 'Enviando Solicitud...' : 'Facturar'}
         </button>
         <button className="btn" onClick={() => handlePrintInvoice('58mm')} title="Imprimir 58mm">58mm</button>
         <button className="btn" onClick={() => handlePrintInvoice('a4')} title="Imprimir A4">A4</button>
