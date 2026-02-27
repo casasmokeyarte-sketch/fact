@@ -145,6 +145,7 @@ const PRODUCTS_CACHE_STORAGE_KEY = 'fact_products_cache';
 const CLIENTS_CACHE_STORAGE_KEY = 'fact_clients_cache';
 const INVOICE_SEQUENCE_STORAGE_KEY = 'fact_invoice_sequence';
 const REMOTE_AUTH_REQUESTS_STORAGE_KEY = 'fact_remote_auth_requests';
+const AUTH_REQUEST_LOG_PREFIX = 'AUTH_REQUEST_EVENT::';
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const isUuid = (value) => typeof value === 'string' && UUID_REGEX.test(value);
@@ -221,6 +222,79 @@ const dedupeProducts = (rows) => {
     ...byBarcode.values(),
     ...bySignature.values()
   ]));
+};
+
+const parseAuthRequestLogEvent = (details) => {
+  const raw = String(details || '');
+  if (!raw.startsWith(AUTH_REQUEST_LOG_PREFIX)) return null;
+  try {
+    const parsed = JSON.parse(raw.slice(AUTH_REQUEST_LOG_PREFIX.length));
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
+const buildRemoteAuthRequestsFromLogs = (logs) => {
+  const byId = new Map();
+  const ordered = [...(logs || [])].sort((a, b) => {
+    const aTime = new Date(a?.timestamp || 0).getTime();
+    const bTime = new Date(b?.timestamp || 0).getTime();
+    return aTime - bTime;
+  });
+
+  ordered.forEach((log) => {
+    if (log?.module !== 'Autorizaciones') return;
+    const event = parseAuthRequestLogEvent(log?.details);
+    if (!event?.requestId) return;
+
+    if (event.type === 'CREATED') {
+      const existing = byId.get(event.requestId);
+      byId.set(event.requestId, {
+        ...(existing || {}),
+        id: event.requestId,
+        status: existing?.status || 'PENDING',
+        createdAt: event.createdAt || log?.timestamp || new Date().toISOString(),
+        requestedBy: event.requestedBy || existing?.requestedBy || null,
+        reasonType: event.reasonType || existing?.reasonType || '',
+        reasonLabel: event.reasonLabel || existing?.reasonLabel || '',
+        note: event.note || existing?.note || '',
+        clientName: event.clientName || existing?.clientName || '',
+        total: Number(event.total ?? existing?.total ?? 0),
+        paymentMode: event.paymentMode || existing?.paymentMode || '',
+      });
+      return;
+    }
+
+    if (event.type === 'RESOLVED') {
+      const existing = byId.get(event.requestId) || {
+        id: event.requestId,
+        createdAt: log?.timestamp || new Date().toISOString(),
+      };
+      byId.set(event.requestId, {
+        ...existing,
+        status: event.decision === 'APPROVED' ? 'APPROVED' : 'REJECTED',
+        resolvedAt: event.resolvedAt || log?.timestamp || new Date().toISOString(),
+        resolvedBy: event.resolvedBy || existing?.resolvedBy || null,
+      });
+    }
+  });
+
+  return Array.from(byId.values()).sort((a, b) => (
+    new Date(b?.createdAt || 0).getTime() - new Date(a?.createdAt || 0).getTime()
+  ));
+};
+
+const mergeRemoteAuthRequests = (localRequests, syncedRequests) => {
+  const byId = new Map();
+  [...(localRequests || []), ...(syncedRequests || [])].forEach((request) => {
+    if (!request?.id) return;
+    const existing = byId.get(request.id);
+    byId.set(request.id, existing ? { ...existing, ...request } : request);
+  });
+  return Array.from(byId.values())
+    .sort((a, b) => new Date(b?.createdAt || 0).getTime() - new Date(a?.createdAt || 0).getTime())
+    .slice(0, 120);
 };
 
 function App() {
@@ -623,6 +697,7 @@ function App() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'expenses' }, scheduleRealtimeRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'purchases' }, scheduleRealtimeRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'shift_history' }, scheduleRealtimeRefresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'audit_logs' }, scheduleRealtimeRefresh)
       .subscribe();
 
     return () => {
@@ -675,6 +750,12 @@ function App() {
   useEffect(() => {
     localStorage.setItem(REMOTE_AUTH_REQUESTS_STORAGE_KEY, JSON.stringify(remoteAuthRequests.slice(0, 120)));
   }, [remoteAuthRequests]);
+
+  useEffect(() => {
+    const syncedFromCloud = buildRemoteAuthRequestsFromLogs(auditLogs || []);
+    if (syncedFromCloud.length === 0) return;
+    setRemoteAuthRequests((prev) => mergeRemoteAuthRequests(prev, syncedFromCloud));
+  }, [auditLogs]);
 
   useEffect(() => {
     if (activeTab !== 'home' || !shift) return;
@@ -833,7 +914,18 @@ function App() {
     addLog({
       module: 'Autorizaciones',
       action: 'Solicitud creada',
-      details: `${requestRecord.requestedBy.name} solicito ${payload?.reasonLabel || payload?.reasonType || 'autorizacion'} por ${Number(payload?.total || 0).toLocaleString()}`
+      details: `${AUTH_REQUEST_LOG_PREFIX}${JSON.stringify({
+        type: 'CREATED',
+        requestId,
+        createdAt: requestRecord.createdAt,
+        requestedBy: requestRecord.requestedBy,
+        reasonType: requestRecord.reasonType,
+        reasonLabel: requestRecord.reasonLabel,
+        note: requestRecord.note || '',
+        clientName: requestRecord.clientName || '',
+        total: Number(requestRecord.total || 0),
+        paymentMode: requestRecord.paymentMode || ''
+      })}`
     });
 
     return requestId;
@@ -860,7 +952,13 @@ function App() {
     addLog({
       module: 'Autorizaciones',
       action: decision === 'APPROVED' ? 'Solicitud aprobada' : 'Solicitud rechazada',
-      details: `Solicitud ${requestId} resuelta por ${resolvedBy.name}`
+      details: `${AUTH_REQUEST_LOG_PREFIX}${JSON.stringify({
+        type: 'RESOLVED',
+        requestId,
+        decision,
+        resolvedAt: new Date().toISOString(),
+        resolvedBy
+      })}`
     });
   };
 
@@ -1967,7 +2065,7 @@ function App() {
         requests={remoteAuthRequests}
         onResolveRequest={onResolveRemoteAuthRequest}
       />
-      <SystemHelpBubble />
+      <SystemHelpBubble currentUser={currentUser} onLog={addLog} />
     </div>
   )
 }
