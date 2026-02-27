@@ -42,7 +42,9 @@ function isNetworkFetchError(error) {
 }
 
 function isUndefinedColumnError(error) {
-  return String(error?.code || '') === '42703';
+  const code = String(error?.code || '');
+  const blob = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`.toLowerCase();
+  return code === '42703' || code === 'PGRST204' || blob.includes("could not find the 'user_name' column");
 }
 
 async function withRetry(operation, retries = 2, delayMs = 450) {
