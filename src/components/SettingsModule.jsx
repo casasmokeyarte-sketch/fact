@@ -1,10 +1,13 @@
 import React, { useState } from 'react';
+import { playSound } from '../lib/soundService';
 
 export function SettingsModule({
     users, setUsers,
     paymentMethods, setPaymentMethods,
     categories, setCategories,
-    onResetSystem, onSaveSystem
+    onResetSystem, onSaveSystem,
+    soundEnabled, setSoundEnabled,
+    soundVolume, setSoundVolume
 }) {
     const [subTab, setSubTab] = useState('usuarios');
 
@@ -218,21 +221,50 @@ export function SettingsModule({
             )}
 
             {subTab === 'sistema' && (
-                <div className="card" style={{ border: '2px solid #fee2e2' }}>
-                    <h3 style={{ marginTop: 0, color: '#991b1b' }}>Zona de Peligro - Control del Sistema</h3>
-                    <p>Estas acciones afectan a toda la base de datos del sistema.</p>
-
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem', marginTop: '2rem' }}>
-                        <div className="card" style={{ textAlign: 'center' }}>
-                            <h4>{'\uD83D\uDCBE'} Guardar Respaldo</h4>
-                            <p style={{ fontSize: '0.9em' }}>Descarga un archivo JSON con toda la informaciAn actual (Ventas, Clientes, Inventario, BitAcora).</p>
-                            <button className="btn btn-primary" style={{ width: '100%' }} onClick={onSaveSystem}>Guardar Sistema General</button>
+                <div style={{ display: 'grid', gap: '1rem' }}>
+                    <div className="card">
+                        <h3 style={{ marginTop: 0 }}>Sonidos del Sistema</h3>
+                        <div style={{ display: 'grid', gap: '0.75rem' }}>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                                <input
+                                    type="checkbox"
+                                    checked={!!soundEnabled}
+                                    onChange={(e) => setSoundEnabled?.(e.target.checked)}
+                                />
+                                Activar sonidos de acciones y alertas
+                            </label>
+                            <div>
+                                <label className="input-label">Volumen ({Math.round(Number(soundVolume || 0) * 100)}%)</label>
+                                <input
+                                    type="range"
+                                    min="0.01"
+                                    max="0.30"
+                                    step="0.01"
+                                    value={Number(soundVolume || 0.08)}
+                                    onChange={(e) => setSoundVolume?.(Number(e.target.value))}
+                                    style={{ width: '100%' }}
+                                />
+                            </div>
+                            <button className="btn" onClick={() => playSound('notify')}>Probar sonido</button>
                         </div>
+                    </div>
 
-                        <div className="card" style={{ textAlign: 'center', borderColor: '#f87171' }}>
-                            <h4 style={{ color: '#b91c1c' }}>{'\uD83E\uDDE8'} Borrar Sistema</h4>
-                            <p style={{ fontSize: '0.9em' }}>Elimina permanentemente todos los datos y reinicia el sistema a valores de fAbrica. No se puede deshacer.</p>
-                            <button className="btn" style={{ width: '100%', backgroundColor: '#ef4444', color: 'white' }} onClick={onResetSystem}>BORRAR TODO EL SISTEMA</button>
+                    <div className="card" style={{ border: '2px solid #fee2e2' }}>
+                        <h3 style={{ marginTop: 0, color: '#991b1b' }}>Zona de Peligro - Control del Sistema</h3>
+                        <p>Estas acciones afectan a toda la base de datos del sistema.</p>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem', marginTop: '2rem' }}>
+                            <div className="card" style={{ textAlign: 'center' }}>
+                                <h4>{'\uD83D\uDCBE'} Guardar Respaldo</h4>
+                                <p style={{ fontSize: '0.9em' }}>Descarga un archivo JSON con toda la informaciAn actual (Ventas, Clientes, Inventario, BitAcora).</p>
+                                <button className="btn btn-primary" style={{ width: '100%' }} onClick={onSaveSystem}>Guardar Sistema General</button>
+                            </div>
+
+                            <div className="card" style={{ textAlign: 'center', borderColor: '#f87171' }}>
+                                <h4 style={{ color: '#b91c1c' }}>{'\uD83E\uDDE8'} Borrar Sistema</h4>
+                                <p style={{ fontSize: '0.9em' }}>Elimina permanentemente todos los datos y reinicia el sistema a valores de fAbrica. No se puede deshacer.</p>
+                                <button className="btn" style={{ width: '100%', backgroundColor: '#ef4444', color: 'white' }} onClick={onResetSystem}>BORRAR TODO EL SISTEMA</button>
+                            </div>
                         </div>
                     </div>
                 </div>

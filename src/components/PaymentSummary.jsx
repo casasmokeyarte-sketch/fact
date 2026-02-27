@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { CLIENT_OCASIONAL, PAYMENT_MODES } from '../constants';
 import { printInvoiceDocument } from '../lib/printInvoice.js';
+import { playSound } from '../lib/soundService';
 
 export function PaymentSummary({
   subtotal,
@@ -82,14 +83,17 @@ export function PaymentSummary({
           if (currentRemoteDecision === 'APPROVED') {
             setActiveRemoteRequestId('');
             setAuthNote('');
+            playSound('success');
             action();
             return;
           }
           if (currentRemoteDecision === 'REJECTED') {
             setActiveRemoteRequestId('');
+            playSound('error');
             alert('La solicitud fue rechazada por Administracion.');
             return;
           }
+          playSound('notify');
           alert('La solicitud sigue pendiente de respuesta de Administracion.');
           return;
         }
@@ -106,6 +110,7 @@ export function PaymentSummary({
           });
           if (requestId) {
             setActiveRemoteRequestId(requestId);
+            playSound('notify');
             alert('Solicitud enviada. Esperando respuesta de Administracion.');
           }
         } finally {
@@ -116,8 +121,10 @@ export function PaymentSummary({
 
       const pass = prompt(`Requiere Autorizacion Admin (${hasGift ? 'Regalo' : hasExtraDiscount ? 'Descuento' : 'Sin Ref Transferencia'}):\nIngrese clave de administrador:`);
       if (pass === adminPass || pass === 'admin123') {
+        playSound('success');
         action();
       } else {
+        playSound('error');
         alert('Clave incorrecta o accion cancelada.');
       }
     } else {
@@ -143,11 +150,13 @@ export function PaymentSummary({
   React.useEffect(() => {
     if (!activeRemoteRequestId) return;
     if (currentRemoteDecision === 'REJECTED') {
+      playSound('error');
       alert('Administracion rechazo la solicitud de autorizacion.');
       setActiveRemoteRequestId('');
       return;
     }
     if (currentRemoteDecision === 'APPROVED') {
+      playSound('success');
       alert('Autorizacion aprobada. Ya puede facturar.');
     }
   }, [activeRemoteRequestId, currentRemoteDecision]);

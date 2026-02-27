@@ -26,6 +26,7 @@ import { ReportsModule } from './components/ReportsModule'
 import { ShiftHistoryModule } from './components/ShiftHistoryModule'
 import { SystemHelpBubble } from './components/SystemHelpBubble'
 import { printShiftClosure } from './lib/printReports'
+import { playSound, setSoundEnabled, setSoundVolume } from './lib/soundService'
 
 import { dataService } from './lib/dataService'
 import { getProfile } from './lib/databaseService'
@@ -145,6 +146,8 @@ const PRODUCTS_CACHE_STORAGE_KEY = 'fact_products_cache';
 const CLIENTS_CACHE_STORAGE_KEY = 'fact_clients_cache';
 const INVOICE_SEQUENCE_STORAGE_KEY = 'fact_invoice_sequence';
 const PAYMENT_METHODS_STORAGE_KEY = 'fact_payment_methods';
+const SOUND_ENABLED_STORAGE_KEY = 'fact_sound_enabled';
+const SOUND_VOLUME_STORAGE_KEY = 'fact_sound_volume';
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DEFAULT_PAYMENT_METHODS = ['Efectivo', 'Credito', 'Transferencia', 'Tarjeta'];
 const REMOTE_AUTH_REQUEST_ACTION = 'Solicitud Autorizacion Remota';
@@ -327,12 +330,23 @@ function App() {
   const [quickLookupResult, setQuickLookupResult] = useState(null);
   const [quickLookupHistory, setQuickLookupHistory] = useState([]);
   const [quickTrayOpen, setQuickTrayOpen] = useState(true);
+  const [soundEnabled, setSoundEnabledState] = useState(() => {
+    const raw = localStorage.getItem(SOUND_ENABLED_STORAGE_KEY);
+    return raw === null ? true : raw === '1';
+  });
+  const [soundVolume, setSoundVolumeState] = useState(() => {
+    const raw = Number(localStorage.getItem(SOUND_VOLUME_STORAGE_KEY) || 0.08);
+    if (!Number.isFinite(raw)) return 0.08;
+    return Math.min(0.3, Math.max(0.01, raw));
+  });
   const [remoteAuthPanelOpen, setRemoteAuthPanelOpen] = useState(false);
   const [shiftBoardText, setShiftBoardText] = useState('');
   const [shiftBoardReplyDrafts, setShiftBoardReplyDrafts] = useState({});
   const quickScanInputRef = useRef(null);
   const quickScanBufferRef = useRef('');
   const quickScanLastKeyAtRef = useRef(0);
+  const prevPendingAuthCountRef = useRef(0);
+  const prevBoardNoteCountRef = useRef(0);
   const realtimeRefreshTimeoutRef = useRef(null);
   const lastAuthEventRef = useRef({ event: null, userId: null, at: 0 });
   const pendingProductsSyncRef = useRef(false);
@@ -750,6 +764,16 @@ function App() {
   }, [paymentMethods]);
 
   useEffect(() => {
+    setSoundEnabled(soundEnabled);
+    localStorage.setItem(SOUND_ENABLED_STORAGE_KEY, soundEnabled ? '1' : '0');
+  }, [soundEnabled]);
+
+  useEffect(() => {
+    setSoundVolume(soundVolume);
+    localStorage.setItem(SOUND_VOLUME_STORAGE_KEY, String(soundVolume));
+  }, [soundVolume]);
+
+  useEffect(() => {
     if (activeTab !== 'home' || !shift) return;
 
     const timer = setTimeout(() => {
@@ -968,6 +992,7 @@ function App() {
       action: REMOTE_AUTH_REQUEST_ACTION,
       details
     });
+    playSound('notify');
     return requestId;
   };
 
@@ -993,6 +1018,7 @@ function App() {
       action: REMOTE_AUTH_RESPONSE_ACTION,
       details
     });
+    playSound(decision === 'APPROVED' ? 'success' : 'error');
   };
 
   const shiftBoardNotes = useMemo(() => {
@@ -1065,6 +1091,7 @@ function App() {
       })
     });
     setShiftBoardText('');
+    playSound('notify');
   };
 
   const postShiftBoardReply = async (noteId) => {
@@ -1084,6 +1111,7 @@ function App() {
       })
     });
     setShiftBoardReplyDrafts((prev) => ({ ...prev, [noteId]: '' }));
+    playSound('action');
   };
 
   const toggleShiftBoardResolved = async (note) => {
@@ -1099,7 +1127,24 @@ function App() {
         changedByName: currentUser?.name || currentUser?.email || 'Usuario'
       })
     });
+    playSound(note?.resolved ? 'warn' : 'success');
   };
+
+  useEffect(() => {
+    const current = pendingRemoteAuthRequests.length;
+    if (current > prevPendingAuthCountRef.current) {
+      playSound('notify');
+    }
+    prevPendingAuthCountRef.current = current;
+  }, [pendingRemoteAuthRequests.length]);
+
+  useEffect(() => {
+    const current = shiftBoardNotes.length;
+    if (current > prevBoardNoteCountRef.current) {
+      playSound('notify');
+    }
+    prevBoardNoteCountRef.current = current;
+  }, [shiftBoardNotes.length]);
 
   const handleLogin = (user, pass) => {
     const foundUser = users.find(u => u.username === user && u.password === pass);
@@ -1118,6 +1163,7 @@ function App() {
     setUserCashBalance(currentUser, startCash);
     saveOpenShift(currentUser?.id, openShift);
     addLog({ module: 'Jornada', action: 'Inicio Jornada', details: `Iniciada con base de $${startCash}` });
+    playSound('success');
   };
 
   const isDateInRange = (dateValue, startIso, endIso) => {
@@ -1287,6 +1333,7 @@ function App() {
     printShiftClosure(shiftData, 'a4');
 
     alert("Jornada cerrada con exito.");
+    playSound('success');
 
     setUserCashBalance(currentUser, data.physicalCash);
     setShift(null);
@@ -1344,27 +1391,36 @@ function App() {
   };
 
   const handleFacturar = async (mixedData = null, extraDiscount = 0) => {
-    if (items.length === 0) return alert("Agregue productos primero");
+    if (items.length === 0) {
+      playSound('warn');
+      return alert("Agregue productos primero");
+    }
     if (selectedClient?.blocked) {
+      playSound('error');
       return alert("Este cliente esta bloqueado por Administracion. No puede facturar hasta ser desbloqueado.");
     }
 
     // Stock Validation
     for (const item of items) {
       if ((stock.ventas[item.id] || 0) < item.quantity) {
+        playSound('error');
         return alert(`Inventario insuficiente para ${item.name}. Solo hay ${stock.ventas[item.id] || 0} en punto de venta.`);
       }
     }
 
     // Reference validation for non-Cash/Credit
     const needsRef = ![PAYMENT_MODES.CONTADO, PAYMENT_MODES.CREDITO].includes(paymentMode);
-    if (needsRef && !paymentRef) return alert("Debe ingresar el numero de referencia de la transferencia");
+    if (needsRef && !paymentRef) {
+      playSound('warn');
+      return alert("Debe ingresar el numero de referencia de la transferencia");
+    }
 
     // Credit Limit check (Individual Invoice Max)
     const isCreditPortion = paymentMode === PAYMENT_MODES.CREDITO || mixedData?.credit > 0;
     if (isCreditPortion && selectedClient) {
       const creditPortion = mixedData ? mixedData.credit : (subtotal + deliveryFee - extraDiscount);
       if (creditPortion > selectedClient.creditLimit) {
+        playSound('warn');
         return alert(`Supera el limite de factura para este nivel de credito (${selectedClient.creditLimit.toLocaleString()}). Realice un abono para continuar.`);
       }
     }
@@ -1454,6 +1510,7 @@ function App() {
     persistInvoice();
 
     alert("Venta realizada con exito");
+    playSound('invoice');
 
     addLog({
       module: 'Facturacion',
@@ -1493,6 +1550,7 @@ function App() {
     });
 
     alert(`Factura ${invoice.id} eliminada y stock actualizado.`);
+    playSound('warn');
   };
 
   const cleanScannedCode = (value) => String(value ?? '').trim().replace(/\s+/g, '');
@@ -2313,6 +2371,10 @@ function App() {
               paymentMethods={paymentMethods} setPaymentMethods={setPaymentMethods}
               categories={categories} setCategories={setCategories}
               onResetSystem={onResetSystem} onSaveSystem={onSaveSystem}
+              soundEnabled={soundEnabled}
+              setSoundEnabled={setSoundEnabledState}
+              soundVolume={soundVolume}
+              setSoundVolume={setSoundVolumeState}
             />
           )}
           {activeTab === 'trueque' && (
