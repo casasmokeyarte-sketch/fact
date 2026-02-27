@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import './design-system.css'
 import { CLIENT_OCASIONAL, PAYMENT_MODES, COMPANY_INFO } from './constants'
 import { AuthPage } from './components/AuthPage'
@@ -30,6 +30,7 @@ import { OperationsBoardBubble } from './components/OperationsBoardBubble'
 import { dataService } from './lib/dataService'
 import { getProfile } from './lib/databaseService'
 import { initEmailJS } from './lib/emailService'
+import { playSound } from './lib/soundService'
 import { supabase } from './lib/supabaseClient'
 import { useProfile } from './lib/useSupabase'
 import modulesBg from './assets/modules-bg.png'
@@ -146,6 +147,9 @@ const CLIENTS_CACHE_STORAGE_KEY = 'fact_clients_cache';
 const INVOICE_SEQUENCE_STORAGE_KEY = 'fact_invoice_sequence';
 const REMOTE_AUTH_REQUESTS_STORAGE_KEY = 'fact_remote_auth_requests';
 const AUTH_REQUEST_LOG_PREFIX = 'AUTH_REQUEST_EVENT::';
+const BOARD_NOTE_LOG_PREFIX = 'BOARD_NOTE_EVENT::';
+const INVOICE_DRAFTS_STORAGE_KEY = 'fact_invoice_drafts';
+const NOTIFICATIONS_SEEN_AT_STORAGE_KEY = 'fact_notifications_seen_at';
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const isUuid = (value) => typeof value === 'string' && UUID_REGEX.test(value);
@@ -297,6 +301,26 @@ const mergeRemoteAuthRequests = (localRequests, syncedRequests) => {
     .slice(0, 120);
 };
 
+const parseBoardNoteLogEvent = (details) => {
+  const raw = String(details || '');
+  if (!raw.startsWith(BOARD_NOTE_LOG_PREFIX)) return null;
+  try {
+    const parsed = JSON.parse(raw.slice(BOARD_NOTE_LOG_PREFIX.length));
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
+const buildBoardNotesFromLogs = (logs) => {
+  return (logs || [])
+    .filter((log) => log?.module === 'Pizarra')
+    .map((log) => parseBoardNoteLogEvent(log?.details))
+    .filter(Boolean)
+    .sort((a, b) => new Date(b?.createdAt || 0).getTime() - new Date(a?.createdAt || 0).getTime())
+    .slice(0, 60);
+};
+
 function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
@@ -380,6 +404,21 @@ function App() {
       return [];
     }
   });
+  const [invoiceDrafts, setInvoiceDrafts] = useState(() => {
+    try {
+      const raw = localStorage.getItem(INVOICE_DRAFTS_STORAGE_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  });
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [notificationsSeenAt, setNotificationsSeenAt] = useState(() => {
+    const raw = Number(localStorage.getItem(NOTIFICATIONS_SEEN_AT_STORAGE_KEY) || 0);
+    return Number.isFinite(raw) ? raw : 0;
+  });
+  const lastNotificationSoundAtRef = useRef(0);
 
   const getActiveTabStorageKey = (userId) => `${ACTIVE_TAB_STORAGE_KEY}_${userId}`;
   const getQuickTrayStorageKey = (userId) => `${QUICK_TRAY_OPEN_STORAGE_KEY}_${userId || 'anon'}`;
@@ -752,6 +791,14 @@ function App() {
   }, [remoteAuthRequests]);
 
   useEffect(() => {
+    localStorage.setItem(INVOICE_DRAFTS_STORAGE_KEY, JSON.stringify((invoiceDrafts || []).slice(0, 120)));
+  }, [invoiceDrafts]);
+
+  useEffect(() => {
+    localStorage.setItem(NOTIFICATIONS_SEEN_AT_STORAGE_KEY, String(Number(notificationsSeenAt || 0)));
+  }, [notificationsSeenAt]);
+
+  useEffect(() => {
     const syncedFromCloud = buildRemoteAuthRequestsFromLogs(auditLogs || []);
     if (syncedFromCloud.length === 0) return;
     setRemoteAuthRequests((prev) => mergeRemoteAuthRequests(prev, syncedFromCloud));
@@ -962,12 +1009,173 @@ function App() {
     });
   };
 
+  const onCreateBoardNote = async (text) => {
+    const cleanText = String(text || '').trim();
+    if (!cleanText) return false;
+    const payload = {
+      id: `BN-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
+      text: cleanText,
+      createdAt: new Date().toISOString(),
+      author: currentUser?.name || currentUser?.email || 'Usuario'
+    };
+
+    try {
+      await addLog({
+        module: 'Pizarra',
+        action: 'Nota',
+        details: `${BOARD_NOTE_LOG_PREFIX}${JSON.stringify(payload)}`
+      });
+      return true;
+    } catch (e) {
+      console.error('No se pudo guardar nota en pizarra:', e);
+      alert('No se pudo guardar la nota en la nube.');
+      return false;
+    }
+  };
+
+  const resetInvoiceComposer = () => {
+    setItems([]);
+    setClientName(CLIENT_OCASIONAL);
+    setSelectedClient(null);
+    setDeliveryFee(0);
+    setPaymentMode(PAYMENT_MODES.CONTADO);
+    setPaymentRef('');
+  };
+
+  const onSaveInvoiceDraft = async (draftExtra = {}) => {
+    if ((items || []).length === 0) {
+      alert('No hay productos para guardar en borrador.');
+      return;
+    }
+
+    const draft = {
+      id: `DF-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
+      savedAt: new Date().toISOString(),
+      savedBy: { id: currentUser?.id || null, name: currentUser?.name || 'Usuario' },
+      clientName,
+      clientDoc: selectedClient?.document || 'N/A',
+      selectedClient,
+      items,
+      subtotal,
+      deliveryFee,
+      total: subtotal + deliveryFee - Number(draftExtra?.extraDiscount || 0),
+      paymentMode,
+      paymentRef,
+      ...draftExtra,
+    };
+
+    setInvoiceDrafts((prev) => [draft, ...prev].slice(0, 120));
+    addLog({
+      module: 'Facturacion',
+      action: 'Guardar borrador',
+      details: `Borrador ${draft.id} guardado por ${draft.savedBy.name}`
+    });
+    resetInvoiceComposer();
+    alert('Factura guardada en borrador.');
+  };
+
+  const onLoadInvoiceDraft = (draftId) => {
+    const draft = (invoiceDrafts || []).find((d) => d.id === draftId);
+    if (!draft) return;
+
+    setClientName(draft.clientName || CLIENT_OCASIONAL);
+    const draftDoc = String(draft?.selectedClient?.document || draft?.clientDoc || '').trim();
+    const matchedClient = (registeredClients || []).find((c) => String(c?.document || '').trim() === draftDoc) || draft.selectedClient || null;
+    setSelectedClient(matchedClient);
+    setItems(Array.isArray(draft.items) ? draft.items : []);
+    setDeliveryFee(Number(draft.deliveryFee || 0));
+    setPaymentMode(draft.paymentMode || PAYMENT_MODES.CONTADO);
+    setPaymentRef(draft.paymentRef || '');
+    setActiveTab('facturacion');
+
+    setInvoiceDrafts((prev) => prev.filter((d) => d.id !== draftId));
+    addLog({
+      module: 'Facturacion',
+      action: 'Cargar borrador',
+      details: `Borrador ${draftId} cargado por ${currentUser?.name || 'Usuario'}`
+    });
+  };
+
+  const onDeleteInvoiceDraft = (draftId) => {
+    if (!draftId) return;
+    setInvoiceDrafts((prev) => prev.filter((d) => d.id !== draftId));
+    addLog({
+      module: 'Facturacion',
+      action: 'Eliminar borrador',
+      details: `Borrador ${draftId} eliminado por ${currentUser?.name || 'Usuario'}`
+    });
+  };
+
   const remoteAuthDecisionByRequestId = remoteAuthRequests.reduce((acc, req) => {
     if (req?.id && (req.status === 'APPROVED' || req.status === 'REJECTED')) {
       acc[req.id] = req.status;
     }
     return acc;
   }, {});
+
+  const boardNotes = useMemo(() => buildBoardNotesFromLogs(auditLogs || []), [auditLogs]);
+
+  const canManageAuth = ['Administrador', 'Supervisor'].includes(normalizeRole(currentUser?.role));
+  const notifications = useMemo(() => {
+    const ownUserId = currentUser?.id || '';
+    const list = [];
+
+    (remoteAuthRequests || []).forEach((req) => {
+      const createdAt = new Date(req?.createdAt || 0).getTime();
+      const resolvedAt = new Date(req?.resolvedAt || 0).getTime();
+      if (canManageAuth && req?.status === 'PENDING') {
+        list.push({
+          id: `auth-pending-${req.id}`,
+          at: createdAt || Date.now(),
+          text: `Solicitud pendiente: ${req.reasonLabel || req.reasonType || 'Autorizacion'} (${req.requestedBy?.name || 'N/A'})`,
+        });
+      }
+      if (String(req?.requestedBy?.id || '') === String(ownUserId || '') && (req?.status === 'APPROVED' || req?.status === 'REJECTED')) {
+        list.push({
+          id: `auth-resolved-${req.id}-${req.status}`,
+          at: resolvedAt || createdAt || Date.now(),
+          text: `Tu solicitud ${req.id} fue ${req.status === 'APPROVED' ? 'APROBADA' : 'RECHAZADA'}.`,
+        });
+      }
+    });
+
+    (invoiceDrafts || [])
+      .filter((draft) => String(draft?.savedBy?.id || '') === String(ownUserId || ''))
+      .forEach((draft) => {
+        list.push({
+          id: `draft-${draft.id}`,
+          at: new Date(draft?.savedAt || 0).getTime() || Date.now(),
+          text: `Borrador guardado: ${draft.clientName || 'Cliente Ocasional'} (${Number(draft.total || 0).toLocaleString()})`,
+        });
+      });
+
+    return list.sort((a, b) => Number(b.at || 0) - Number(a.at || 0)).slice(0, 50);
+  }, [remoteAuthRequests, invoiceDrafts, currentUser?.id, currentUser?.role, canManageAuth]);
+
+  const unreadNotificationsCount = notifications.filter((item) => Number(item?.at || 0) > Number(notificationsSeenAt || 0)).length;
+  const pendingAuthRequestsForManager = useMemo(() => (
+    canManageAuth
+      ? (remoteAuthRequests || []).filter((req) => req?.status === 'PENDING').slice(0, 12)
+      : []
+  ), [canManageAuth, remoteAuthRequests]);
+  const ownInvoiceDrafts = useMemo(() => (
+    (invoiceDrafts || [])
+      .filter((d) => String(d?.savedBy?.id || '') === String(currentUser?.id || ''))
+      .slice(0, 12)
+  ), [invoiceDrafts, currentUser?.id]);
+
+  useEffect(() => {
+    if (!notificationsOpen) return;
+    const latest = notifications[0]?.at || 0;
+    if (latest > notificationsSeenAt) setNotificationsSeenAt(latest);
+  }, [notificationsOpen, notifications, notificationsSeenAt]);
+
+  useEffect(() => {
+    const latest = Number(notifications[0]?.at || 0);
+    if (!latest || latest <= Number(lastNotificationSoundAtRef.current || 0)) return;
+    if (latest > Number(notificationsSeenAt || 0)) playSound('notify');
+    lastNotificationSoundAtRef.current = latest;
+  }, [notifications, notificationsSeenAt]);
 
   const handleLogin = (user, pass) => {
     const foundUser = users.find(u => u.username === user && u.password === pass);
@@ -1316,12 +1524,7 @@ function App() {
     });
 
     // Reset current form
-    setItems([]);
-    setClientName(CLIENT_OCASIONAL);
-    setSelectedClient(null);
-    setDeliveryFee(0);
-    setPaymentMode(PAYMENT_MODES.CONTADO);
-    setPaymentRef('');
+    resetInvoiceComposer();
   };
 
   const onDeleteInvoice = (invoice) => {
@@ -1626,6 +1829,91 @@ function App() {
               <strong>HORA</strong>
               <span>{headerNow.toLocaleString('es-CO')}</span>
             </div>
+            <div style={{ position: 'relative' }}>
+              <button
+                className="btn"
+                onClick={() => setNotificationsOpen((prev) => !prev)}
+                style={{ position: 'relative', minWidth: '44px', backgroundColor: '#f8fafc' }}
+                title="Notificaciones"
+              >
+                🔔
+                {unreadNotificationsCount > 0 && (
+                  <span
+                    style={{
+                      position: 'absolute',
+                      top: '-6px',
+                      right: '-6px',
+                      background: '#ef4444',
+                      color: '#fff',
+                      borderRadius: '999px',
+                      fontSize: '0.7rem',
+                      minWidth: '18px',
+                      padding: '1px 5px'
+                    }}
+                  >
+                    {unreadNotificationsCount > 99 ? '99+' : unreadNotificationsCount}
+                  </span>
+                )}
+              </button>
+              {notificationsOpen && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: '44px',
+                    right: 0,
+                    width: 'min(420px, 90vw)',
+                    maxHeight: '70vh',
+                    overflowY: 'auto',
+                    background: '#fff',
+                    border: '1px solid #e2e8f0',
+                    borderRadius: '12px',
+                    boxShadow: '0 14px 34px rgba(15, 23, 42, 0.18)',
+                    zIndex: 40,
+                    padding: '10px'
+                  }}
+                >
+                  <div style={{ fontWeight: 700, marginBottom: '8px' }}>Notificaciones</div>
+                  {notifications.length === 0 && <p style={{ margin: 0, color: '#64748b' }}>Sin notificaciones.</p>}
+                  {notifications.map((n) => (
+                    <div key={n.id} style={{ border: '1px solid #e2e8f0', borderRadius: '8px', padding: '8px', marginBottom: '6px' }}>
+                      <div style={{ fontSize: '0.88rem', color: '#0f172a' }}>{n.text}</div>
+                      <div style={{ fontSize: '0.75rem', color: '#64748b' }}>{new Date(n.at).toLocaleString('es-CO')}</div>
+                    </div>
+                  ))}
+
+                  {pendingAuthRequestsForManager.length > 0 && (
+                    <div style={{ marginTop: '10px' }}>
+                      <div style={{ fontWeight: 700, fontSize: '0.85rem', marginBottom: '6px' }}>Autorizaciones pendientes</div>
+                      {pendingAuthRequestsForManager.map((req) => (
+                        <div key={req.id} style={{ border: '1px solid #fed7aa', background: '#fff7ed', borderRadius: '8px', padding: '8px', marginBottom: '6px' }}>
+                          <div style={{ fontSize: '0.84rem', marginBottom: '4px' }}>
+                            {req.reasonLabel || req.reasonType || 'Solicitud'} - {req.requestedBy?.name || 'N/A'} - ${Number(req.total || 0).toLocaleString()}
+                          </div>
+                          <div style={{ display: 'flex', gap: '6px' }}>
+                            <button className="btn btn-primary" onClick={() => onResolveRemoteAuthRequest(req.id, 'APPROVED')}>Aprobar</button>
+                            <button className="btn" onClick={() => onResolveRemoteAuthRequest(req.id, 'REJECTED')}>Rechazar</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {ownInvoiceDrafts.length > 0 && (
+                    <div style={{ marginTop: '10px' }}>
+                      <div style={{ fontWeight: 700, fontSize: '0.85rem', marginBottom: '6px' }}>Borradores guardados</div>
+                      {ownInvoiceDrafts.map((draft) => (
+                        <div key={draft.id} style={{ border: '1px solid #dbeafe', background: '#eff6ff', borderRadius: '8px', padding: '8px', marginBottom: '6px' }}>
+                          <div style={{ fontSize: '0.84rem', marginBottom: '4px' }}>
+                            {draft.clientName || 'Cliente Ocasional'} - ${Number(draft.total || 0).toLocaleString()}
+                          </div>
+                          <button className="btn" onClick={() => onLoadInvoiceDraft(draft.id)}>Cargar borrador</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
             {activeTab !== 'home' && (
               <button
                 className="btn btn-primary"
@@ -1740,7 +2028,39 @@ function App() {
                   currentUser={currentUser}
                   onCreateRemoteAuthRequest={onCreateRemoteAuthRequest}
                   remoteAuthDecisionByRequestId={remoteAuthDecisionByRequestId}
+                  onSaveDraft={onSaveInvoiceDraft}
                 />
+                <div className="card" style={{ marginTop: '1rem' }}>
+                  <h3 style={{ marginTop: 0 }}>Borradores de Factura</h3>
+                  {ownInvoiceDrafts.length === 0 ? (
+                    <p style={{ margin: 0, color: '#64748b' }}>No tienes borradores guardados.</p>
+                  ) : (
+                    <div style={{ display: 'grid', gap: '0.5rem' }}>
+                      {ownInvoiceDrafts.map((draft) => (
+                        <div
+                          key={draft.id}
+                          style={{
+                            border: '1px solid #e2e8f0',
+                            borderRadius: '8px',
+                            padding: '0.6rem',
+                            background: '#f8fafc'
+                          }}
+                        >
+                          <div style={{ fontSize: '0.85rem', marginBottom: '0.3rem' }}>
+                            <strong>{draft.clientName || 'Cliente Ocasional'}</strong> - ${Number(draft.total || 0).toLocaleString()}
+                          </div>
+                          <div style={{ fontSize: '0.75rem', color: '#64748b', marginBottom: '0.45rem' }}>
+                            {new Date(draft.savedAt).toLocaleString('es-CO')} - {draft.id}
+                          </div>
+                          <div style={{ display: 'flex', gap: '0.4rem' }}>
+                            <button className="btn" onClick={() => onLoadInvoiceDraft(draft.id)}>Cargar</button>
+                            <button className="btn" onClick={() => onDeleteInvoiceDraft(draft.id)}>Eliminar</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             </main>
           )}
@@ -2061,9 +2381,8 @@ function App() {
       )}
       </div>
       <OperationsBoardBubble
-        currentUser={currentUser}
-        requests={remoteAuthRequests}
-        onResolveRequest={onResolveRemoteAuthRequest}
+        notes={boardNotes}
+        onCreateNote={onCreateBoardNote}
       />
       <SystemHelpBubble currentUser={currentUser} onLog={addLog} />
     </div>

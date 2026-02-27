@@ -32,7 +32,8 @@ export function PaymentSummary({
   adminPass,
   currentUser,
   onCreateRemoteAuthRequest,
-  remoteAuthDecisionByRequestId = {}
+  remoteAuthDecisionByRequestId = {},
+  onSaveDraft
 }) {
   const normalizeRole = (role) => {
     const normalized = String(role || '').trim().toLowerCase();
@@ -145,6 +146,27 @@ export function PaymentSummary({
           });
           if (requestId) {
             setActiveRemoteRequestId(requestId);
+            await onSaveDraft?.({
+              source: 'AUTH_REQUEST',
+              authRequestId: requestId,
+              reasonType,
+              reasonLabel,
+              authNote: String(authNote || '').trim(),
+              paymentMode: isMixed ? `Mixto (${mixedModeA} + ${mixedModeB})` : paymentMode,
+              extraDiscount: Number(extraDiscount || 0),
+              mixedData: isMixed
+                ? {
+                    modeA: mixedModeA,
+                    modeB: mixedModeB,
+                    amountA: Number(safeMixedAmountA || 0),
+                    amountB: Number(mixedAmountB || 0),
+                    refA: String(mixedRefA || ''),
+                    refB: String(mixedRefB || ''),
+                    otherA: String(mixedOtherA || ''),
+                    otherB: String(mixedOtherB || ''),
+                  }
+                : null,
+            });
             playSound('notify');
             alert('Solicitud enviada. Esperando respuesta de Administracion.');
           }
@@ -522,6 +544,33 @@ export function PaymentSummary({
         </button>
         <button className="btn" onClick={() => handlePrintInvoice('58mm')} title="Imprimir 58mm">58mm</button>
         <button className="btn" onClick={() => handlePrintInvoice('a4')} title="Imprimir A4">A4</button>
+        <button
+          className="btn"
+          onClick={() => onSaveDraft?.({
+            source: 'MANUAL_SAVE',
+            authRequestId: activeRemoteRequestId || '',
+            reasonType,
+            reasonLabel,
+            authNote: String(authNote || '').trim(),
+            paymentMode: isMixed ? `Mixto (${mixedModeA} + ${mixedModeB})` : paymentMode,
+            extraDiscount: Number(extraDiscount || 0),
+            mixedData: isMixed
+              ? {
+                  modeA: mixedModeA,
+                  modeB: mixedModeB,
+                  amountA: Number(safeMixedAmountA || 0),
+                  amountB: Number(mixedAmountB || 0),
+                  refA: String(mixedRefA || ''),
+                  refB: String(mixedRefB || ''),
+                  otherA: String(mixedOtherA || ''),
+                  otherB: String(mixedOtherB || ''),
+                }
+              : null,
+          })}
+          title="Guardar borrador"
+        >
+          Guardar
+        </button>
       </div>
 
       <button
@@ -562,4 +611,3 @@ export function PaymentSummary({
     </div>
   );
 }
-
