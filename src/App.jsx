@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import './design-system.css'
-import { CLIENT_OCASIONAL, PAYMENT_MODES, COMPANY_INFO, CREDIT_LEVELS } from './constants'
+import { CLIENT_OCASIONAL, PAYMENT_MODES, COMPANY_INFO } from './constants'
 import { AuthPage } from './components/AuthPage'
 import { onAuthStateChange, getCurrentUser, signOut } from './lib/authService'
 import { ClientSelector } from './components/ClientSelector'
@@ -25,8 +25,7 @@ import { HistorialModule } from './components/HistorialModule'
 import { ReportsModule } from './components/ReportsModule'
 import { ShiftHistoryModule } from './components/ShiftHistoryModule'
 import { SystemHelpBubble } from './components/SystemHelpBubble'
-import { printShiftClosure } from './lib/printReports'
-import { playSound, setSoundEnabled, setSoundVolume } from './lib/soundService'
+import { OperationsBoardBubble } from './components/OperationsBoardBubble'
 
 import { dataService } from './lib/dataService'
 import { getProfile } from './lib/databaseService'
@@ -145,14 +144,8 @@ const QUICK_LOOKUP_HISTORY_STORAGE_KEY = 'fact_quick_lookup_history';
 const PRODUCTS_CACHE_STORAGE_KEY = 'fact_products_cache';
 const CLIENTS_CACHE_STORAGE_KEY = 'fact_clients_cache';
 const INVOICE_SEQUENCE_STORAGE_KEY = 'fact_invoice_sequence';
-const PAYMENT_METHODS_STORAGE_KEY = 'fact_payment_methods';
-const SOUND_ENABLED_STORAGE_KEY = 'fact_sound_enabled';
-const SOUND_VOLUME_STORAGE_KEY = 'fact_sound_volume';
+const REMOTE_AUTH_REQUESTS_STORAGE_KEY = 'fact_remote_auth_requests';
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const DEFAULT_PAYMENT_METHODS = ['Efectivo', 'Credito', 'Transferencia', 'Tarjeta', 'Otros'];
-const REMOTE_AUTH_REQUEST_ACTION = 'Solicitud Autorizacion Remota';
-const REMOTE_AUTH_RESPONSE_ACTION = 'Respuesta Autorizacion Remota';
-const SHIFT_BOARD_ACTION = 'Pizarron Turnos';
 
 const isUuid = (value) => typeof value === 'string' && UUID_REGEX.test(value);
 
@@ -165,54 +158,11 @@ const normalizeClientDraft = (client) => ({
   ...client,
   document: String(client?.document || '').trim(),
   name: String(client?.name || '').trim(),
-  creditLevel: resolveCreditLevel(client?.creditLevel || client?.credit_level || 'ESTANDAR'),
+  creditLevel: String(client?.creditLevel || client?.credit_level || 'ESTANDAR').trim() || 'ESTANDAR',
   creditLimit: Number(client?.creditLimit ?? client?.credit_limit ?? 0),
   approvedTerm: Number(client?.approvedTerm ?? client?.approved_term ?? 30),
   discount: Number(client?.discount ?? 0),
 });
-
-const normalizeCreditLevelKey = (value) => String(value || '')
-  .normalize('NFD')
-  .replace(/[\u0300-\u036f]/g, '')
-  .replace(/\(.*?\)/g, '')
-  .replace(/[^a-zA-Z0-9]+/g, '_')
-  .replace(/^_+|_+$/g, '')
-  .toUpperCase();
-
-const resolveCreditLevel = (value) => {
-  const levelKey = normalizeCreditLevelKey(value || 'ESTANDAR');
-  if (CREDIT_LEVELS[levelKey]) return levelKey;
-  const byLabel = Object.entries(CREDIT_LEVELS).find(([, level]) =>
-    normalizeCreditLevelKey(level?.label) === levelKey
-  );
-  return byLabel?.[0] || 'ESTANDAR';
-};
-
-const getClientAutoDiscount = (client) => {
-  if (!client) return 0;
-
-  const explicitDiscount = Number(client?.discount ?? 0);
-  if (Number.isFinite(explicitDiscount) && explicitDiscount > 0) {
-    return explicitDiscount;
-  }
-
-  const levelRaw = client?.creditLevel ?? client?.credit_level ?? 'ESTANDAR';
-  const levelKey = resolveCreditLevel(levelRaw);
-  return Number(CREDIT_LEVELS[levelKey]?.discount ?? 0);
-};
-
-const applyClientDiscountToItem = (item, discountPercent) => {
-  const basePrice = Number(item?.originalPrice ?? item?.price ?? 0);
-  const quantity = Number(item?.quantity ?? 0);
-  const discountedUnitPrice = basePrice * (1 - (Number(discountPercent) || 0) / 100);
-
-  return {
-    ...item,
-    originalPrice: basePrice,
-    price: discountedUnitPrice,
-    total: discountedUnitPrice * quantity
-  };
-};
 
 const dedupeClients = (rows) => {
   const byDoc = new Map();
@@ -273,18 +223,6 @@ const dedupeProducts = (rows) => {
   ]));
 };
 
-const parseStructuredAuditDetails = (details) => {
-  const raw = String(details || '').trim();
-  if (!raw) return null;
-  const withoutActor = raw.replace(/\s*\|\s*Usuario:\s*.*$/i, '').trim();
-  try {
-    const parsed = JSON.parse(withoutActor);
-    return parsed && typeof parsed === 'object' ? parsed : null;
-  } catch {
-    return null;
-  }
-};
-
 function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
@@ -309,44 +247,16 @@ function App() {
   const [selectedClient, setSelectedClient] = useState(null); // Full client object if registered
   const [items, setItems] = useState([]);
   const [deliveryFee, setDeliveryFee] = useState(0);
-  const [paymentMethods, setPaymentMethods] = useState(() => {
-    try {
-      const raw = localStorage.getItem(PAYMENT_METHODS_STORAGE_KEY);
-      if (!raw) return [...DEFAULT_PAYMENT_METHODS];
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return [...DEFAULT_PAYMENT_METHODS];
-      const normalized = parsed
-        .map((m) => String(m || '').trim())
-        .filter(Boolean);
-      if (normalized.length === 0) return [...DEFAULT_PAYMENT_METHODS];
-      return Array.from(new Set(normalized));
-    } catch {
-      return [...DEFAULT_PAYMENT_METHODS];
-    }
-  });
+  const [paymentMethods, setPaymentMethods] = useState(['Efectivo', 'Credito', 'Transferencia', 'Tarjeta']);
   const [paymentMode, setPaymentMode] = useState('Efectivo');
   const [paymentRef, setPaymentRef] = useState('');
   const [quickScanCode, setQuickScanCode] = useState('');
   const [quickLookupResult, setQuickLookupResult] = useState(null);
   const [quickLookupHistory, setQuickLookupHistory] = useState([]);
   const [quickTrayOpen, setQuickTrayOpen] = useState(true);
-  const [soundEnabled, setSoundEnabledState] = useState(() => {
-    const raw = localStorage.getItem(SOUND_ENABLED_STORAGE_KEY);
-    return raw === null ? true : raw === '1';
-  });
-  const [soundVolume, setSoundVolumeState] = useState(() => {
-    const raw = Number(localStorage.getItem(SOUND_VOLUME_STORAGE_KEY) || 0.08);
-    if (!Number.isFinite(raw)) return 0.08;
-    return Math.min(0.3, Math.max(0.01, raw));
-  });
-  const [remoteAuthPanelOpen, setRemoteAuthPanelOpen] = useState(false);
-  const [shiftBoardText, setShiftBoardText] = useState('');
-  const [shiftBoardReplyDrafts, setShiftBoardReplyDrafts] = useState({});
   const quickScanInputRef = useRef(null);
   const quickScanBufferRef = useRef('');
   const quickScanLastKeyAtRef = useRef(0);
-  const prevPendingAuthCountRef = useRef(0);
-  const prevBoardNoteCountRef = useRef(0);
   const realtimeRefreshTimeoutRef = useRef(null);
   const lastAuthEventRef = useRef({ event: null, userId: null, at: 0 });
   const pendingProductsSyncRef = useRef(false);
@@ -387,6 +297,15 @@ function App() {
   const [salesHistory, setSalesHistory] = useState([]);
   const [shiftHistory, setShiftHistory] = useState([]);
   const [headerNow, setHeaderNow] = useState(() => new Date());
+  const [remoteAuthRequests, setRemoteAuthRequests] = useState(() => {
+    try {
+      const raw = localStorage.getItem(REMOTE_AUTH_REQUESTS_STORAGE_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  });
 
   const getActiveTabStorageKey = (userId) => `${ACTIVE_TAB_STORAGE_KEY}_${userId}`;
   const getQuickTrayStorageKey = (userId) => `${QUICK_TRAY_OPEN_STORAGE_KEY}_${userId || 'anon'}`;
@@ -754,24 +673,8 @@ function App() {
   }, [registeredClients, currentUser?.id]);
 
   useEffect(() => {
-    const normalized = Array.from(
-      new Set((paymentMethods || []).map((m) => String(m || '').trim()).filter(Boolean))
-    );
-    localStorage.setItem(
-      PAYMENT_METHODS_STORAGE_KEY,
-      JSON.stringify(normalized.length > 0 ? normalized : DEFAULT_PAYMENT_METHODS)
-    );
-  }, [paymentMethods]);
-
-  useEffect(() => {
-    setSoundEnabled(soundEnabled);
-    localStorage.setItem(SOUND_ENABLED_STORAGE_KEY, soundEnabled ? '1' : '0');
-  }, [soundEnabled]);
-
-  useEffect(() => {
-    setSoundVolume(soundVolume);
-    localStorage.setItem(SOUND_VOLUME_STORAGE_KEY, String(soundVolume));
-  }, [soundVolume]);
+    localStorage.setItem(REMOTE_AUTH_REQUESTS_STORAGE_KEY, JSON.stringify(remoteAuthRequests.slice(0, 120)));
+  }, [remoteAuthRequests]);
 
   useEffect(() => {
     if (activeTab !== 'home' || !shift) return;
@@ -802,7 +705,7 @@ function App() {
       }
       quickScanLastKeyAtRef.current = now;
 
-      if (event.key === 'Enter' || event.key === 'Tab') {
+      if (event.key === 'Enter') {
         const scanned = cleanScannedCode(quickScanBufferRef.current);
         quickScanBufferRef.current = '';
         if (scanned.length >= 4) {
@@ -827,7 +730,7 @@ function App() {
     if (!prod) return;
     try {
       const field = type === 'bodega' ? 'warehouse_stock' : 'stock';
-      await dataService.updateProductStockById(prod.id, { [field]: Number(newValue) || 0 });
+      await dataService.updateProductStockById(prod.id, { [field]: Number(newValue) || 0 }, currentUser?.id);
     } catch (e) {
       console.error(`Sync ${type} error:`, e);
     }
@@ -897,18 +800,11 @@ function App() {
   };
 
   const addLog = async (logEntry) => {
-    const actorName = currentUser?.name || currentUser?.email || 'Sistema';
-    const baseDetails = String(logEntry?.details || '').trim();
-    const detailsWithActor = /usuario\s*:/i.test(baseDetails)
-      ? baseDetails
-      : [baseDetails, `Usuario: ${actorName}`].filter(Boolean).join(' | ');
-
     const fullLog = {
       ...logEntry,
       user_id: currentUser?.id || null,
       timestamp: new Date().toISOString(),
-      user_name: actorName,
-      details: detailsWithActor
+      user_name: currentUser?.name || 'Sistema'
     };
     setAuditLogs(prev => [fullLog, ...prev]);
     if (!currentUser?.id) return;
@@ -919,232 +815,61 @@ function App() {
     }
   };
 
-  const canModerateRemoteAuth = ['Administrador', 'Supervisor'].includes(normalizeRole(currentUser?.role));
+  const onCreateRemoteAuthRequest = async (payload) => {
+    const requestId = `AR-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+    const requestRecord = {
+      id: requestId,
+      status: 'PENDING',
+      createdAt: new Date().toISOString(),
+      requestedBy: {
+        id: currentUser?.id || null,
+        name: currentUser?.name || currentUser?.email || 'Usuario',
+        role: normalizeRole(currentUser?.role)
+      },
+      ...payload
+    };
 
-  const remoteAuthState = useMemo(() => {
-    const requestsById = new Map();
-    const responsesByRequestId = new Map();
-
-    (auditLogs || []).forEach((log) => {
-      const payload = parseStructuredAuditDetails(log?.details);
-      if (!payload) return;
-
-      if (log?.action === REMOTE_AUTH_REQUEST_ACTION && payload?.kind === 'REMOTE_AUTH_REQUEST' && payload?.requestId) {
-        requestsById.set(payload.requestId, {
-          ...payload,
-          createdAt: log?.timestamp || new Date().toISOString(),
-          logId: log?.id || null,
-        });
-      }
-
-      if (log?.action === REMOTE_AUTH_RESPONSE_ACTION && payload?.kind === 'REMOTE_AUTH_RESPONSE' && payload?.requestId) {
-        const previous = responsesByRequestId.get(payload.requestId);
-        const prevTime = new Date(previous?.respondedAt || 0).getTime();
-        const currTime = new Date(payload?.respondedAt || log?.timestamp || 0).getTime();
-        if (!previous || currTime >= prevTime) {
-          responsesByRequestId.set(payload.requestId, {
-            ...payload,
-            respondedAt: payload?.respondedAt || log?.timestamp || new Date().toISOString(),
-          });
-        }
-      }
-    });
-
-    const requests = Array.from(requestsById.values())
-      .map((req) => {
-        const response = responsesByRequestId.get(req.requestId) || null;
-        const status = response?.decision === 'APPROVED'
-          ? 'APPROVED'
-          : response?.decision === 'REJECTED'
-            ? 'REJECTED'
-            : 'PENDING';
-        return { ...req, response, status };
-      })
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-
-    const decisionByRequestId = requests.reduce((acc, req) => {
-      if (req.status !== 'PENDING') {
-        acc[req.requestId] = req.status;
-      }
-      return acc;
-    }, {});
-
-    return { requests, decisionByRequestId };
-  }, [auditLogs]);
-
-  const pendingRemoteAuthRequests = useMemo(
-    () => (remoteAuthState.requests || []).filter((r) => r.status === 'PENDING'),
-    [remoteAuthState.requests]
-  );
-
-  const createRemoteAuthRequest = async (payload) => {
-    const requestId = `AUTH-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
-    const details = JSON.stringify({
-      kind: 'REMOTE_AUTH_REQUEST',
-      requestId,
-      requesterUserId: currentUser?.id || null,
-      requesterName: currentUser?.name || currentUser?.email || 'Cajero',
-      requestedAt: new Date().toISOString(),
-      ...payload,
-    });
-    await addLog({
+    setRemoteAuthRequests((prev) => [requestRecord, ...prev].slice(0, 120));
+    addLog({
       module: 'Autorizaciones',
-      action: REMOTE_AUTH_REQUEST_ACTION,
-      details
+      action: 'Solicitud creada',
+      details: `${requestRecord.requestedBy.name} solicito ${payload?.reasonLabel || payload?.reasonType || 'autorizacion'} por ${Number(payload?.total || 0).toLocaleString()}`
     });
-    playSound('notify');
+
     return requestId;
   };
 
-  const respondRemoteAuthRequest = async (request, decision) => {
-    const note = prompt(
-      decision === 'APPROVED'
-        ? 'Nota para aprobar (opcional):'
-        : 'Motivo de rechazo (opcional):'
-    ) || '';
-    const details = JSON.stringify({
-      kind: 'REMOTE_AUTH_RESPONSE',
-      requestId: request?.requestId,
-      requesterUserId: request?.requesterUserId || null,
-      requesterName: request?.requesterName || 'Usuario',
-      decision,
-      note: String(note || '').trim(),
-      respondedAt: new Date().toISOString(),
-      responderUserId: currentUser?.id || null,
-      responderName: currentUser?.name || currentUser?.email || 'Administrador',
-    });
-    await addLog({
+  const onResolveRemoteAuthRequest = (requestId, decision) => {
+    if (!requestId || !['APPROVED', 'REJECTED'].includes(decision)) return;
+    const resolvedBy = {
+      id: currentUser?.id || null,
+      name: currentUser?.name || currentUser?.email || 'Usuario',
+      role: normalizeRole(currentUser?.role)
+    };
+
+    setRemoteAuthRequests((prev) => prev.map((req) => {
+      if (req.id !== requestId || req.status !== 'PENDING') return req;
+      return {
+        ...req,
+        status: decision,
+        resolvedAt: new Date().toISOString(),
+        resolvedBy
+      };
+    }));
+
+    addLog({
       module: 'Autorizaciones',
-      action: REMOTE_AUTH_RESPONSE_ACTION,
-      details
+      action: decision === 'APPROVED' ? 'Solicitud aprobada' : 'Solicitud rechazada',
+      details: `Solicitud ${requestId} resuelta por ${resolvedBy.name}`
     });
-    playSound(decision === 'APPROVED' ? 'success' : 'error');
   };
 
-  const shiftBoardNotes = useMemo(() => {
-    const notesById = new Map();
-    const repliesByNote = new Map();
-    const statusByNote = new Map();
-
-    (auditLogs || []).forEach((log) => {
-      if (log?.action !== SHIFT_BOARD_ACTION) return;
-      const payload = parseStructuredAuditDetails(log?.details);
-      if (!payload || !payload?.noteId) return;
-
-      if (payload.kind === 'SHIFT_BOARD_NOTE') {
-        notesById.set(payload.noteId, {
-          ...payload,
-          createdAt: payload?.createdAt || log?.timestamp || new Date().toISOString(),
-        });
-      }
-
-      if (payload.kind === 'SHIFT_BOARD_REPLY') {
-        const bucket = repliesByNote.get(payload.noteId) || [];
-        bucket.push({
-          ...payload,
-          createdAt: payload?.createdAt || log?.timestamp || new Date().toISOString(),
-        });
-        repliesByNote.set(payload.noteId, bucket);
-      }
-
-      if (payload.kind === 'SHIFT_BOARD_STATUS') {
-        statusByNote.set(payload.noteId, {
-          ...payload,
-          changedAt: payload?.changedAt || log?.timestamp || new Date().toISOString(),
-        });
-      }
-    });
-
-    return Array.from(notesById.values())
-      .map((note) => {
-        const status = statusByNote.get(note.noteId);
-        const replies = (repliesByNote.get(note.noteId) || [])
-          .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-        return {
-          ...note,
-          resolved: !!status?.resolved,
-          statusChangedBy: status?.changedByName || '',
-          statusChangedAt: status?.changedAt || '',
-          replies,
-          lastActivityAt: status?.changedAt || replies[replies.length - 1]?.createdAt || note.createdAt
-        };
-      })
-      .sort((a, b) => new Date(b.lastActivityAt).getTime() - new Date(a.lastActivityAt).getTime())
-      .slice(0, 20);
-  }, [auditLogs]);
-
-  const postShiftBoardNote = async () => {
-    const text = String(shiftBoardText || '').trim();
-    if (!text) return;
-    const noteId = `NOTE-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
-
-    await addLog({
-      module: 'Comunicacion',
-      action: SHIFT_BOARD_ACTION,
-      details: JSON.stringify({
-        kind: 'SHIFT_BOARD_NOTE',
-        noteId,
-        text,
-        createdAt: new Date().toISOString(),
-        createdByUserId: currentUser?.id || null,
-        createdByName: currentUser?.name || currentUser?.email || 'Usuario'
-      })
-    });
-    setShiftBoardText('');
-    playSound('notify');
-  };
-
-  const postShiftBoardReply = async (noteId) => {
-    const text = String(shiftBoardReplyDrafts?.[noteId] || '').trim();
-    if (!text) return;
-    await addLog({
-      module: 'Comunicacion',
-      action: SHIFT_BOARD_ACTION,
-      details: JSON.stringify({
-        kind: 'SHIFT_BOARD_REPLY',
-        noteId,
-        replyId: `REPLY-${Date.now()}-${Math.floor(Math.random() * 100000)}`,
-        text,
-        createdAt: new Date().toISOString(),
-        createdByUserId: currentUser?.id || null,
-        createdByName: currentUser?.name || currentUser?.email || 'Usuario'
-      })
-    });
-    setShiftBoardReplyDrafts((prev) => ({ ...prev, [noteId]: '' }));
-    playSound('action');
-  };
-
-  const toggleShiftBoardResolved = async (note) => {
-    await addLog({
-      module: 'Comunicacion',
-      action: SHIFT_BOARD_ACTION,
-      details: JSON.stringify({
-        kind: 'SHIFT_BOARD_STATUS',
-        noteId: note?.noteId,
-        resolved: !note?.resolved,
-        changedAt: new Date().toISOString(),
-        changedByUserId: currentUser?.id || null,
-        changedByName: currentUser?.name || currentUser?.email || 'Usuario'
-      })
-    });
-    playSound(note?.resolved ? 'warn' : 'success');
-  };
-
-  useEffect(() => {
-    const current = pendingRemoteAuthRequests.length;
-    if (current > prevPendingAuthCountRef.current) {
-      playSound('notify');
+  const remoteAuthDecisionByRequestId = remoteAuthRequests.reduce((acc, req) => {
+    if (req?.id && (req.status === 'APPROVED' || req.status === 'REJECTED')) {
+      acc[req.id] = req.status;
     }
-    prevPendingAuthCountRef.current = current;
-  }, [pendingRemoteAuthRequests.length]);
-
-  useEffect(() => {
-    const current = shiftBoardNotes.length;
-    if (current > prevBoardNoteCountRef.current) {
-      playSound('notify');
-    }
-    prevBoardNoteCountRef.current = current;
-  }, [shiftBoardNotes.length]);
+    return acc;
+  }, {});
 
   const handleLogin = (user, pass) => {
     const foundUser = users.find(u => u.username === user && u.password === pass);
@@ -1163,7 +888,6 @@ function App() {
     setUserCashBalance(currentUser, startCash);
     saveOpenShift(currentUser?.id, openShift);
     addLog({ module: 'Jornada', action: 'Inicio Jornada', details: `Iniciada con base de $${startCash}` });
-    playSound('success');
   };
 
   const isDateInRange = (dateValue, startIso, endIso) => {
@@ -1199,23 +923,9 @@ function App() {
       else if (sale.paymentMode === PAYMENT_MODES.CREDITO) acc.credit += total;
       else if (sale.paymentMode === PAYMENT_MODES.TRANSFERENCIA) acc.transfer += total;
       else if (sale.paymentMode === PAYMENT_MODES.TARJETA) acc.card += total;
-      else if (sale.paymentMode === PAYMENT_MODES.OTROS) acc.other += total;
       else if (sale.paymentMode === 'Mixto') {
-        const parts = Array.isArray(sale?.mixedDetails?.parts) ? sale.mixedDetails.parts : null;
-        if (parts && parts.length > 0) {
-          parts.forEach((part) => {
-            const amount = Number(part?.amount || 0);
-            const method = String(part?.method || '').trim();
-            if (method === PAYMENT_MODES.CONTADO) acc.cash += amount;
-            else if (method === PAYMENT_MODES.CREDITO) acc.credit += amount;
-            else if (method === PAYMENT_MODES.TRANSFERENCIA) acc.transfer += amount;
-            else if (method === PAYMENT_MODES.TARJETA) acc.card += amount;
-            else acc.other += amount;
-          });
-        } else {
-          acc.cash += Number(sale.mixedDetails?.cash) || 0;
-          acc.credit += Number(sale.mixedDetails?.credit) || 0;
-        }
+        acc.cash += Number(sale.mixedDetails?.cash) || 0;
+        acc.credit += Number(sale.mixedDetails?.credit) || 0;
       } else {
         acc.other += total;
       }
@@ -1343,11 +1053,7 @@ function App() {
     };
     persistShift();
 
-    // Abre de inmediato el dialogo de imprimir/guardar para el soporte del cierre.
-    printShiftClosure(shiftData, 'a4');
-
     alert("Jornada cerrada con exito.");
-    playSound('success');
 
     setUserCashBalance(currentUser, data.physicalCash);
     setShift(null);
@@ -1357,8 +1063,10 @@ function App() {
   };
 
   const handleAddItem = (item) => {
-    const clientDiscount = getClientAutoDiscount(selectedClient);
-    setItems([...items, applyClientDiscountToItem(item, clientDiscount)]);
+    // Apply client discount if applicable
+    const discount = selectedClient ? selectedClient.discount : 0;
+    const discountedPrice = item.price * (1 - discount / 100);
+    setItems([...items, { ...item, price: discountedPrice, originalPrice: item.price, total: discountedPrice * item.quantity }]);
 
     addLog({
       module: 'Facturacion',
@@ -1366,14 +1074,6 @@ function App() {
       details: `Se agrego ${item.name} (${item.quantity})`
     });
   };
-
-  const selectedClientAutoDiscount = getClientAutoDiscount(selectedClient);
-
-  useEffect(() => {
-    setItems((prevItems) =>
-      prevItems.map((item) => applyClientDiscountToItem(item, selectedClientAutoDiscount))
-    );
-  }, [selectedClientAutoDiscount]);
 
   const handleRemoveItem = (index) => {
     const item = items[index];
@@ -1404,74 +1104,28 @@ function App() {
     return `SSOT-${String(next).padStart(4, '0')}`;
   };
 
-  const handleFacturar = async (mixedData = null, extraDiscount = 0, paymentMeta = null) => {
-    if (items.length === 0) {
-      playSound('warn');
-      return alert("Agregue productos primero");
-    }
+  const handleFacturar = async (mixedData = null, extraDiscount = 0) => {
+    if (items.length === 0) return alert("Agregue productos primero");
     if (selectedClient?.blocked) {
-      playSound('error');
       return alert("Este cliente esta bloqueado por Administracion. No puede facturar hasta ser desbloqueado.");
     }
 
     // Stock Validation
     for (const item of items) {
       if ((stock.ventas[item.id] || 0) < item.quantity) {
-        playSound('error');
         return alert(`Inventario insuficiente para ${item.name}. Solo hay ${stock.ventas[item.id] || 0} en punto de venta.`);
       }
     }
 
-    // Reference validation for non-Cash/Credit (single payment mode)
-    const needsRef = !mixedData && ![PAYMENT_MODES.CONTADO, PAYMENT_MODES.CREDITO].includes(paymentMode);
-    if (needsRef && !paymentRef) {
-      playSound('warn');
-      return alert("Debe ingresar el numero de referencia de la transferencia");
-    }
-
-    if (!mixedData && paymentMode === PAYMENT_MODES.OTROS && !String(paymentMeta?.otherPaymentDetail || '').trim()) {
-      playSound('warn');
-      return alert('Debe especificar el medio exacto para metodo "Otros".');
-    }
-
-    if (mixedData) {
-      const parts = Array.isArray(mixedData.parts) ? mixedData.parts : [];
-      if (parts.length < 2) {
-        playSound('warn');
-        return alert('Pago mixto invalido: faltan componentes de pago.');
-      }
-
-      const partsTotal = parts.reduce((sum, part) => sum + (Number(part?.amount || 0)), 0);
-      if (Math.abs(partsTotal - (subtotal + deliveryFee - extraDiscount)) > 1) {
-        playSound('warn');
-        return alert('Pago mixto invalido: el total de los metodos no coincide con la factura.');
-      }
-
-      const invalidReferencePart = parts.find((part) =>
-        ![PAYMENT_MODES.CONTADO, PAYMENT_MODES.CREDITO].includes(String(part?.method || '').trim()) &&
-        !String(part?.reference || '').trim()
-      );
-      if (invalidReferencePart) {
-        playSound('warn');
-        return alert(`Debe ingresar referencia para el metodo ${invalidReferencePart.method}.`);
-      }
-
-      const invalidOtherPart = parts.find((part) =>
-        String(part?.method || '').trim() === PAYMENT_MODES.OTROS &&
-        !String(part?.otherDetail || '').trim()
-      );
-      if (invalidOtherPart) {
-        playSound('warn');
-        return alert('En metodo "Otros" del pago mixto debe indicar el medio exacto.');
-      }
-    }
+    // Reference validation for non-Cash/Credit
+    const needsRef = ![PAYMENT_MODES.CONTADO, PAYMENT_MODES.CREDITO].includes(paymentMode);
+    if (needsRef && !paymentRef) return alert("Debe ingresar el numero de referencia de la transferencia");
 
     // Credit Limit check (Individual Invoice Max)
     const isCreditPortion = paymentMode === PAYMENT_MODES.CREDITO || mixedData?.credit > 0;
     if (isCreditPortion && selectedClient) {
       const creditPortion = mixedData ? mixedData.credit : (subtotal + deliveryFee - extraDiscount);
       if (creditPortion > selectedClient.creditLimit) {
-        playSound('warn');
         return alert(`Supera el limite de factura para este nivel de credito (${selectedClient.creditLimit.toLocaleString()}). Realice un abono para continuar.`);
       }
     }
@@ -1500,17 +1154,7 @@ function App() {
       deliveryFee,
       total: finalTotal,
       paymentMode: finalMode,
-      mixedDetails: {
-        ...(mixedData || {}),
-        ...(paymentMeta || {}),
-        ...(mixedData ? {} : {
-          payment_reference: String(paymentRef || '').trim() || null,
-          payment_method_detail: String(paymentMeta?.otherPaymentDetail || '').trim() || null,
-        }),
-        invoiceCode,
-        user_name: currentUser?.name || currentUser?.email || 'Sistema',
-        user_id: currentUser?.id || null
-      }, // { cash, credit, invoiceCode, user_name }
+      mixedDetails: { ...(mixedData || {}), invoiceCode }, // { cash, credit, invoiceCode }
       date: new Date().toISOString(),
       dueDate: dueDateObj.toISOString(),
       status: (paymentMode === PAYMENT_MODES.CREDITO || mixedData?.credit > 0) ? 'pendiente' : 'pagado',
@@ -1532,7 +1176,7 @@ function App() {
       const prod = products.find(p => p.id === item.id);
       if (prod) {
         dataService
-          .updateProductStockById(prod.id, { stock: Number(newStockVentas[item.id]) || 0 })
+          .updateProductStockById(prod.id, { stock: Number(newStockVentas[item.id]) || 0 }, currentUser?.id)
           .catch(e => console.error("Error updating stock on SALE:", e));
       }
     });
@@ -1566,7 +1210,6 @@ function App() {
     persistInvoice();
 
     alert("Venta realizada con exito");
-    playSound('invoice');
 
     addLog({
       module: 'Facturacion',
@@ -1606,7 +1249,6 @@ function App() {
     });
 
     alert(`Factura ${invoice.id} eliminada y stock actualizado.`);
-    playSound('warn');
   };
 
   const cleanScannedCode = (value) => String(value ?? '').trim().replace(/\s+/g, '');
@@ -1711,10 +1353,6 @@ function App() {
               className="quick-price-input"
               value={quickScanCode}
               onChange={(e) => setQuickScanCode(e.target.value)}
-              onBlur={() => {
-                if (activeTab !== 'home' || !shift) return;
-                setTimeout(() => quickScanInputRef.current?.focus(), 80);
-              }}
               placeholder="Escanear codigo..."
               autoComplete="off"
               autoFocus
@@ -1763,89 +1401,6 @@ function App() {
               ))}
             </div>
           )}
-
-          <div className="card" style={{ marginTop: '0.9rem', padding: '0.85rem', backgroundColor: '#f8fafc' }}>
-            <h4 style={{ margin: '0 0 0.45rem', fontSize: '1rem' }}>Pizarron de Turnos</h4>
-            <p style={{ margin: '0 0 0.6rem', fontSize: '0.82rem', color: '#64748b' }}>
-              Deje pendientes, novedades y respuestas para el siguiente turno.
-            </p>
-            <textarea
-              className="input-field"
-              rows={2}
-              value={shiftBoardText}
-              onChange={(e) => setShiftBoardText(e.target.value)}
-              placeholder="Ej: Cliente Pepe queda pendiente de pago. Cobrar cuando llegue."
-            />
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '0.45rem' }}>
-              <button className="btn btn-primary" onClick={postShiftBoardNote}>Publicar Nota</button>
-            </div>
-
-            <div style={{ marginTop: '0.75rem', maxHeight: '260px', overflowY: 'auto', display: 'grid', gap: '0.55rem' }}>
-              {shiftBoardNotes.length === 0 && (
-                <div style={{ fontSize: '0.84rem', color: '#64748b' }}>No hay notas en la pizarra.</div>
-              )}
-              {shiftBoardNotes.map((note) => (
-                <div
-                  key={note.noteId}
-                  style={{
-                    border: '1px solid #e2e8f0',
-                    borderRadius: '8px',
-                    padding: '0.55rem',
-                    backgroundColor: note.resolved ? '#f1f5f9' : '#ffffff'
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.4rem', marginBottom: '0.25rem' }}>
-                    <strong style={{ fontSize: '0.84rem' }}>{note.createdByName || 'Usuario'}</strong>
-                    <span style={{ fontSize: '0.74rem', color: '#64748b' }}>{new Date(note.createdAt).toLocaleString()}</span>
-                  </div>
-                  <div style={{ fontSize: '0.84rem', marginBottom: '0.35rem' }}>{note.text}</div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.4rem', marginBottom: '0.35rem' }}>
-                    <span
-                      style={{
-                        fontSize: '0.74rem',
-                        padding: '0.12rem 0.45rem',
-                        borderRadius: '999px',
-                        backgroundColor: note.resolved ? '#dcfce7' : '#fee2e2',
-                        color: note.resolved ? '#166534' : '#991b1b'
-                      }}
-                    >
-                      {note.resolved ? 'Resuelta' : 'Pendiente'}
-                    </span>
-                    <button
-                      className="btn"
-                      style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem' }}
-                      onClick={() => toggleShiftBoardResolved(note)}
-                    >
-                      {note.resolved ? 'Reabrir' : 'Marcar Resuelta'}
-                    </button>
-                  </div>
-
-                  {note.replies.length > 0 && (
-                    <div style={{ marginBottom: '0.35rem', display: 'grid', gap: '0.25rem' }}>
-                      {note.replies.map((reply) => (
-                        <div key={reply.replyId} style={{ fontSize: '0.78rem', backgroundColor: '#f8fafc', borderRadius: '6px', padding: '0.3rem 0.45rem' }}>
-                          <strong>{reply.createdByName || 'Usuario'}:</strong> {reply.text}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  <div style={{ display: 'flex', gap: '0.35rem' }}>
-                    <input
-                      className="input-field"
-                      style={{ fontSize: '0.8rem', padding: '0.35rem 0.45rem' }}
-                      value={shiftBoardReplyDrafts[note.noteId] || ''}
-                      onChange={(e) => setShiftBoardReplyDrafts((prev) => ({ ...prev, [note.noteId]: e.target.value }))}
-                      placeholder="Responder..."
-                    />
-                    <button className="btn" style={{ padding: '0.25rem 0.55rem', fontSize: '0.75rem' }} onClick={() => postShiftBoardReply(note.noteId)}>
-                      Responder
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
           </aside>
         </div>
 
@@ -1955,7 +1510,7 @@ function App() {
               />
             </div>
           </div>
-          <div style={{ display: 'flex', gap: '0.5rem', position: 'relative' }}>
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
             <div
               style={{
                 display: 'flex',
@@ -1970,23 +1525,9 @@ function App() {
                 lineHeight: 1.2
               }}
             >
-              <strong></strong>
+              <strong>HORA</strong>
               <span>{headerNow.toLocaleString('es-CO')}</span>
             </div>
-            {canModerateRemoteAuth && (
-              <button
-                className="btn"
-                onClick={() => setRemoteAuthPanelOpen((prev) => !prev)}
-                style={{
-                  backgroundColor: pendingRemoteAuthRequests.length > 0 ? '#fee2e2' : '#f1f5f9',
-                  color: pendingRemoteAuthRequests.length > 0 ? '#991b1b' : '#334155',
-                  border: pendingRemoteAuthRequests.length > 0 ? '1px solid #fecaca' : '1px solid #cbd5e1'
-                }}
-                title="Solicitudes remotas de autorizacion"
-              >
-                Autorizaciones {pendingRemoteAuthRequests.length > 0 ? `(${pendingRemoteAuthRequests.length})` : ''}
-              </button>
-            )}
             {activeTab !== 'home' && (
               <button
                 className="btn btn-primary"
@@ -2004,49 +1545,6 @@ function App() {
             >
               Salir
             </button>
-            {canModerateRemoteAuth && remoteAuthPanelOpen && (
-              <div
-                className="card"
-                style={{
-                  position: 'absolute',
-                  top: '48px',
-                  right: 0,
-                  width: '460px',
-                  maxHeight: '65vh',
-                  overflowY: 'auto',
-                  zIndex: 20,
-                  boxShadow: '0 18px 40px rgba(15, 23, 42, 0.2)'
-                }}
-              >
-                <h3 style={{ marginTop: 0, marginBottom: '0.75rem' }}>Solicitudes de Autorizacion</h3>
-                {pendingRemoteAuthRequests.length === 0 && (
-                  <p style={{ margin: 0, color: '#64748b' }}>No hay solicitudes pendientes.</p>
-                )}
-                {pendingRemoteAuthRequests.map((req) => (
-                  <div key={req.requestId} style={{ border: '1px solid #e2e8f0', borderRadius: '8px', padding: '0.7rem', marginBottom: '0.6rem' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem' }}>
-                      <strong>{req.requesterName || 'Cajero'}</strong>
-                      <span style={{ color: '#64748b', fontSize: '0.82rem' }}>{new Date(req.createdAt).toLocaleString()}</span>
-                    </div>
-                    <p style={{ margin: '0.4rem 0', fontSize: '0.9rem' }}>
-                      <strong>Motivo:</strong> {req.reasonLabel || req.reasonType || 'Autorizacion manual'}
-                    </p>
-                    <p style={{ margin: '0.2rem 0', fontSize: '0.88rem' }}>
-                      <strong>Contexto:</strong> Cliente {req.clientName || 'N/A'} | Total ${Number(req.total || 0).toLocaleString()} | Pago {req.paymentMode || 'N/A'}
-                    </p>
-                    {req.note && (
-                      <p style={{ margin: '0.35rem 0', fontSize: '0.88rem', color: '#334155' }}>
-                        <strong>Nota cajero:</strong> {req.note}
-                      </p>
-                    )}
-                    <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.55rem' }}>
-                      <button className="btn btn-primary" onClick={() => respondRemoteAuthRequest(req, 'APPROVED')}>Aprobar</button>
-                      <button className="btn" style={{ backgroundColor: '#fee2e2', color: '#991b1b' }} onClick={() => respondRemoteAuthRequest(req, 'REJECTED')}>Rechazar</button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
         </div>
       </header>
@@ -2142,8 +1640,8 @@ function App() {
                   items={items}
                   adminPass={users.find(u => u.username === 'Admin')?.password || 'Admin'}
                   currentUser={currentUser}
-                  onCreateRemoteAuthRequest={createRemoteAuthRequest}
-                  remoteAuthDecisionByRequestId={remoteAuthState.decisionByRequestId}
+                  onCreateRemoteAuthRequest={onCreateRemoteAuthRequest}
+                  remoteAuthDecisionByRequestId={remoteAuthDecisionByRequestId}
                 />
               </div>
             </main>
@@ -2153,7 +1651,6 @@ function App() {
             <CarteraModule
               currentUser={currentUser}
               clients={registeredClients}
-              paymentMethods={paymentMethods}
               cartera={cartera}
               setCartera={async (newCartera) => {
                 setCartera(newCartera);
@@ -2189,7 +1686,8 @@ function App() {
                     try {
                       await dataService.updateProductStockById(
                         prod.id,
-                        { warehouse_stock: Number(newBodega[changedId]) || 0 }
+                        { warehouse_stock: Number(newBodega[changedId]) || 0 },
+                        currentUser?.id
                       );
                     } catch (e) { console.error("Sync bodega error:", e); }
                   }
@@ -2328,12 +1826,7 @@ function App() {
                 } catch (e) {
                   console.error("Error eliminando producto en Supabase:", e);
                   const message = e?.message || 'Error desconocido';
-                  const lower = String(message).toLowerCase();
-                  if (lower.includes('foreign key') || lower.includes('invoice_items_product_id_fkey')) {
-                    alert(`No se puede eliminar este producto porque ya tiene historial de facturas.\n\nSe recomienda dejarlo inactivo en lugar de borrarlo.`);
-                  } else {
-                    alert(`No se pudo eliminar el producto en la nube.\n\nDetalle: ${message}`);
-                  }
+                  alert(`No se pudo eliminar el producto en la nube (conexion inestable).\n\nDetalle: ${message}`);
                   throw e;
                 } finally {
                   pendingProductsSyncRef.current = false;
@@ -2417,7 +1910,6 @@ function App() {
               cartera={cartera}
               users={users}
               userCashBalances={userCashBalances}
-              onLog={addLog}
             />
           )}
           {activeTab === 'bitacora' && <AuditLog logs={auditLogs} />}
@@ -2427,10 +1919,6 @@ function App() {
               paymentMethods={paymentMethods} setPaymentMethods={setPaymentMethods}
               categories={categories} setCategories={setCategories}
               onResetSystem={onResetSystem} onSaveSystem={onSaveSystem}
-              soundEnabled={soundEnabled}
-              setSoundEnabled={setSoundEnabledState}
-              soundVolume={soundVolume}
-              setSoundVolume={setSoundVolumeState}
             />
           )}
           {activeTab === 'trueque' && (
@@ -2474,6 +1962,11 @@ function App() {
         </>
       )}
       </div>
+      <OperationsBoardBubble
+        currentUser={currentUser}
+        requests={remoteAuthRequests}
+        onResolveRequest={onResolveRemoteAuthRequest}
+      />
       <SystemHelpBubble />
     </div>
   )

@@ -265,6 +265,211 @@ body {
   z-index: 1000;
 }
 
+.ops-board-bubble {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 1000;
+}
+
+.ops-board-trigger {
+  width: 58px;
+  height: 58px;
+  border: none;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #0b7a5b 0%, #16a34a 100%);
+  color: #fff;
+  font-size: 0.95rem;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: 0 10px 24px rgba(11, 122, 91, 0.28);
+}
+
+.ops-board-panel {
+  width: min(430px, calc(100vw - 36px));
+  max-height: min(78vh, 760px);
+  overflow-y: auto;
+  margin-bottom: 12px;
+  background: rgba(255, 255, 255, 0.98);
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.2);
+  padding: 14px;
+  color: #0f172a;
+}
+
+.ops-board-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.ops-board-close {
+  width: 30px;
+  height: 30px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #fff;
+  color: #334155;
+  cursor: pointer;
+}
+
+.ops-board-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.ops-board-tab {
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #fff;
+  color: #334155;
+  font-weight: 700;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.ops-board-tab.active {
+  background: #dcfce7;
+  border-color: #86efac;
+  color: #166534;
+}
+
+.ops-board-content {
+  display: grid;
+  gap: 8px;
+}
+
+.ops-board-textarea {
+  width: 100%;
+  min-height: 90px;
+  box-sizing: border-box;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 0.88rem;
+  resize: vertical;
+}
+
+.ops-board-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ops-board-attach {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #fff;
+  color: #334155;
+  padding: 7px 10px;
+  font-size: 0.84rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.ops-board-attach input {
+  display: none;
+}
+
+.ops-board-save {
+  border: none;
+  border-radius: 8px;
+  background: #16a34a;
+  color: #fff;
+  font-weight: 700;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.ops-board-pending-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ops-board-pending-files span {
+  font-size: 0.8rem;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  padding: 3px 8px;
+}
+
+.ops-board-list {
+  display: grid;
+  gap: 8px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.ops-board-note,
+.ops-board-auth-item {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: #ffffff;
+}
+
+.ops-board-note-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.8rem;
+  color: #475569;
+}
+
+.ops-board-note p {
+  margin: 6px 0 0;
+  font-size: 0.85rem;
+}
+
+.ops-board-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.ops-board-attachments a {
+  display: inline-flex;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 4px;
+  background: #f8fafc;
+  text-decoration: none;
+  color: #0f172a;
+}
+
+.ops-board-attachments img {
+  width: 74px;
+  height: 74px;
+  object-fit: cover;
+  border-radius: 6px;
+}
+
+.ops-board-auth-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.ops-board-auth-actions button {
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #fff;
+  color: #334155;
+  font-weight: 700;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
 .system-help-trigger {
   width: 58px;
   height: 58px;
@@ -317,6 +522,28 @@ body {
   padding: 8px 10px;
   font-size: 0.9rem;
   margin-bottom: 10px;
+}
+
+.system-help-tools {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.system-help-tools .system-help-search {
+  margin-bottom: 0;
+}
+
+.system-help-chat-open {
+  border: none;
+  border-radius: 8px;
+  background: #1d4ed8;
+  color: #fff;
+  font-weight: 700;
+  padding: 8px 12px;
+  cursor: pointer;
+  white-space: nowrap;
 }
 
 .system-help-block {
@@ -376,9 +603,105 @@ body {
   color: #334155;
 }
 
+.system-help-chat {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 10px;
+  margin-top: 10px;
+  background: #f8fafc;
+}
+
+.system-help-chat-window {
+  width: min(420px, calc(100vw - 36px));
+  max-height: min(70vh, 700px);
+  overflow-y: auto;
+  margin-bottom: 12px;
+  background: rgba(255, 255, 255, 0.98);
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.2);
+  padding: 12px;
+  color: #0f172a;
+}
+
+.system-help-chat-hint {
+  margin: 0 0 8px;
+  font-size: 0.82rem;
+  color: #475569;
+}
+
+.system-help-chat h4 {
+  margin: 0 0 4px;
+  font-size: 0.92rem;
+}
+
+.system-help-chat p {
+  margin: 0 0 8px;
+  font-size: 0.82rem;
+  color: #475569;
+}
+
+.system-help-chat-log {
+  display: grid;
+  gap: 6px;
+  max-height: 180px;
+  overflow-y: auto;
+  margin-bottom: 8px;
+}
+
+.system-help-chat-msg {
+  font-size: 0.82rem;
+  line-height: 1.35;
+  padding: 7px 9px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  color: #0f172a;
+}
+
+.system-help-chat-msg.user {
+  background: #dbeafe;
+  border-color: #bfdbfe;
+}
+
+.system-help-chat-msg.assistant {
+  background: #f1f5f9;
+  border-color: #e2e8f0;
+}
+
+.system-help-chat-form {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+}
+
+.system-help-chat-input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 0.84rem;
+}
+
+.system-help-chat-send {
+  border: none;
+  border-radius: 8px;
+  background: #1d4ed8;
+  color: #fff;
+  font-weight: 700;
+  padding: 8px 11px;
+  cursor: pointer;
+}
+
 @media (max-width: 640px) {
   .system-help-bubble {
     left: 12px;
+    bottom: 12px;
+  }
+
+  .ops-board-bubble {
+    right: 12px;
     bottom: 12px;
   }
 
@@ -386,6 +709,19 @@ body {
     width: 54px;
     height: 54px;
     font-size: 1.35rem;
+  }
+
+  .ops-board-trigger {
+    width: 54px;
+    height: 54px;
+  }
+
+  .system-help-chat-form {
+    grid-template-columns: 1fr;
+  }
+
+  .system-help-tools {
+    grid-template-columns: 1fr;
   }
 }
 
