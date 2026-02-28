@@ -7,10 +7,19 @@ const CASH_MODE = PAYMENT_MODES.CONTADO;
 const CREDIT_MODE = PAYMENT_MODES.CREDITO;
 const OTHER_MODE = PAYMENT_MODES.OTROS || 'Otros';
 
-const isCreditMode = (mode) => mode === CREDIT_MODE;
-const isCashMode = (mode) => mode === CASH_MODE;
-const requiresReference = (mode) => ![CASH_MODE, CREDIT_MODE].includes(mode);
-const requiresOtherDetail = (mode) => mode === OTHER_MODE;
+const normalizeMode = (mode) => String(mode || '')
+  .trim()
+  .toLowerCase()
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '');
+
+const isCreditMode = (mode) => normalizeMode(mode) === normalizeMode(CREDIT_MODE);
+const isCashMode = (mode) => normalizeMode(mode) === normalizeMode(CASH_MODE);
+const requiresReference = (mode) => {
+  const normalized = normalizeMode(mode);
+  return normalized !== normalizeMode(CASH_MODE) && normalized !== normalizeMode(CREDIT_MODE);
+};
+const requiresOtherDetail = (mode) => normalizeMode(mode) === normalizeMode(OTHER_MODE);
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
@@ -29,7 +38,6 @@ export function PaymentSummary({
   selectedClientPendingBalance = 0,
   selectedClientAvailableCredit = 0,
   items,
-  adminPass,
   currentUser,
   onCreateRemoteAuthRequest,
   remoteAuthDecisionByRequestId = {},
@@ -176,16 +184,9 @@ export function PaymentSummary({
         return;
       }
 
-      const pass = prompt(
-        `Requiere Autorizacion Admin (${hasGift ? 'Regalo' : hasExtraDiscount ? 'Descuento' : 'Sin Ref Transferencia'}):\nIngrese clave de administrador:`
-      );
-      if (pass === adminPass || pass === 'admin123') {
-        playSound('success');
-        action();
-      } else {
-        playSound('error');
-        alert('Clave incorrecta o accion cancelada.');
-      }
+      // Admin/Supervisor: autorización directa por rol, sin clave.
+      playSound('success');
+      action();
       return;
     }
 
@@ -206,16 +207,16 @@ export function PaymentSummary({
       }
 
       const parts = [
-        { method: mixedModeA, amount: safeMixedAmountA, reference: mixedRefA, otherDetail: mixedOtherA },
-        { method: mixedModeB, amount: mixedAmountB, reference: mixedRefB, otherDetail: mixedOtherB },
+        { method: mixedModeA, amount: safeMixedAmountA, reference: String(mixedRefA || '').trim(), otherDetail: String(mixedOtherA || '').trim() },
+        { method: mixedModeB, amount: mixedAmountB, reference: String(mixedRefB || '').trim(), otherDetail: String(mixedOtherB || '').trim() },
       ];
 
-      const invalidReference = parts.find((part) => requiresReference(part.method) && !String(part.reference || '').trim());
+      const invalidReference = parts.find((part) => Number(part.amount || 0) > 0 && requiresReference(part.method) && !part.reference);
       if (invalidReference) {
         return alert(`Debe ingresar numero de referencia para ${invalidReference.method} en pago mixto.`);
       }
 
-      const invalidOther = parts.find((part) => requiresOtherDetail(part.method) && !String(part.otherDetail || '').trim());
+      const invalidOther = parts.find((part) => Number(part.amount || 0) > 0 && requiresOtherDetail(part.method) && !part.otherDetail);
       if (invalidOther) {
         return alert('Cuando use metodo "Otros" debe describir el medio exacto.');
       }
