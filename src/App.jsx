@@ -151,6 +151,7 @@ const normalizePermissionsForRole = (role, permissions) => {
       clientes: true,
       cartera: true,
       caja: true,
+      compras: true,
       historial: true,
       gastos: true,
       notas: true,
@@ -1825,7 +1826,10 @@ function App() {
       : isCashierRole
         ? menuItems.filter((item) => ['facturacion', 'inventario', 'codigos', 'clientes', 'cartera', 'historial', 'caja', 'trueque', 'gastos', 'notas'].includes(item.tab))
         : isSupervisorRole
-          ? menuItems.filter((item) => ['facturacion', 'inventario', 'codigos', 'clientes', 'cartera', 'historial', 'caja', 'reportes', 'bitacora', 'trueque', 'gastos', 'notas', 'cierres'].includes(item.tab))
+          ? menuItems.filter((item) => {
+              const permission = currentUser?.permissions?.[item.tab];
+              return permission === true || (typeof permission === 'object' && permission !== null);
+            })
         : menuItems.filter(item => {
             const permission = currentUser?.permissions?.[item.tab];
             // Si el permiso es true (boolean) o un objeto (con sub-permisos), mostrar

@@ -24,7 +24,7 @@ BEGIN
     jsonb_build_object(
       'facturacion', true,
       'cartera', true,
-      'compras', false,
+      'compras', true,
       'clientes', true,
       'caja', true,
       'inventario', true,

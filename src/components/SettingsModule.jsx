@@ -36,7 +36,7 @@ export function SettingsModule({
             trueque: true, gastos: true, notas: true, historial: true
         },
         Supervisor: {
-            facturacion: true, cartera: true, compras: false, clientes: true, caja: true,
+            facturacion: true, cartera: true, compras: true, clientes: true, caja: true,
             inventario: true, codigos: true, reportes: true, bitacora: true, config: false,
             trueque: true, gastos: true, notas: true, historial: true
         },
