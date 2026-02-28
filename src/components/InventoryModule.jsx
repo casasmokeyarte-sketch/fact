@@ -58,6 +58,9 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
             unit: formData.get('unit') || 'un',
             barcode: normalizeBarcode(formData.get('barcode')),
             category: formData.get('category'),
+            reorder_level: Number(formData.get('reorder_level')) || 10,
+            status: String(formData.get('status') || 'activo'),
+            is_visible: formData.get('is_visible') === 'on',
         };
 
         if (editingProduct) {
@@ -101,8 +104,8 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
             XLSX.utils.book_append_sheet(wb, ws, "Productos");
             XLSX.writeFile(wb, "productos.xlsx");
         } else if (type === 'notes') {
-            const headers = "id,nombre,precio,costo,unidad,codigo_barras,categoria\n";
-            const rows = products.map(p => `${p.id},"${p.name}",${p.price},${p.cost || 0},"${p.unit || 'un'}","${p.barcode || ''}","${p.category}"`).join("\n");
+            const headers = "id,nombre,precio,costo,unidad,codigo_barras,categoria,estado,reorder_level,is_visible\n";
+            const rows = products.map(p => `${p.id},"${p.name}",${p.price},${p.cost || 0},"${p.unit || 'un'}","${p.barcode || ''}","${p.category}","${p.status || 'activo'}",${Number(p.reorder_level ?? 10)},${p.is_visible !== false}`).join("\n");
             const blob = new Blob([headers + rows], { type: 'text/csv;charset=utf-8;' });
             const link = document.createElement("a");
             link.href = URL.createObjectURL(blob);
@@ -142,7 +145,10 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
                                 cost: Number(find(['COSTO', 'COST'])) || 0,
                                 unit: find(['UNIDAD', 'UNIT', 'UNIDADES', 'MEDIDA']) || 'un',
                                 barcode: normalizeBarcode(find(['BARCODE', 'CODIGO BARRAS', 'BARRAS', 'CODE'])),
-                                category: find(['CATEGORIA', 'CATEGORY']) || 'General'
+                                category: find(['CATEGORIA', 'CATEGORY']) || 'General',
+                                reorder_level: Number(find(['REORDER_LEVEL', 'MINIMO', 'ALERTA_MINIMA'])) || 10,
+                                status: String(find(['STATUS', 'ESTADO']) || 'activo'),
+                                is_visible: String(find(['IS_VISIBLE', 'VISIBLE_WEB', 'VISIBLE']) ?? 'true').toLowerCase() !== 'false'
                             };
                         });
                         setProducts(mapped);
@@ -163,7 +169,7 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
                         const lines = content.split('\n').filter(l => l.trim().length > 0);
                         const [header, ...rows] = lines;
                         imported = rows.map((row, rowIndex) => {
-                            const [id, name, price, cost, unit, barcode, category] = row.split(',').map(s => s.replace(/"/g, '').trim());
+                            const [id, name, price, cost, unit, barcode, category, status, reorderLevel, isVisible] = row.split(',').map(s => s.replace(/"/g, '').trim());
                             return {
                                 id: createProductId(),
                                 name,
@@ -171,7 +177,10 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
                                 cost: Number(cost) || 0,
                                 unit: unit || 'un',
                                 barcode: normalizeBarcode(barcode),
-                                category: category || 'General'
+                                category: category || 'General',
+                                reorder_level: Number(reorderLevel) || 10,
+                                status: status || 'activo',
+                                is_visible: String(isVisible || 'true').toLowerCase() !== 'false'
                             };
                         });
                     }
@@ -292,6 +301,36 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
                             <label className="input-label">Codigo de Barras</label>
                             <input name="barcode" defaultValue={editingProduct?.barcode} className="input-field" placeholder="Escanear o ingresar manual" />
                         </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                            <div className="input-group">
+                                <label className="input-label">Estado del Articulo</label>
+                                <select name="status" defaultValue={editingProduct?.status || 'activo'} className="input-field">
+                                    <option value="activo">Activo</option>
+                                    <option value="pocos">Quedan pocos</option>
+                                    <option value="agotado">Agotado</option>
+                                </select>
+                            </div>
+                            <div className="input-group">
+                                <label className="input-label">Minimo para alerta (Quedan pocos)</label>
+                                <input
+                                    name="reorder_level"
+                                    type="number"
+                                    min="0"
+                                    defaultValue={Number(editingProduct?.reorder_level ?? 10)}
+                                    className="input-field"
+                                />
+                            </div>
+                        </div>
+                        <div className="input-group" style={{ marginTop: '0.25rem' }}>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                                <input
+                                    name="is_visible"
+                                    type="checkbox"
+                                    defaultChecked={editingProduct?.is_visible !== false}
+                                />
+                                Visible en pagina/publicacion
+                            </label>
+                        </div>
                         <div style={{ display: 'flex', gap: '0.5rem' }}>
                             <button type="submit" className="btn btn-primary">Guardar</button>
                             <button type="button" className="btn" onClick={() => setView('list')}>Cancelar</button>
@@ -353,6 +392,8 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
                                 <th>Venta ($)</th>
                                 <th>Bodega</th>
                                 <th>Ventas</th>
+                                <th>Estado</th>
+                                <th>Web</th>
                                 <th>Acciones</th>
                             </tr>
                         </thead>
@@ -361,11 +402,33 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
                                 p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                                 (p.category && p.category.toLowerCase().includes(searchTerm.toLowerCase()))
                             ).map((p, idx) => (
+                                (() => {
+                                    const stockVentas = Number(stock.ventas[p.id] || 0);
+                                    const reorderLevel = Number(p.reorder_level ?? 10);
+                                    const hasFewByStock = stockVentas > 0 && stockVentas <= reorderLevel;
+                                    const isAgotado = String(p.status || '').toLowerCase() === 'agotado' || stockVentas <= 0;
+                                    const isFew = String(p.status || '').toLowerCase() === 'pocos' || hasFewByStock;
+                                    const isVisible = p.is_visible !== false;
+                                    return (
                                 <tr key={`${p.id}-${idx}`}>
                                     <td>{p.name}</td>
                                     <td>{(p.price || 0).toLocaleString()}</td>
                                     <td>{stock.bodega[p.id] || 0}</td>
                                     <td>{stock.ventas[p.id] || 0}</td>
+                                    <td>
+                                        {isAgotado ? (
+                                            <span className="badge" style={{ backgroundColor: '#fee2e2', color: '#991b1b' }}>Agotado</span>
+                                        ) : isFew ? (
+                                            <span className="badge" style={{ backgroundColor: '#fef3c7', color: '#92400e' }}>Quedan pocos</span>
+                                        ) : (
+                                            <span className="badge" style={{ backgroundColor: '#dcfce7', color: '#166534' }}>Disponible</span>
+                                        )}
+                                    </td>
+                                    <td>
+                                        <span className="badge" style={{ backgroundColor: isVisible ? '#dbeafe' : '#e5e7eb', color: isVisible ? '#1d4ed8' : '#6b7280' }}>
+                                            {isVisible ? 'Visible' : 'Oculto'}
+                                        </span>
+                                    </td>
                                     <td>
                                         {canEdit && <button className="btn" onClick={() => { setEditingProduct(p); setView('edit'); }} title="Editar">{'\u270F\uFE0F'}</button>}
                                         {!isCajero && <button className="btn" style={{ marginLeft: '5px' }} onClick={() => { setPreselectedProductId(p.id); setActiveTab('codigos'); }} title="Generar Etiqueta">{'\uD83C\uDFF7\uFE0F'}</button>}
@@ -388,6 +451,8 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
                                         )}
                                     </td>
                                 </tr>
+                                    );
+                                })()
                             ))}
                         </tbody>
                     </table>

@@ -1564,6 +1564,12 @@ function App() {
   };
 
   const handleAddItem = (item) => {
+    if (item?.is_visible === false) {
+      return alert('Este articulo esta oculto y no se puede facturar.');
+    }
+    if (String(item?.status || '').toLowerCase() === 'agotado') {
+      return alert('Este articulo esta marcado como AGOTADO.');
+    }
     setItems([...items, { ...item, total: Number(item.price || 0) * Number(item.quantity || 0) }]);
 
     addLog({

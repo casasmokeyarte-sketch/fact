@@ -47,6 +47,12 @@ function isUndefinedColumnError(error) {
   return code === '42703' || code === 'PGRST204' || blob.includes("could not find the 'user_name' column");
 }
 
+function isMissingIsVisibleColumnError(error) {
+  const code = String(error?.code || '');
+  const blob = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`.toLowerCase();
+  return code === '42703' || code === 'PGRST204' || blob.includes('is_visible');
+}
+
 async function withRetry(operation, retries = 2, delayMs = 450) {
   let lastError;
   for (let attempt = 0; attempt <= retries; attempt += 1) {
@@ -155,6 +161,9 @@ export const dataService = {
       .map((p) => ({
       ...p,
       barcode: normalizeNumericBarcode(p.barcode),
+      status: String(p?.status || 'activo'),
+      reorder_level: Number(p?.reorder_level ?? 10),
+      is_visible: p?.is_visible !== false,
     }));
   },
 
@@ -163,22 +172,41 @@ export const dataService = {
     const payload = {
       ...product,
       barcode: normalizeNumericBarcode(product.barcode) || null,
+      status: String(product?.status || 'activo'),
+      reorder_level: Number(product?.reorder_level ?? 10),
+      is_visible: product?.is_visible !== false,
       user_id: product.user_id || userId,
     };
 
     if (isUuid(payload.id)) {
       // Do not overwrite owner on existing products. Update first; insert only if missing.
       const { user_id, ...updatePayload } = payload;
-      const { data: updatedData, error: updateError } = await withRetry(() =>
+      let { data: updatedData, error: updateError } = await withRetry(() =>
         supabase.from('products').update(updatePayload).eq('id', payload.id).select()
       );
+      if (updateError && isMissingIsVisibleColumnError(updateError)) {
+        const { is_visible, ...fallbackPayload } = updatePayload;
+        const retry = await withRetry(() =>
+          supabase.from('products').update(fallbackPayload).eq('id', payload.id).select()
+        );
+        updatedData = retry.data;
+        updateError = retry.error;
+      }
       if (updateError) throw updateError;
       if ((updatedData || []).length > 0) return updatedData;
 
       const insertWithIdPayload = { ...removeInvalidUuidId(payload), id: payload.id };
-      const { data: insertedData, error: insertError } = await withRetry(() =>
+      let { data: insertedData, error: insertError } = await withRetry(() =>
         supabase.from('products').insert(insertWithIdPayload).select()
       );
+      if (insertError && isMissingIsVisibleColumnError(insertError)) {
+        const { is_visible, ...fallbackPayload } = insertWithIdPayload;
+        const retry = await withRetry(() =>
+          supabase.from('products').insert(fallbackPayload).select()
+        );
+        insertedData = retry.data;
+        insertError = retry.error;
+      }
       if (!insertError) return insertedData;
 
       if (!isBarcodeUniqueError(insertError) || !payload.barcode) throw insertError;
@@ -196,14 +224,28 @@ export const dataService = {
 
     if (hasBarcode) {
       const updatePayload = removeInvalidUuidId(insertPayload);
-      const { data: existingByBarcode, error: existingByBarcodeError } = await withRetry(() =>
+      let { data: existingByBarcode, error: existingByBarcodeError } = await withRetry(() =>
         supabase.from('products').update(updatePayload).eq('barcode', insertPayload.barcode).select()
       );
+      if (existingByBarcodeError && isMissingIsVisibleColumnError(existingByBarcodeError)) {
+        const { is_visible, ...fallbackPayload } = updatePayload;
+        const retry = await withRetry(() =>
+          supabase.from('products').update(fallbackPayload).eq('barcode', insertPayload.barcode).select()
+        );
+        existingByBarcode = retry.data;
+        existingByBarcodeError = retry.error;
+      }
       if (existingByBarcodeError) throw existingByBarcodeError;
       if ((existingByBarcode || []).length > 0) return existingByBarcode;
     }
 
-    const { data, error } = await withRetry(() => supabase.from('products').insert(insertPayload).select());
+    let { data, error } = await withRetry(() => supabase.from('products').insert(insertPayload).select());
+    if (error && isMissingIsVisibleColumnError(error)) {
+      const { is_visible, ...fallbackPayload } = insertPayload;
+      const retry = await withRetry(() => supabase.from('products').insert(fallbackPayload).select());
+      data = retry.data;
+      error = retry.error;
+    }
     if (!error) return data;
 
     if (!isBarcodeUniqueError(error) || !insertPayload.barcode) throw error;

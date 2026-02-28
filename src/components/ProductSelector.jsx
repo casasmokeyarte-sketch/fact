@@ -9,6 +9,10 @@ export function ProductSelector({ onAddItem, isAdmin, products }) {
   const scanBufferRef = useRef('');
   const scanLastKeyAtRef = useRef(0);
 
+  const isProductVisibleForSale = (product) => product?.is_visible !== false;
+  const isProductOutOfStockFlag = (product) => String(product?.status || '').toLowerCase() === 'agotado';
+  const saleableProducts = (products || []).filter((p) => isProductVisibleForSale(p));
+
   const normalizeCode = (value) => String(value ?? '').trim().replace(/\s+/g, '');
   const findProductByBarcode = (value) => {
     const scanned = normalizeCode(value);
@@ -16,7 +20,7 @@ export function ProductSelector({ onAddItem, isAdmin, products }) {
 
     const scannedDigits = scanned.replace(/\D/g, '');
     return (
-      products.find((p) => {
+      saleableProducts.find((p) => {
         const productBarcode = normalizeCode(p.barcode);
         if (!productBarcode) return false;
         if (productBarcode === scanned) return true;
@@ -32,6 +36,12 @@ export function ProductSelector({ onAddItem, isAdmin, products }) {
 
     const product = findProductByBarcode(normalized);
     if (product) {
+      if (isProductOutOfStockFlag(product)) {
+        alert('Este articulo esta marcado como AGOTADO.');
+        setBarcodeInput('');
+        focusScanner();
+        return;
+      }
       const finalPrice = product.price;
       onAddItem({
         ...product,
@@ -106,15 +116,16 @@ export function ProductSelector({ onAddItem, isAdmin, products }) {
 
     window.addEventListener('keydown', handleGlobalScanner, true);
     return () => window.removeEventListener('keydown', handleGlobalScanner, true);
-  }, [products]);
+  }, [saleableProducts]);
 
   useEffect(() => {
     focusScanner();
   }, []);
 
   const handleAddClick = () => {
-    const product = products.find(p => String(p.id) === String(selectedProductId));
+    const product = saleableProducts.find(p => String(p.id) === String(selectedProductId));
     if (!product) return alert("Seleccione un producto");
+    if (isProductOutOfStockFlag(product)) return alert('Este articulo esta marcado como AGOTADO.');
 
     if (isGift && !isAdmin) {
       return alert("Debe estar autorizado por el administrador para marcar un regalo.");
@@ -163,7 +174,7 @@ export function ProductSelector({ onAddItem, isAdmin, products }) {
             onChange={(e) => setSelectedProductId(e.target.value)}
           >
             <option value="">Seleccione o pase el escAner...</option>
-            {products.map((p, idx) => (
+            {saleableProducts.map((p, idx) => (
               <option key={`${p.id}-${idx}`} value={p.id}>
                 {p.name} - ${p.price} [Codigo: {p.barcode}]
               </option>
