@@ -5,6 +5,10 @@ const SCOPE_KEYWORDS = [
   'nit', 'direccion', 'telefono', 'correo', 'supabase', 'fact pro',
 ];
 
+const RATE_LIMIT_WINDOW_MS = 60 * 1000;
+const RATE_LIMIT_MAX_REQUESTS = 8;
+const rateLimitStore = new Map();
+
 function normalizeText(value) {
   return String(value || '')
     .toLowerCase()
@@ -33,6 +37,31 @@ function json(res, status, payload) {
   res.statusCode = status;
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   res.end(JSON.stringify(payload));
+}
+
+function getClientIp(req) {
+  const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+  if (forwarded) return forwarded;
+  return String(req.headers['x-real-ip'] || req.socket?.remoteAddress || 'unknown');
+}
+
+function applyRateLimit(key) {
+  const now = Date.now();
+  const record = rateLimitStore.get(key) || { count: 0, startAt: now };
+
+  if (now - record.startAt > RATE_LIMIT_WINDOW_MS) {
+    record.count = 0;
+    record.startAt = now;
+  }
+
+  record.count += 1;
+  rateLimitStore.set(key, record);
+
+  return {
+    allowed: record.count <= RATE_LIMIT_MAX_REQUESTS,
+    retryAfterSec: Math.max(1, Math.ceil((RATE_LIMIT_WINDOW_MS - (now - record.startAt)) / 1000)),
+    remaining: Math.max(0, RATE_LIMIT_MAX_REQUESTS - record.count),
+  };
 }
 
 async function readBody(req) {
@@ -65,6 +94,18 @@ export default async function handler(req, res) {
   const body = await readBody(req);
   const question = String(body?.question || '').trim();
   const context = String(body?.context || '').trim();
+  const clientIp = getClientIp(req);
+
+  const rate = applyRateLimit(clientIp);
+  res.setHeader('X-RateLimit-Limit', String(RATE_LIMIT_MAX_REQUESTS));
+  res.setHeader('X-RateLimit-Remaining', String(rate.remaining));
+  if (!rate.allowed) {
+    res.setHeader('Retry-After', String(rate.retryAfterSec));
+    return json(res, 429, {
+      ok: false,
+      answer: `Demasiadas consultas por minuto. Intenta de nuevo en ${rate.retryAfterSec}s.`,
+    });
+  }
 
   if (!question) {
     return json(res, 400, { ok: false, answer: 'Escribe una pregunta.' });

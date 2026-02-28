@@ -54,6 +54,13 @@ export function ReportsModule({
         return map;
     }, [users]);
 
+    const resolveUserLabel = (row) => (
+        row?.user_name ||
+        row?.user ||
+        userNameByKey[String(row?.user_id || '')] ||
+        'Sin usuario'
+    );
+
     const CompanyHeader = () => (
         <div className="report-header only-print" style={{ display: 'none', textAlign: 'center', marginBottom: '2rem', borderBottom: '2px solid #e2e8f0', paddingBottom: '1rem' }}>
             <img src={COMPANY_INFO.logo} alt="Logo" style={{ maxWidth: '150px', marginBottom: '0.5rem' }} />
@@ -90,10 +97,10 @@ export function ReportsModule({
                     <>
                         <div style={{ marginBottom: '1rem', fontWeight: 'bold' }}>Total Ventas: ${totalSales.toLocaleString()}</div>
                         <table>
-                            <thead><tr><th>Factura</th><th>Cliente</th><th>Total</th><th>Pago</th></tr></thead>
+                            <thead><tr><th>Factura</th><th>Usuario</th><th>Cliente</th><th>Total</th><th>Pago</th></tr></thead>
                             <tbody>
                                 {filteredSales.map((s, i) => (
-                                    <tr key={i}><td>{s.id}</td><td>{s.clientName}</td><td>${Number(s.total || 0).toLocaleString()}</td><td>{s.paymentMode}</td></tr>
+                                    <tr key={i}><td>{s.id}</td><td>{resolveUserLabel(s)}</td><td>{s.clientName}</td><td>${Number(s.total || 0).toLocaleString()}</td><td>{s.paymentMode}</td></tr>
                                 ))}
                             </tbody>
                         </table>
@@ -150,11 +157,12 @@ export function ReportsModule({
                     <>
                         <div style={{ marginBottom: '1rem', fontWeight: 'bold' }}>Total Gastos: ${totalExp.toLocaleString()}</div>
                         <table>
-                            <thead><tr><th>Fecha</th><th>Tipo</th><th>Beneficiario</th><th>Descripcion</th><th>Monto</th></tr></thead>
+                            <thead><tr><th>Fecha</th><th>Usuario</th><th>Tipo</th><th>Beneficiario</th><th>Descripcion</th><th>Monto</th></tr></thead>
                             <tbody>
                                 {filteredExpenses.map((g, i) => (
                                     <tr key={i}>
                                         <td>{new Date(g.date).toLocaleDateString()}</td>
+                                        <td>{resolveUserLabel(g)}</td>
                                         <td>{g.type}</td>
                                         <td>{g.beneficiary || 'N/A'}</td>
                                         <td>{g.description}</td>
@@ -177,10 +185,10 @@ export function ReportsModule({
                     <>
                         <div style={{ marginBottom: '1rem', fontWeight: 'bold' }}>Total Unidades Compradas: {totalUnits}</div>
                         <table>
-                            <thead><tr><th>Fecha</th><th>Proveedor</th><th>Producto</th><th>Cant.</th></tr></thead>
+                            <thead><tr><th>Fecha</th><th>Usuario</th><th>Proveedor</th><th>Producto</th><th>Cant.</th></tr></thead>
                             <tbody>
                                 {filteredPurchases.map((p, i) => (
-                                    <tr key={i}><td>{new Date(p.date).toLocaleDateString()}</td><td>{p.supplier}</td><td>{p.productName}</td><td>{p.quantity}</td></tr>
+                                    <tr key={i}><td>{new Date(p.date).toLocaleDateString()}</td><td>{resolveUserLabel(p)}</td><td>{p.supplier}</td><td>{p.productName}</td><td>{p.quantity}</td></tr>
                                 ))}
                             </tbody>
                         </table>
@@ -195,10 +203,10 @@ export function ReportsModule({
                     <>
                         <div style={{ marginBottom: '1rem', fontWeight: 'bold' }}>Total Deuda Pendiente: ${totalCartera.toLocaleString()}</div>
                         <table>
-                            <thead><tr><th>Fecha</th><th>Cliente</th><th>Factura #</th><th>Saldo</th></tr></thead>
+                            <thead><tr><th>Fecha</th><th>Usuario</th><th>Cliente</th><th>Factura #</th><th>Saldo</th></tr></thead>
                             <tbody>
                                 {filteredCartera.map((c, i) => (
-                                    <tr key={i}><td>{new Date(c.date).toLocaleDateString()}</td><td>{c.clientName}</td><td>{c.id}</td><td>${Number(c.balance || 0).toLocaleString()}</td></tr>
+                                    <tr key={i}><td>{new Date(c.date).toLocaleDateString()}</td><td>{resolveUserLabel(c)}</td><td>{c.clientName}</td><td>{c.id}</td><td>${Number(c.balance || 0).toLocaleString()}</td></tr>
                                 ))}
                             </tbody>
                         </table>

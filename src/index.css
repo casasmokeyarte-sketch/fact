@@ -285,6 +285,20 @@ body {
   box-shadow: 0 10px 24px rgba(11, 122, 91, 0.28);
 }
 
+.ops-board-trigger.attention {
+  animation: ops-board-bounce 0.95s ease-in-out infinite;
+  box-shadow: 0 0 0 6px rgba(245, 158, 11, 0.18), 0 20px 36px rgba(15, 23, 42, 0.35);
+  border: 2px solid #f59e0b;
+}
+
+@keyframes ops-board-bounce {
+  0% { transform: translateY(0) scale(1); }
+  25% { transform: translateY(-8px) scale(1.03); }
+  50% { transform: translateY(0) scale(1); }
+  75% { transform: translateY(-4px) scale(1.02); }
+  100% { transform: translateY(0) scale(1); }
+}
+
 .ops-board-panel {
   width: min(430px, calc(100vw - 36px));
   max-height: min(78vh, 760px);
