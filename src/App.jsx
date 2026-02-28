@@ -26,6 +26,7 @@ import { ReportsModule } from './components/ReportsModule'
 import { ShiftHistoryModule } from './components/ShiftHistoryModule'
 import { SystemHelpBubble } from './components/SystemHelpBubble'
 import { OperationsBoardBubble } from './components/OperationsBoardBubble'
+import { printShiftClosure } from './lib/printReports'
 
 import { dataService } from './lib/dataService'
 import { getProfile } from './lib/databaseService'
@@ -174,6 +175,7 @@ const BOARD_NOTE_LOG_PREFIX = 'BOARD_NOTE_EVENT::';
 const INVOICE_DRAFTS_STORAGE_KEY = 'fact_invoice_drafts';
 const NOTIFICATIONS_SEEN_AT_STORAGE_KEY = 'fact_notifications_seen_at';
 const BOARD_NOTES_SEEN_AT_STORAGE_KEY = 'fact_board_notes_seen_at';
+const OPERATIONAL_DATE_SETTINGS_STORAGE_KEY = 'fact_operational_date_settings';
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const isUuid = (value) => typeof value === 'string' && UUID_REGEX.test(value);
@@ -446,6 +448,21 @@ function App() {
   const [boardNotesSeenAt, setBoardNotesSeenAt] = useState(() => {
     const raw = Number(localStorage.getItem(BOARD_NOTES_SEEN_AT_STORAGE_KEY) || 0);
     return Number.isFinite(raw) ? raw : 0;
+  });
+  const [operationalDateSettings, setOperationalDateSettings] = useState(() => {
+    try {
+      const raw = localStorage.getItem(OPERATIONAL_DATE_SETTINGS_STORAGE_KEY);
+      const parsed = raw ? JSON.parse(raw) : null;
+      const daysOffset = Number(parsed?.daysOffset || 0);
+      return {
+        daysOffset: Number.isFinite(daysOffset) ? Math.max(-30, Math.min(30, Math.trunc(daysOffset))) : 0,
+        reason: String(parsed?.reason || ''),
+        appliedBy: String(parsed?.appliedBy || ''),
+        appliedAt: String(parsed?.appliedAt || ''),
+      };
+    } catch {
+      return { daysOffset: 0, reason: '', appliedBy: '', appliedAt: '' };
+    }
   });
   const lastBoardNoteSoundAtRef = useRef(0);
 
@@ -863,6 +880,10 @@ function App() {
   }, [boardNotesSeenAt]);
 
   useEffect(() => {
+    localStorage.setItem(OPERATIONAL_DATE_SETTINGS_STORAGE_KEY, JSON.stringify(operationalDateSettings));
+  }, [operationalDateSettings]);
+
+  useEffect(() => {
     const syncedFromCloud = buildRemoteAuthRequestsFromLogs(auditLogs || []);
     if (syncedFromCloud.length === 0) return;
     setRemoteAuthRequests((prev) => mergeRemoteAuthRequests(prev, syncedFromCloud));
@@ -958,6 +979,14 @@ function App() {
     });
   };
 
+  const getOperationalNow = useCallback(() => {
+    const offset = Number(operationalDateSettings?.daysOffset || 0);
+    const normalizedOffset = Number.isFinite(offset) ? Math.max(-30, Math.min(30, Math.trunc(offset))) : 0;
+    return new Date(Date.now() + normalizedOffset * 24 * 60 * 60 * 1000);
+  }, [operationalDateSettings?.daysOffset]);
+
+  const getOperationalNowIso = useCallback(() => getOperationalNow().toISOString(), [getOperationalNow]);
+
   const onResetSystem = () => {
     if (confirm("ESTA SEGURO? Esta accion borrara todas las ventas, clientes, deudas y bitacora.")) {
       setSalesHistory([]);
@@ -995,7 +1024,7 @@ function App() {
     const fullLog = {
       ...logEntry,
       user_id: currentUser?.id || null,
-      timestamp: new Date().toISOString(),
+      timestamp: getOperationalNowIso(),
       user_name: currentUser?.name || 'Sistema'
     };
     setAuditLogs(prev => [fullLog, ...prev]);
@@ -1073,12 +1102,14 @@ function App() {
     });
   };
 
-  const onCreateBoardNote = async (text) => {
-    const cleanText = String(text || '').trim();
-    if (!cleanText) return false;
+  const onCreateBoardNote = async (input) => {
+    const cleanText = String(input?.text || '').trim();
+    const attachments = Array.isArray(input?.attachments) ? input.attachments.slice(0, 2) : [];
+    if (!cleanText && attachments.length === 0) return false;
     const payload = {
       id: `BN-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
       text: cleanText,
+      attachments,
       createdAt: new Date().toISOString(),
       author: currentUser?.name || currentUser?.email || 'Usuario'
     };
@@ -1095,6 +1126,35 @@ function App() {
       alert('No se pudo guardar la nota en la nube.');
       return false;
     }
+  };
+
+  const onApplyOperationalDateOffset = ({ daysOffset = 0, reason = '' } = {}) => {
+    const normalizedOffset = Math.max(-30, Math.min(30, Math.trunc(Number(daysOffset) || 0)));
+    const cleanReason = String(reason || '').trim();
+
+    if (normalizedOffset !== 0 && cleanReason.length < 10) {
+      alert('Debe escribir un motivo claro (minimo 10 caracteres).');
+      return false;
+    }
+
+    const nextSettings = {
+      daysOffset: normalizedOffset,
+      reason: normalizedOffset === 0 ? '' : cleanReason,
+      appliedBy: currentUser?.name || currentUser?.email || 'Sistema',
+      appliedAt: new Date().toISOString(),
+    };
+
+    setOperationalDateSettings(nextSettings);
+
+    addLog({
+      module: 'Configuracion',
+      action: normalizedOffset === 0 ? 'Fecha operativa restablecida' : 'Fecha operativa ajustada',
+      details: normalizedOffset === 0
+        ? 'Se restablecio la fecha operativa al dia real del sistema.'
+        : `Offset aplicado: ${normalizedOffset} dia(s). Motivo: ${cleanReason}`,
+    });
+
+    return true;
   };
 
   const resetInvoiceComposer = () => {
@@ -1114,7 +1174,7 @@ function App() {
 
     const draft = {
       id: `DF-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
-      savedAt: new Date().toISOString(),
+      savedAt: getOperationalNowIso(),
       savedBy: { id: currentUser?.id || null, name: currentUser?.name || 'Usuario' },
       clientName,
       clientDoc: selectedClient?.document || 'N/A',
@@ -1122,7 +1182,9 @@ function App() {
       items,
       subtotal,
       deliveryFee,
-      total: subtotal + deliveryFee - Number(draftExtra?.extraDiscount || 0),
+      autoDiscountPercent: Number(selectedClient?.discount || 0),
+      autoDiscountAmount: subtotal * (Number(selectedClient?.discount || 0) / 100),
+      total: Math.max(0, subtotal + deliveryFee - (subtotal * (Number(selectedClient?.discount || 0) / 100)) - Number(draftExtra?.extraDiscount || 0)),
       paymentMode,
       paymentRef,
       ...draftExtra,
@@ -1261,7 +1323,12 @@ function App() {
   const onStartShift = (initialCash) => {
     const carryOverCash = getUserCashBalance(currentUser);
     const startCash = Number(initialCash) > 0 ? Number(initialCash) : carryOverCash;
-    const openShift = { startTime: new Date().toISOString(), initialCash: startCash };
+    const openShift = {
+      startTime: getOperationalNowIso(),
+      initialCash: startCash,
+      user_id: currentUser?.id || null,
+      user_name: currentUser?.name || currentUser?.email || 'Sistema'
+    };
     setShift(openShift);
     setUserCashBalance(currentUser, startCash);
     saveOpenShift(currentUser?.id, openShift);
@@ -1277,19 +1344,41 @@ function App() {
     return date >= start && date <= end;
   };
 
+  const isRecordOwnedByUser = (record, user) => {
+    const recordUserId = String(record?.user_id || record?.userId || '').trim();
+    const currentUserId = String(user?.id || '').trim();
+    if (recordUserId && currentUserId) return recordUserId === currentUserId;
+
+    const recordUserName = String(record?.user_name || record?.user || '').trim().toLowerCase();
+    const currentUserName = String(user?.name || user?.email || '').trim().toLowerCase();
+    if (recordUserName && currentUserName) return recordUserName === currentUserName;
+
+    return false;
+  };
+
   const parseMoneyFromText = (text) => {
     const match = String(text || '').match(/\$([\d\.,]+)/);
     if (!match?.[1]) return 0;
     return Number(match[1].replace(/[^\d]/g, '')) || 0;
   };
 
-  const getShiftFinancialSnapshot = (startIso, endIso) => {
-    const shiftSales = salesHistory.filter((sale) => isDateInRange(sale.date, startIso, endIso));
-    const shiftExpenses = expenses.filter((expense) => isDateInRange(expense.date, startIso, endIso));
-    const shiftPurchases = purchases.filter((purchase) => isDateInRange(purchase.date, startIso, endIso));
+  const getShiftFinancialSnapshot = (startIso, endIso, userRef = currentUser) => {
+    const shiftSales = salesHistory.filter((sale) =>
+      isDateInRange(sale.date, startIso, endIso) &&
+      isRecordOwnedByUser(sale, userRef)
+    );
+    const shiftExpenses = expenses.filter((expense) =>
+      isDateInRange(expense.date, startIso, endIso) &&
+      isRecordOwnedByUser(expense, userRef)
+    );
+    const shiftPurchases = purchases.filter((purchase) =>
+      isDateInRange(purchase.date, startIso, endIso) &&
+      isRecordOwnedByUser(purchase, userRef)
+    );
     const shiftCashLogs = auditLogs.filter((log) =>
       log?.module === 'Caja Principal' &&
       isDateInRange(log.timestamp, startIso, endIso) &&
+      isRecordOwnedByUser(log, userRef) &&
       ['Movimiento Efectivo', 'Recibir Dinero', 'Devolver Dinero'].includes(log.action)
     );
 
@@ -1343,8 +1432,30 @@ function App() {
 
   const onEndShift = (data) => {
     if (!shift?.startTime) return;
-    const shiftEndIso = new Date().toISOString();
-    const summary = getShiftFinancialSnapshot(shift.startTime, shiftEndIso);
+    const shiftEndIso = getOperationalNowIso();
+    const summary = getShiftFinancialSnapshot(shift.startTime, shiftEndIso, currentUser);
+    const hasAnyUserMovement =
+      summary.shiftSales.length > 0 ||
+      summary.shiftExpenses.length > 0 ||
+      summary.shiftPurchases.length > 0 ||
+      summary.shiftCashLogs.length > 0;
+    const isAdminUser = normalizeRole(currentUser?.role) === 'Administrador';
+    let emptyCloseReason = '';
+
+    if (!hasAnyUserMovement) {
+      if (!isAdminUser) {
+        alert('No se puede cerrar la jornada: este usuario no tiene movimientos en su turno.');
+        return;
+      }
+
+      const reason = String(prompt('No hay movimientos en la jornada. Como administrador, ingrese motivo obligatorio para cerrar:') || '').trim();
+      if (reason.length < 10) {
+        alert('Debe ingresar un motivo valido (minimo 10 caracteres) para cerrar sin movimientos.');
+        return;
+      }
+      emptyCloseReason = reason;
+    }
+
     const salesTotal = summary.salesBreakdown.gross;
 
     const reportLines = [
@@ -1367,6 +1478,8 @@ function App() {
       `Efectivo Fisico contado: ${Number(data.physicalCash || 0).toLocaleString()}`,
       `Diferencia: ${Number(data.discrepancy || 0).toLocaleString()}`,
       `Cierre con autorizacion admin: ${data.authorized ? 'SI' : 'NO'}`,
+      `Cierre sin movimientos: ${hasAnyUserMovement ? 'NO' : 'SI'}`,
+      ...(hasAnyUserMovement ? [] : [`Motivo cierre sin movimientos: ${emptyCloseReason}`]),
       '------------------------------------------',
       'MOVIMIENTOS DE CAJA INTERNOS (INFO)',
       `Mayor -> Menor: ${summary.cashMovements.majorToMinor.toLocaleString()}`,
@@ -1415,6 +1528,8 @@ function App() {
       physicalCash: data.physicalCash,
       discrepancy: data.discrepancy,
       authorized: data.authorized,
+      closedWithoutMovements: !hasAnyUserMovement,
+      closeWithoutMovementsReason: hasAnyUserMovement ? '' : emptyCloseReason,
       user: currentUser?.name || 'Sistema',
       user_name: currentUser?.name || currentUser?.email || 'Sistema',
       user_id: currentUser?.id || null,
@@ -1433,7 +1548,13 @@ function App() {
     };
     persistShift();
 
-    alert("Jornada cerrada con exito.");
+    try {
+      printShiftClosure(shiftData, '58mm');
+    } catch (e) {
+      console.error('No se pudo abrir impresion automatica del cierre:', e);
+    }
+
+    alert("Jornada cerrada con exito. Se envio a impresion automaticamente.");
 
     setUserCashBalance(currentUser, data.physicalCash);
     setShift(null);
@@ -1443,10 +1564,7 @@ function App() {
   };
 
   const handleAddItem = (item) => {
-    // Apply client discount if applicable
-    const discount = selectedClient ? selectedClient.discount : 0;
-    const discountedPrice = item.price * (1 - discount / 100);
-    setItems([...items, { ...item, price: discountedPrice, originalPrice: item.price, total: discountedPrice * item.quantity }]);
+    setItems([...items, { ...item, total: Number(item.price || 0) * Number(item.quantity || 0) }]);
 
     addLog({
       module: 'Facturacion',
@@ -1503,15 +1621,19 @@ function App() {
 
     // Credit Limit check (Individual Invoice Max)
     const isCreditPortion = paymentMode === PAYMENT_MODES.CREDITO || mixedData?.credit > 0;
+    const automaticDiscountPercent = Number(selectedClient?.discount || 0);
+    const automaticDiscountAmount = subtotal * (automaticDiscountPercent / 100);
+    const totalDiscount = automaticDiscountAmount + Number(extraDiscount || 0);
+    const totalAfterDiscounts = Math.max(0, subtotal + deliveryFee - totalDiscount);
     if (isCreditPortion && selectedClient) {
-      const creditPortion = mixedData ? mixedData.credit : (subtotal + deliveryFee - extraDiscount);
+      const creditPortion = mixedData ? mixedData.credit : totalAfterDiscounts;
       if (creditPortion > selectedClient.creditLimit) {
         return alert(`Supera el limite de factura para este nivel de credito (${selectedClient.creditLimit.toLocaleString()}). Realice un abono para continuar.`);
       }
     }
 
     const finalMode = mixedData ? 'Mixto' : paymentMode;
-    const finalTotal = subtotal + deliveryFee - extraDiscount;
+    const finalTotal = totalAfterDiscounts;
     let invoiceCode = '';
     try {
       invoiceCode = await dataService.getNextInvoiceCode('SSOT');
@@ -1521,7 +1643,7 @@ function App() {
     }
 
     const termDays = selectedClient?.approvedTerm || 30;
-    const dueDateObj = new Date();
+    const dueDateObj = getOperationalNow();
     dueDateObj.setDate(dueDateObj.getDate() + termDays);
 
     const newInvoice = {
@@ -1532,10 +1654,14 @@ function App() {
       items,
       subtotal,
       deliveryFee,
+      automaticDiscountPercent,
+      automaticDiscountAmount,
+      extraDiscount: Number(extraDiscount || 0),
+      totalDiscount,
       total: finalTotal,
       paymentMode: finalMode,
       mixedDetails: { ...(mixedData || {}), invoiceCode }, // { cash, credit, invoiceCode }
-      date: new Date().toISOString(),
+      date: getOperationalNowIso(),
       dueDate: dueDateObj.toISOString(),
       status: (paymentMode === PAYMENT_MODES.CREDITO || mixedData?.credit > 0) ? 'pendiente' : 'pagado',
     };
@@ -1826,7 +1952,7 @@ function App() {
   };
 
   const activeShiftSalesTotal = shift?.startTime
-    ? getShiftFinancialSnapshot(shift.startTime, new Date().toISOString()).salesBreakdown.gross
+    ? getShiftFinancialSnapshot(shift.startTime, getOperationalNowIso(), currentUser).salesBreakdown.gross
     : 0;
 
   const selectedClientPendingBalance = selectedClient
@@ -2051,7 +2177,7 @@ function App() {
                   </div>
                   <div style={{ borderBottom: '1px solid #000', marginBottom: '10px', paddingBottom: '10px' }}>
                     <p><strong>Factura:</strong> {new Date().getTime().toString().slice(-6)}</p>
-                    <p><strong>Fecha:</strong> {new Date().toLocaleString()}</p>
+                    <p><strong>Fecha:</strong> {getOperationalNow().toLocaleString()}</p>
                     <p><strong>Cliente:</strong> {clientName}</p>
                     {selectedClient && <p><strong>NIT/CC:</strong> {selectedClient.document}</p>}
                     <p><strong>Atendido por:</strong> {currentUser?.username}</p>
@@ -2096,6 +2222,7 @@ function App() {
                   paymentRef={paymentRef}
                   setPaymentRef={setPaymentRef}
                   paymentMethods={paymentMethods}
+                  selectedClientDiscount={Number(selectedClient?.discount || 0)}
                   onFacturar={handleFacturar}
                   selectedClient={selectedClient}
                   selectedClientPendingBalance={selectedClientPendingBalance}
@@ -2418,6 +2545,8 @@ function App() {
               paymentMethods={paymentMethods} setPaymentMethods={setPaymentMethods}
               categories={categories} setCategories={setCategories}
               onResetSystem={onResetSystem} onSaveSystem={onSaveSystem}
+              operationalDateSettings={operationalDateSettings}
+              onApplyOperationalDateOffset={onApplyOperationalDateOffset}
             />
           )}
           {activeTab === 'trueque' && (

@@ -35,6 +35,7 @@ export function PaymentSummary({
   paymentMethods,
   onFacturar,
   selectedClient,
+  selectedClientDiscount = 0,
   selectedClientPendingBalance = 0,
   selectedClientAvailableCredit = 0,
   items,
@@ -74,7 +75,10 @@ export function PaymentSummary({
     new Set([...(paymentMethods || []), OTHER_MODE].filter(Boolean))
   );
 
-  const total = subtotal + (Number(deliveryFee) || 0) - (Number(extraDiscount) || 0);
+  const automaticDiscountPercent = Number(selectedClientDiscount || 0);
+  const automaticDiscountAmount = subtotal * (automaticDiscountPercent / 100);
+  const totalDiscount = automaticDiscountAmount + (Number(extraDiscount) || 0);
+  const total = Math.max(0, subtotal + (Number(deliveryFee) || 0) - totalDiscount);
   const safeMixedAmountA = clamp(Number(mixedAmountA) || 0, 0, Math.max(0, total));
   const mixedAmountB = Math.max(0, total - safeMixedAmountA);
 
@@ -309,6 +313,14 @@ export function PaymentSummary({
       <div style={{ fontSize: '2.5rem', fontWeight: 'bold', margin: '1rem 0' }}>
         ${total.toLocaleString()}
       </div>
+
+      {automaticDiscountAmount > 0 && (
+        <div className="card" style={{ backgroundColor: '#f8fafc', marginBottom: '1rem' }}>
+          <div style={{ fontSize: '0.9rem', color: '#334155' }}>
+            Descuento por nivel cliente ({automaticDiscountPercent}%): <strong>-${automaticDiscountAmount.toLocaleString()}</strong>
+          </div>
+        </div>
+      )}
 
       {selectedClient && (
         <div className="card" style={{ backgroundColor: '#f8fafc', marginBottom: '1rem' }}>

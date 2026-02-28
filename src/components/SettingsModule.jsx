@@ -7,7 +7,9 @@ export function SettingsModule({
     categories, setCategories,
     onResetSystem, onSaveSystem,
     soundEnabled, setSoundEnabled,
-    soundVolume, setSoundVolume
+    soundVolume, setSoundVolume,
+    operationalDateSettings,
+    onApplyOperationalDateOffset
 }) {
     const [subTab, setSubTab] = useState('usuarios');
 
@@ -20,6 +22,12 @@ export function SettingsModule({
 
     // New Category State
     const [newCategory, setNewCategory] = useState('');
+    const [dayOffsetInput, setDayOffsetInput] = useState(() => Number(operationalDateSettings?.daysOffset || 0));
+    const [dayOffsetReason, setDayOffsetReason] = useState('');
+
+    React.useEffect(() => {
+        setDayOffsetInput(Number(operationalDateSettings?.daysOffset || 0));
+    }, [operationalDateSettings?.daysOffset]);
 
     const defaultPermissions = {
         Administrador: {
@@ -222,6 +230,72 @@ export function SettingsModule({
 
             {subTab === 'sistema' && (
                 <div style={{ display: 'grid', gap: '1rem' }}>
+                    <div className="card" style={{ border: '1px solid #f59e0b', backgroundColor: '#fffbeb' }}>
+                        <h3 style={{ marginTop: 0 }}>Fecha Operativa (Retroceder Dia)</h3>
+                        <p style={{ marginTop: 0 }}>
+                            Permite ajustar temporalmente la fecha del sistema para corregir errores del dia anterior.
+                            Requiere motivo obligatorio para trazabilidad.
+                        </p>
+                        <div style={{ display: 'grid', gap: '0.75rem' }}>
+                            <div className="input-group" style={{ marginBottom: 0 }}>
+                                <label className="input-label">Dias a mover (negativo = retroceder, maximo +/-30)</label>
+                                <input
+                                    type="number"
+                                    className="input-field"
+                                    value={Number(dayOffsetInput || 0)}
+                                    min={-30}
+                                    max={30}
+                                    step={1}
+                                    onChange={(e) => setDayOffsetInput(Number(e.target.value))}
+                                />
+                            </div>
+                            <div className="input-group" style={{ marginBottom: 0 }}>
+                                <label className="input-label">Motivo del ajuste</label>
+                                <textarea
+                                    className="input-field"
+                                    rows={2}
+                                    value={dayOffsetReason}
+                                    onChange={(e) => setDayOffsetReason(e.target.value)}
+                                    placeholder="Ej: correccion de cierre y reporte del turno de ayer"
+                                />
+                            </div>
+                            <div style={{ fontSize: '0.9em', color: '#78350f' }}>
+                                Estado actual: <strong>{Number(operationalDateSettings?.daysOffset || 0)} dia(s)</strong>
+                                {operationalDateSettings?.reason ? ` | Motivo: ${operationalDateSettings.reason}` : ''}
+                            </div>
+                            <div style={{ display: 'flex', gap: '0.5rem' }}>
+                                <button
+                                    className="btn btn-primary"
+                                    onClick={() => {
+                                        const ok = onApplyOperationalDateOffset?.({
+                                            daysOffset: Number(dayOffsetInput || 0),
+                                            reason: String(dayOffsetReason || '').trim()
+                                        });
+                                        if (ok) {
+                                            setDayOffsetReason('');
+                                            alert('Fecha operativa actualizada.');
+                                        }
+                                    }}
+                                >
+                                    Aplicar ajuste
+                                </button>
+                                <button
+                                    className="btn"
+                                    onClick={() => {
+                                        const ok = onApplyOperationalDateOffset?.({ daysOffset: 0, reason: 'Restablecer fecha real' });
+                                        if (ok) {
+                                            setDayOffsetReason('');
+                                            setDayOffsetInput(0);
+                                            alert('Fecha operativa restablecida al dia real.');
+                                        }
+                                    }}
+                                >
+                                    Restablecer dia real
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
                     <div className="card">
                         <h3 style={{ marginTop: 0 }}>Sonidos del Sistema</h3>
                         <div style={{ display: 'grid', gap: '0.75rem' }}>
