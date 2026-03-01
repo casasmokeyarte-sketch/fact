@@ -383,6 +383,8 @@ function App() {
   const quickScanBufferRef = useRef('');
   const quickScanLastKeyAtRef = useRef(0);
   const realtimeRefreshTimeoutRef = useRef(null);
+  const realtimeRefreshInFlightRef = useRef(false);
+  const queuedRealtimeRefreshRef = useRef(false);
   const lastAuthEventRef = useRef({ event: null, userId: null, at: 0 });
   const pendingProductsSyncRef = useRef(false);
   const pendingClientsSyncRef = useRef(false);
@@ -801,8 +803,22 @@ function App() {
         clearTimeout(realtimeRefreshTimeoutRef.current);
       }
       realtimeRefreshTimeoutRef.current = setTimeout(() => {
-        refreshCloudData({ silent: true });
-      }, 900);
+        if (realtimeRefreshInFlightRef.current) {
+          queuedRealtimeRefreshRef.current = true;
+          return;
+        }
+
+        realtimeRefreshInFlightRef.current = true;
+        refreshCloudData({ silent: true })
+          .catch((err) => console.error('Error en refresh realtime:', err))
+          .finally(() => {
+            realtimeRefreshInFlightRef.current = false;
+            if (queuedRealtimeRefreshRef.current) {
+              queuedRealtimeRefreshRef.current = false;
+              scheduleRealtimeRefresh();
+            }
+          });
+      }, 1400);
     };
 
     const channel = supabase
@@ -822,6 +838,8 @@ function App() {
         clearTimeout(realtimeRefreshTimeoutRef.current);
         realtimeRefreshTimeoutRef.current = null;
       }
+      queuedRealtimeRefreshRef.current = false;
+      realtimeRefreshInFlightRef.current = false;
       supabase.removeChannel(channel);
     };
   }, [isLoggedIn, currentUser?.id, refreshCloudData]);
@@ -1240,6 +1258,11 @@ function App() {
     return acc;
   }, {});
 
+  const remoteAuthRequestById = remoteAuthRequests.reduce((acc, req) => {
+    if (req?.id) acc[req.id] = req;
+    return acc;
+  }, {});
+
   const boardNotes = useMemo(() => buildBoardNotesFromLogs(auditLogs || []), [auditLogs]);
   const latestBoardNoteAt = Number(new Date(boardNotes?.[0]?.createdAt || 0).getTime() || 0);
   const hasBoardAttention = latestBoardNoteAt > Number(boardNotesSeenAt || 0);
@@ -1458,6 +1481,12 @@ function App() {
     }
 
     const salesTotal = summary.salesBreakdown.gross;
+    const shiftStartMs = new Date(shift.startTime).getTime();
+    const shiftEndMs = new Date(shiftEndIso).getTime();
+    const workedMs = Math.max(0, shiftEndMs - shiftStartMs);
+    const workedHours = Math.floor(workedMs / (1000 * 60 * 60));
+    const workedMinutes = Math.floor((workedMs % (1000 * 60 * 60)) / (1000 * 60));
+    const workedDurationLabel = `${workedHours}h ${workedMinutes}m`;
 
     const reportLines = [
       '--- REPORTE DE CIERRE DE JORNADA (CR) ---',
@@ -1465,6 +1494,7 @@ function App() {
       `Asesor/Cajero: ${currentUser?.name || 'Sistema'}`,
       `Inicio jornada: ${new Date(shift.startTime).toLocaleString()}`,
       `Fin jornada: ${new Date(shiftEndIso).toLocaleString()}`,
+      `Total horas trabajadas: ${workedDurationLabel}`,
       '------------------------------------------',
       'RESUMEN MONETARIO',
       `Base Inicial: ${Number(shift.initialCash || 0).toLocaleString()}`,
@@ -1555,7 +1585,7 @@ function App() {
       console.error('No se pudo abrir impresion automatica del cierre:', e);
     }
 
-    alert("Jornada cerrada con exito. Se envio a impresion automaticamente.");
+    alert(`Jornada cerrada con exito. Horas trabajadas: ${workedDurationLabel}. Se envio a impresion automaticamente.`);
 
     setUserCashBalance(currentUser, data.physicalCash);
     setShift(null);
@@ -1609,7 +1639,7 @@ function App() {
     return `SSOT-${String(next).padStart(4, '0')}`;
   };
 
-  const handleFacturar = async (mixedData = null, extraDiscount = 0) => {
+  const handleFacturar = async (mixedData = null, extraDiscount = 0, invoiceMeta = {}) => {
     if (items.length === 0) return alert("Agregue productos primero");
     if (selectedClient?.blocked) {
       return alert("Este cliente esta bloqueado por Administracion. No puede facturar hasta ser desbloqueado.");
@@ -1653,6 +1683,11 @@ function App() {
     const dueDateObj = getOperationalNow();
     dueDateObj.setDate(dueDateObj.getDate() + termDays);
 
+    const authorization = invoiceMeta?.authorization && typeof invoiceMeta.authorization === 'object'
+      ? invoiceMeta.authorization
+      : null;
+    const paymentMethodDetail = String(invoiceMeta?.otherPaymentDetail || '').trim();
+
     const newInvoice = {
       id: invoiceCode,
       invoiceCode,
@@ -1667,7 +1702,20 @@ function App() {
       totalDiscount,
       total: finalTotal,
       paymentMode: finalMode,
-      mixedDetails: { ...(mixedData || {}), invoiceCode }, // { cash, credit, invoiceCode }
+      authorization,
+      mixedDetails: {
+        ...(mixedData || {}),
+        invoiceCode,
+        discount: {
+          automaticPercent: automaticDiscountPercent,
+          automaticAmount: automaticDiscountAmount,
+          extraAmount: Number(extraDiscount || 0),
+          totalAmount: totalDiscount
+        },
+        authorization,
+        payment_method_detail: paymentMethodDetail || undefined,
+        otherPaymentDetail: paymentMethodDetail || undefined
+      }, // { cash, credit, invoiceCode }
       date: getOperationalNowIso(),
       dueDate: dueDateObj.toISOString(),
       status: (paymentMode === PAYMENT_MODES.CREDITO || mixedData?.credit > 0) ? 'pendiente' : 'pagado',
@@ -1722,7 +1770,7 @@ function App() {
     };
     persistInvoice();
 
-    alert("Venta realizada con exito");
+    playSound('invoice');
 
     addLog({
       module: 'Facturacion',
@@ -2242,6 +2290,7 @@ function App() {
                   currentUser={currentUser}
                   onCreateRemoteAuthRequest={onCreateRemoteAuthRequest}
                   remoteAuthDecisionByRequestId={remoteAuthDecisionByRequestId}
+                  remoteAuthRequestById={remoteAuthRequestById}
                   onSaveDraft={onSaveInvoiceDraft}
                 />
                 <div className="card" style={{ marginTop: '1rem' }}>

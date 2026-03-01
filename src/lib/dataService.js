@@ -470,9 +470,14 @@ export const dataService = {
         clientDoc: inv.client_doc ?? 'N/A',
         subtotal: Number(inv.subtotal ?? 0),
         deliveryFee: Number(inv.delivery_fee ?? 0),
+        automaticDiscountPercent: Number(inv?.mixed_details?.discount?.automaticPercent ?? 0),
+        automaticDiscountAmount: Number(inv?.mixed_details?.discount?.automaticAmount ?? 0),
+        extraDiscount: Number(inv?.mixed_details?.discount?.extraAmount ?? 0),
+        totalDiscount: Number(inv?.mixed_details?.discount?.totalAmount ?? 0),
         total: Number(inv.total ?? 0),
         paymentMode: inv.payment_mode ?? 'Efectivo',
         mixedDetails: inv.mixed_details ?? null,
+        authorization: inv?.mixed_details?.authorization ?? null,
         date: inv.date,
         dueDate: inv.due_date ?? null,
         status: inv.status ?? 'pagado',
@@ -490,6 +495,32 @@ export const dataService = {
     const mergedMixedDetails = {
       ...(baseMixedDetails && typeof baseMixedDetails === 'object' ? baseMixedDetails : {}),
       user_name: userName || undefined,
+      discount: {
+        automaticPercent: Number(
+          invoice?.automaticDiscountPercent ??
+          baseMixedDetails?.discount?.automaticPercent ??
+          0
+        ),
+        automaticAmount: Number(
+          invoice?.automaticDiscountAmount ??
+          baseMixedDetails?.discount?.automaticAmount ??
+          0
+        ),
+        extraAmount: Number(
+          invoice?.extraDiscount ??
+          baseMixedDetails?.discount?.extraAmount ??
+          0
+        ),
+        totalAmount: Number(
+          invoice?.totalDiscount ??
+          baseMixedDetails?.discount?.totalAmount ??
+          0
+        ),
+      },
+      authorization:
+        invoice?.authorization ??
+        baseMixedDetails?.authorization ??
+        null,
     };
 
     const invoicePayload = {

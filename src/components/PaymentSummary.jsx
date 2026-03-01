@@ -42,6 +42,7 @@ export function PaymentSummary({
   currentUser,
   onCreateRemoteAuthRequest,
   remoteAuthDecisionByRequestId = {},
+  remoteAuthRequestById = {},
   onSaveDraft
 }) {
   const normalizeRole = (role) => {
@@ -104,9 +105,12 @@ export function PaymentSummary({
   const isTransferWithoutRef = !isMixed && requiresReference(paymentMode) && !paymentRef;
   const needsApproval = hasGift || hasExtraDiscount || isTransferWithoutRef;
 
-  const currentRemoteDecision = activeRemoteRequestId
-    ? remoteAuthDecisionByRequestId?.[activeRemoteRequestId]
+  const currentRemoteRequest = activeRemoteRequestId
+    ? remoteAuthRequestById?.[activeRemoteRequestId] || null
     : null;
+  const currentRemoteDecision = currentRemoteRequest?.status || (
+    activeRemoteRequestId ? remoteAuthDecisionByRequestId?.[activeRemoteRequestId] : null
+  );
 
   const reasonType = hasGift
     ? 'REGALO'
@@ -123,6 +127,44 @@ export function PaymentSummary({
       : isTransferWithoutRef
         ? 'Transferencia sin referencia'
         : 'Autorizacion manual';
+
+  const buildAuthorizationMeta = () => {
+    if (!needsApproval) return null;
+
+    if (shouldUseRemoteAuth) {
+      const approved = currentRemoteRequest && currentRemoteRequest.status === 'APPROVED'
+        ? currentRemoteRequest
+        : null;
+
+      return {
+        required: true,
+        mode: 'REMOTE',
+        status: approved ? 'APPROVED' : 'PENDING',
+        requestId: activeRemoteRequestId || '',
+        reasonType,
+        reasonLabel,
+        note: String(authNote || '').trim(),
+        approvedAt: approved?.resolvedAt || null,
+        approvedBy: approved?.resolvedBy || null
+      };
+    }
+
+    return {
+      required: true,
+      mode: 'ROLE_DIRECT',
+      status: 'APPROVED',
+      requestId: '',
+      reasonType,
+      reasonLabel,
+      note: String(authNote || '').trim(),
+      approvedAt: new Date().toISOString(),
+      approvedBy: {
+        id: currentUser?.id || null,
+        name: currentUser?.name || currentUser?.email || 'Usuario',
+        role: normalizedRole || ''
+      }
+    };
+  };
 
   const handleAuthAction = async (action) => {
     if (needsApproval) {
@@ -235,7 +277,10 @@ export function PaymentSummary({
           parts,
           splitSummary: `${mixedModeA}: ${safeMixedAmountA.toLocaleString()} | ${mixedModeB}: ${mixedAmountB.toLocaleString()}`,
         },
-        extraDiscount
+        extraDiscount,
+        {
+          authorization: buildAuthorizationMeta(),
+        }
       );
       return;
     }
@@ -251,7 +296,10 @@ export function PaymentSummary({
     onFacturar(
       null,
       extraDiscount,
-      { otherPaymentDetail: String(otherPaymentDetail || '').trim() }
+      {
+        otherPaymentDetail: String(otherPaymentDetail || '').trim(),
+        authorization: buildAuthorizationMeta(),
+      }
     );
   };
 
@@ -300,8 +348,15 @@ export function PaymentSummary({
       clientName,
       clientDoc: selectedClient?.document || 'N/A',
       items,
+      subtotal,
+      deliveryFee: Number(deliveryFee || 0),
+      automaticDiscountPercent,
+      automaticDiscountAmount,
+      extraDiscount: Number(extraDiscount || 0),
+      totalDiscount,
       total,
       paymentMode: isMixed ? `Mixto (${mixedModeA} + ${mixedModeB})` : paymentMode,
+      authorization: buildAuthorizationMeta(),
       date: new Date().toISOString(),
     };
     printInvoiceDocument(previewInvoice, mode);

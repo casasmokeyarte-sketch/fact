@@ -46,6 +46,20 @@ export function HistorialModule({ sales, isAdmin, onDeleteInvoice, onLog }) {
         'Sin usuario'
     );
 
+    const getDiscountInfo = (invoice) => {
+        const automaticPercent = Number(invoice?.automaticDiscountPercent ?? invoice?.mixedDetails?.discount?.automaticPercent ?? 0);
+        const automaticAmount = Number(invoice?.automaticDiscountAmount ?? invoice?.mixedDetails?.discount?.automaticAmount ?? 0);
+        const extraAmount = Number(invoice?.extraDiscount ?? invoice?.mixedDetails?.discount?.extraAmount ?? 0);
+        const totalAmount = Number(invoice?.totalDiscount ?? invoice?.mixedDetails?.discount?.totalAmount ?? (automaticAmount + extraAmount));
+        return { automaticPercent, automaticAmount, extraAmount, totalAmount };
+    };
+
+    const getAuthorizationInfo = (invoice) => (
+        invoice?.authorization ||
+        invoice?.mixedDetails?.authorization ||
+        null
+    );
+
     return (
         <div className="historial-module">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
@@ -125,6 +139,15 @@ export function HistorialModule({ sales, isAdmin, onDeleteInvoice, onLog }) {
             </div>
 
             {previewInvoice && (
+                (() => {
+                    const discount = getDiscountInfo(previewInvoice);
+                    const authorization = getAuthorizationInfo(previewInvoice);
+                    const subtotal = Number(previewInvoice?.subtotal || 0);
+                    const deliveryFee = Number(previewInvoice?.deliveryFee || 0);
+                    const automaticLabel = discount.automaticPercent > 0
+                        ? `${discount.automaticPercent}%`
+                        : '0%';
+                    return (
                 <div style={{
                     position: 'fixed',
                     inset: 0,
@@ -169,12 +192,35 @@ export function HistorialModule({ sales, isAdmin, onDeleteInvoice, onLog }) {
                             </tbody>
                         </table>
 
+                        <div style={{ marginTop: '0.75rem', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                            <div><strong>Subtotal:</strong> ${subtotal.toLocaleString()}</div>
+                            <div><strong>Domicilio:</strong> ${deliveryFee.toLocaleString()}</div>
+                            <div><strong>Descuento cliente ({automaticLabel}):</strong> -${discount.automaticAmount.toLocaleString()}</div>
+                            <div><strong>Descuento extra:</strong> -${discount.extraAmount.toLocaleString()}</div>
+                            <div><strong>Descuento total:</strong> -${discount.totalAmount.toLocaleString()}</div>
+                            <div><strong>Total final:</strong> ${Number(previewInvoice?.total || 0).toLocaleString()}</div>
+                        </div>
+
+                        {authorization?.required && (
+                            <div className="card" style={{ marginTop: '0.75rem', backgroundColor: '#f8fafc' }}>
+                                <div><strong>Autorizacion:</strong> {authorization?.reasonLabel || authorization?.reasonType || 'Manual'}</div>
+                                <div><strong>Estado:</strong> {authorization?.status || 'N/A'}</div>
+                                <div>
+                                    <strong>Aprobado por:</strong> {authorization?.approvedBy?.name || 'No registrado'}
+                                    {authorization?.approvedBy?.role ? ` (${authorization.approvedBy.role})` : ''}
+                                </div>
+                                {authorization?.approvedAt && <div><strong>Fecha autorizacion:</strong> {new Date(authorization.approvedAt).toLocaleString()}</div>}
+                            </div>
+                        )}
+
                         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.75rem' }}>
                             <button className="btn" onClick={() => handlePrint(previewInvoice, '58mm')}>Imprimir 58mm</button>
                             <button className="btn btn-primary" onClick={() => handlePrint(previewInvoice, 'a4')}>Imprimir A4</button>
                         </div>
                     </div>
                 </div>
+                    );
+                })()
             )}
         </div>
     );

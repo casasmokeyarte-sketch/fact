@@ -37,12 +37,41 @@ function buildPageCss(mode) {
 
 function openPrintWindow(title) {
   const popup = window.open('', '_blank', 'width=1000,height=780');
-  if (!popup) {
-    alert('Permita ventanas emergentes para imprimir.');
-    return null;
-  }
+  if (!popup) return null;
   popup.document.title = title;
   return popup;
+}
+
+function printInHiddenIframe(html) {
+  const iframe = document.createElement('iframe');
+  iframe.setAttribute('aria-hidden', 'true');
+  iframe.style.position = 'fixed';
+  iframe.style.width = '0';
+  iframe.style.height = '0';
+  iframe.style.border = '0';
+  iframe.style.opacity = '0';
+  iframe.style.pointerEvents = 'none';
+  document.body.appendChild(iframe);
+
+  const iframeDoc = iframe.contentWindow?.document;
+  if (!iframeDoc || !iframe.contentWindow) {
+    iframe.remove();
+    alert('No se pudo iniciar impresion en segundo plano.');
+    return;
+  }
+
+  iframeDoc.open();
+  iframeDoc.write(html);
+  iframeDoc.close();
+
+  setTimeout(() => {
+    try {
+      iframe.contentWindow.focus();
+      iframe.contentWindow.print();
+    } finally {
+      setTimeout(() => iframe.remove(), 1500);
+    }
+  }, 220);
 }
 
 function renderDocument({ title, subtitle, contentHtml, mode }) {
@@ -92,10 +121,14 @@ function renderDocument({ title, subtitle, contentHtml, mode }) {
 }
 
 export function printReportHtml({ title, subtitle = '', contentHtml = '', mode = 'a4' }) {
+  const html = renderDocument({ title, subtitle, contentHtml, mode });
   const popup = openPrintWindow(title || 'Reporte');
-  if (!popup) return;
+  if (!popup) {
+    printInHiddenIframe(html);
+    return;
+  }
   popup.document.open();
-  popup.document.write(renderDocument({ title, subtitle, contentHtml, mode }));
+  popup.document.write(html);
   popup.document.close();
 }
 
