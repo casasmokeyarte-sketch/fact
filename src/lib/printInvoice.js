@@ -46,6 +46,13 @@ export function printInvoiceDocument(invoice, mode = '58mm') {
     invoice?.mixedDetails?.otherPaymentDetail ||
     ''
   ).trim();
+  const automaticDiscountPercent = Number(invoice?.automaticDiscountPercent ?? invoice?.mixedDetails?.discount?.automaticPercent ?? 0);
+  const automaticDiscountAmount = Number(invoice?.automaticDiscountAmount ?? invoice?.mixedDetails?.discount?.automaticAmount ?? 0);
+  const extraDiscountAmount = Number(invoice?.extraDiscount ?? invoice?.mixedDetails?.discount?.extraAmount ?? 0);
+  const totalDiscountAmount = Number(invoice?.totalDiscount ?? invoice?.mixedDetails?.discount?.totalAmount ?? (automaticDiscountAmount + extraDiscountAmount));
+  const subtotalAmount = Number(invoice?.subtotal ?? 0);
+  const deliveryFeeAmount = Number(invoice?.deliveryFee ?? 0);
+  const authorization = invoice?.authorization || invoice?.mixedDetails?.authorization || null;
 
   const mixedDetailsHtml = mixedParts.length > 0
     ? `
@@ -156,6 +163,20 @@ export function printInvoiceDocument(invoice, mode = '58mm') {
           </table>
           ${mixedDetailsHtml}
           ${singlePaymentExtraHtml}
+          <div class="pay-details">
+            <div><strong>Subtotal:</strong> $${subtotalAmount.toLocaleString('es-CO')}</div>
+            <div><strong>Domicilio:</strong> $${deliveryFeeAmount.toLocaleString('es-CO')}</div>
+            <div><strong>Desc. cliente (${automaticDiscountPercent}%):</strong> -$${automaticDiscountAmount.toLocaleString('es-CO')}</div>
+            <div><strong>Desc. extra:</strong> -$${extraDiscountAmount.toLocaleString('es-CO')}</div>
+            <div><strong>Descuento total:</strong> -$${totalDiscountAmount.toLocaleString('es-CO')}</div>
+          </div>
+          ${authorization?.required ? `
+            <div class="pay-details">
+              <div><strong>Autorizacion:</strong> ${escapeHtml(authorization?.reasonLabel || authorization?.reasonType || 'Manual')}</div>
+              <div><strong>Estado:</strong> ${escapeHtml(authorization?.status || 'N/A')}</div>
+              <div><strong>Aprobado por:</strong> ${escapeHtml(authorization?.approvedBy?.name || 'No registrado')}</div>
+            </div>
+          ` : ''}
           <div class="total">TOTAL: $${Number(invoice?.total || 0).toLocaleString('es-CO')}</div>
           <div class="footer">Gracias por su compra</div>
         </div>

@@ -32,6 +32,83 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
             return v.toString(16);
         });
     };
+    const toProductExportRow = (product) => ({
+        id: product?.id || '',
+        codigo_barras: normalizeBarcode(product?.barcode),
+        nombre: String(product?.name || ''),
+        categoria: String(product?.category || 'General'),
+        precio: Number(product?.price || 0),
+        costo: Number(product?.cost || 0),
+        unidad: String(product?.unit || 'un'),
+        estado: String(product?.status || 'activo'),
+        reorder_level: Number(product?.reorder_level ?? 10),
+        is_visible: product?.is_visible !== false
+    });
+
+    const normalizeImportedProduct = (raw) => {
+        const id = String(raw?.id || '').trim();
+        const barcode = normalizeBarcode(raw?.barcode ?? raw?.codigo_barras);
+        return {
+            id: id || createProductId(),
+            name: String(raw?.name ?? raw?.nombre ?? 'Sin nombre').trim() || 'Sin nombre',
+            price: Number(raw?.price ?? raw?.precio ?? 0) || 0,
+            cost: Number(raw?.cost ?? raw?.costo ?? 0) || 0,
+            unit: String(raw?.unit ?? raw?.unidad ?? 'un').trim() || 'un',
+            barcode,
+            category: String(raw?.category ?? raw?.categoria ?? 'General').trim() || 'General',
+            reorder_level: Number(raw?.reorder_level ?? raw?.minimo ?? 10) || 10,
+            status: String(raw?.status ?? raw?.estado ?? 'activo').trim() || 'activo',
+            is_visible: String(raw?.is_visible ?? raw?.visible ?? 'true').toLowerCase() !== 'false'
+        };
+    };
+
+    const mergeImportedProducts = (currentProducts, importedRawRows) => {
+        const normalizedRows = (importedRawRows || []).map(normalizeImportedProduct);
+        const merged = [...(currentProducts || [])];
+        const indexById = new Map();
+        const indexByBarcode = new Map();
+
+        merged.forEach((product, idx) => {
+            const id = String(product?.id || '').trim();
+            const barcode = normalizeBarcode(product?.barcode);
+            if (id) indexById.set(id, idx);
+            if (barcode) indexByBarcode.set(barcode, idx);
+        });
+
+        let updatedCount = 0;
+        let insertedCount = 0;
+
+        normalizedRows.forEach((incoming) => {
+            const incomingId = String(incoming?.id || '').trim();
+            const incomingBarcode = normalizeBarcode(incoming?.barcode);
+
+            let existingIndex = -1;
+            if (incomingId && indexById.has(incomingId)) {
+                existingIndex = indexById.get(incomingId);
+            } else if (incomingBarcode && indexByBarcode.has(incomingBarcode)) {
+                existingIndex = indexByBarcode.get(incomingBarcode);
+            }
+
+            if (existingIndex >= 0) {
+                const existing = merged[existingIndex];
+                merged[existingIndex] = {
+                    ...existing,
+                    ...incoming,
+                    id: existing.id || incoming.id
+                };
+                updatedCount += 1;
+                return;
+            }
+
+            merged.push(incoming);
+            const newIndex = merged.length - 1;
+            if (incomingId) indexById.set(incomingId, newIndex);
+            if (incomingBarcode) indexByBarcode.set(incomingBarcode, newIndex);
+            insertedCount += 1;
+        });
+
+        return { merged, updatedCount, insertedCount };
+    };
 
     useEffect(() => {
         if (!currentUser?.id) return;
@@ -91,21 +168,22 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
 
     // Import/Export
     const handleExport = (type) => {
+        const exportRows = products.map(toProductExportRow);
         if (type === 'json') {
-            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(products));
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(exportRows));
             const dlAnchor = document.createElement('a');
             dlAnchor.setAttribute("href", dataStr);
             dlAnchor.setAttribute("download", "productos.json");
             dlAnchor.click();
             dlAnchor.remove();
         } else if (type === 'excel') {
-            const ws = XLSX.utils.json_to_sheet(products);
+            const ws = XLSX.utils.json_to_sheet(exportRows);
             const wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, "Productos");
             XLSX.writeFile(wb, "productos.xlsx");
         } else if (type === 'notes') {
             const headers = "id,nombre,precio,costo,unidad,codigo_barras,categoria,estado,reorder_level,is_visible\n";
-            const rows = products.map(p => `${p.id},"${p.name}",${p.price},${p.cost || 0},"${p.unit || 'un'}","${p.barcode || ''}","${p.category}","${p.status || 'activo'}",${Number(p.reorder_level ?? 10)},${p.is_visible !== false}`).join("\n");
+            const rows = exportRows.map(p => `${p.id},"${p.nombre}",${p.precio},${p.costo || 0},"${p.unidad || 'un'}","${p.codigo_barras || ''}","${p.categoria}","${p.estado || 'activo'}",${Number(p.reorder_level ?? 10)},${p.is_visible !== false}`).join("\n");
             const blob = new Blob([headers + rows], { type: 'text/csv;charset=utf-8;' });
             const link = document.createElement("a");
             link.href = URL.createObjectURL(blob);
@@ -139,7 +217,7 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
                             };
 
                             return {
-                                id: createProductId(),
+                                id: find(['ID']) || createProductId(),
                                 name: find(['NOMBRE', 'PRODUCTO', 'NAME']) || 'Sin nombre',
                                 price: Number(find(['PRECIO', 'VENTA', 'PRICE'])) || 0,
                                 cost: Number(find(['COSTO', 'COST'])) || 0,
@@ -151,9 +229,14 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
                                 is_visible: String(find(['IS_VISIBLE', 'VISIBLE_WEB', 'VISIBLE']) ?? 'true').toLowerCase() !== 'false'
                             };
                         });
-                        setProducts(mapped);
-                        onLog?.({ module: 'Inventario', action: 'Importar Excel', details: `Importados ${mapped.length} productos con mapeo inteligente` });
-                        alert(`Axito: Se importaron ${mapped.length} productos.`);
+                        const { merged, updatedCount, insertedCount } = mergeImportedProducts(products, mapped);
+                        setProducts(merged);
+                        onLog?.({
+                            module: 'Inventario',
+                            action: 'Importar Excel',
+                            details: `Importacion acumulativa. Nuevos: ${insertedCount}, actualizados por ID/codigo: ${updatedCount}`
+                        });
+                        alert(`Importacion completada.\nNuevos: ${insertedCount}\nActualizados (ID/codigo): ${updatedCount}`);
                     }
                 } catch (err) { alert("Error al leer Excel"); }
             };
@@ -171,7 +254,7 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
                         imported = rows.map((row, rowIndex) => {
                             const [id, name, price, cost, unit, barcode, category, status, reorderLevel, isVisible] = row.split(',').map(s => s.replace(/"/g, '').trim());
                             return {
-                                id: createProductId(),
+                                id: id || createProductId(),
                                 name,
                                 price: Number(price) || 0,
                                 cost: Number(cost) || 0,
@@ -186,9 +269,14 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
                     }
 
                     if (Array.isArray(imported)) {
-                        setProducts(imported);
-                        onLog?.({ module: 'Inventario', action: 'Importar', details: `Importados ${imported.length} productos (${type})` });
-                        alert(`Axito: Se importaron ${imported.length} productos.`);
+                        const { merged, updatedCount, insertedCount } = mergeImportedProducts(products, imported);
+                        setProducts(merged);
+                        onLog?.({
+                            module: 'Inventario',
+                            action: 'Importar',
+                            details: `Importacion acumulativa (${type}). Nuevos: ${insertedCount}, actualizados por ID/codigo: ${updatedCount}`
+                        });
+                        alert(`Importacion completada.\nNuevos: ${insertedCount}\nActualizados (ID/codigo): ${updatedCount}`);
                     }
                 } catch (err) { alert("Error: Archivo invAlido."); }
                 finally { e.target.value = ''; }
