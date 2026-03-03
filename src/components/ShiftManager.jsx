@@ -3,29 +3,15 @@ import React, { useState } from 'react';
 export function ShiftManager({ shift, onStartShift, onEndShift, salesTotal }) {
     const [showReconciliation, setShowReconciliation] = useState(false);
     const [physicalCashInput, setPhysicalCashInput] = useState('');
-    const [adminAuth, setAdminAuth] = useState('');
 
     const parseMoneyInput = (value) => Number(String(value || '').replace(/[^\d]/g, '')) || 0;
 
-    const theoreticalBalance = shift ? (shift.initialCash + salesTotal) : 0;
     const physicalCash = parseMoneyInput(physicalCashInput);
-    const discrepancy = physicalCash - theoreticalBalance;
 
     const handleEndAttempt = () => {
-        if (Math.abs(discrepancy) > 1) {
-            const pass = prompt("DESCUADRE DETECTADO. Si no coincide con lo Fisicoco, no puede cerrar. Ingrese clave Admin para autorizar cierre con descuadre:");
-            if (pass === 'Admin') {
-                onEndShift({ physicalCash, theoreticalBalance, discrepancy, authorized: true });
-                setShowReconciliation(false);
-                setPhysicalCashInput('');
-            } else {
-                alert("Clave incorrecta o no autorizada. Debe cuadrar la caja.");
-            }
-        } else {
-            onEndShift({ physicalCash, theoreticalBalance, discrepancy: 0, authorized: false });
-            setShowReconciliation(false);
-            setPhysicalCashInput('');
-        }
+        onEndShift({ physicalCash });
+        setShowReconciliation(false);
+        setPhysicalCashInput('');
     };
 
     if (!shift) {
@@ -73,9 +59,11 @@ export function ShiftManager({ shift, onStartShift, onEndShift, salesTotal }) {
                         <h3>Cierre de Caja / Cuadre</h3>
                         <div style={{ marginBottom: '1rem' }}>
                             <p>Base Inicial: <strong>${shift.initialCash.toLocaleString()}</strong></p>
-                            <p>Ventas del Turno: <strong>${salesTotal.toLocaleString()}</strong></p>
+                            <p>Ventas del Turno: <strong>Oculto para cuadre ciego</strong></p>
                             <hr />
-                            <p style={{ fontSize: '1.2rem' }}>Saldo TeArico: <strong>${theoreticalBalance.toLocaleString()}</strong></p>
+                            <p style={{ fontSize: '0.95rem', color: '#64748b' }}>
+                                Ingrese solo el efectivo fisico contado. El sistema calculara el descuadre internamente.
+                            </p>
                         </div>
 
                         <div className="input-group">
@@ -88,12 +76,6 @@ export function ShiftManager({ shift, onStartShift, onEndShift, salesTotal }) {
                                 placeholder="Ej: 150000"
                                 style={{ fontSize: '1.5rem', height: 'auto' }}
                             />
-                        </div>
-
-                        <div style={{ padding: '10px', borderRadius: '4px', backgroundColor: discrepancy === 0 ? '#f0fdf4' : '#fef2f2', marginBottom: '1rem' }}>
-                            <p style={{ margin: 0, color: discrepancy === 0 ? 'green' : 'red' }}>
-                                Diferencia: <strong>${discrepancy.toLocaleString()}</strong>
-                            </p>
                         </div>
 
                         <div style={{ display: 'flex', gap: '0.5rem' }}>

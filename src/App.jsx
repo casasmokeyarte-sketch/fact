@@ -1345,8 +1345,7 @@ function App() {
   };
 
   const onStartShift = (initialCash) => {
-    const carryOverCash = getUserCashBalance(currentUser);
-    const startCash = Number(initialCash) > 0 ? Number(initialCash) : carryOverCash;
+    const startCash = Number(initialCash) > 0 ? Number(initialCash) : 0;
     const openShift = {
       startTime: getOperationalNowIso(),
       initialCash: startCash,
@@ -1481,6 +1480,29 @@ function App() {
     }
 
     const salesTotal = summary.salesBreakdown.gross;
+    const theoreticalBalance = (
+      Number(shift.initialCash || 0) +
+      Number(summary.salesBreakdown.cash || 0) +
+      Number(summary.cashMovements.receivedFromVault || 0) +
+      Number(summary.cashMovements.majorToMinor || 0) -
+      Number(summary.expensesTotal || 0) -
+      Number(summary.purchasesTotal || 0) -
+      Number(summary.cashMovements.returnedToVault || 0) -
+      Number(summary.cashMovements.minorToMajor || 0)
+    );
+    const physicalCash = Number(data?.physicalCash || 0);
+    const discrepancy = physicalCash - theoreticalBalance;
+    let authorizedMismatch = false;
+
+    if (Math.abs(discrepancy) > 1) {
+      const pass = String(prompt('DESCUADRE DETECTADO. Ingrese clave Admin para autorizar cierre con descuadre:') || '').trim();
+      if (pass !== 'Admin') {
+        alert('Clave incorrecta o no autorizada. Debe cuadrar la caja.');
+        return;
+      }
+      authorizedMismatch = true;
+    }
+
     const shiftStartMs = new Date(shift.startTime).getTime();
     const shiftEndMs = new Date(shiftEndIso).getTime();
     const workedMs = Math.max(0, shiftEndMs - shiftStartMs);
@@ -1505,10 +1527,10 @@ function App() {
       `  - Credito (CxC): ${summary.salesBreakdown.credit.toLocaleString()}`,
       `Gastos/Egresos: -${summary.expensesTotal.toLocaleString()} (${summary.shiftExpenses.length})`,
       `Compras/Inversion: -${summary.purchasesTotal.toLocaleString()} (${summary.shiftPurchases.length})`,
-      `Saldo Teorico (segun cuadre): ${Number(data.theoreticalBalance || 0).toLocaleString()}`,
-      `Efectivo Fisico contado: ${Number(data.physicalCash || 0).toLocaleString()}`,
-      `Diferencia: ${Number(data.discrepancy || 0).toLocaleString()}`,
-      `Cierre con autorizacion admin: ${data.authorized ? 'SI' : 'NO'}`,
+      `Saldo Teorico (jornada actual): ${Number(theoreticalBalance || 0).toLocaleString()}`,
+      `Efectivo Fisico contado: ${Number(physicalCash || 0).toLocaleString()}`,
+      `Diferencia: ${Number(discrepancy || 0).toLocaleString()}`,
+      `Cierre con autorizacion admin: ${authorizedMismatch ? 'SI' : 'NO'}`,
       `Cierre sin movimientos: ${hasAnyUserMovement ? 'NO' : 'SI'}`,
       ...(hasAnyUserMovement ? [] : [`Motivo cierre sin movimientos: ${emptyCloseReason}`]),
       '------------------------------------------',
@@ -1555,10 +1577,10 @@ function App() {
       endTime: shiftEndIso,
       initialCash: shift.initialCash,
       salesTotal: salesTotal,
-      theoreticalBalance: data.theoreticalBalance,
-      physicalCash: data.physicalCash,
-      discrepancy: data.discrepancy,
-      authorized: data.authorized,
+      theoreticalBalance,
+      physicalCash,
+      discrepancy,
+      authorized: authorizedMismatch,
       closedWithoutMovements: !hasAnyUserMovement,
       closeWithoutMovementsReason: hasAnyUserMovement ? '' : emptyCloseReason,
       user: currentUser?.name || 'Sistema',
@@ -1587,10 +1609,9 @@ function App() {
 
     alert(`Jornada cerrada con exito. Horas trabajadas: ${workedDurationLabel}. Se envio a impresion automaticamente.`);
 
-    setUserCashBalance(currentUser, data.physicalCash);
+    setUserCashBalance(currentUser, physicalCash);
     setShift(null);
     clearOpenShift();
-    setSalesHistory([]);
     addLog({ module: 'Jornada', action: 'Cierre Jornada', details: reportText });
   };
 
@@ -2458,13 +2479,40 @@ function App() {
                 // Find the one that changed and sync to 'invoices' table
                 const changed = newCartera.find(nc => {
                   const oc = cartera.find(ocItem => ocItem.id === nc.id);
-                  return oc && oc.balance !== nc.balance;
+                  if (!oc) return false;
+                  return (
+                    Number(oc.balance || 0) !== Number(nc.balance || 0) ||
+                    String(oc.status || '') !== String(nc.status || '') ||
+                    JSON.stringify(oc.abonos || []) !== JSON.stringify(nc.abonos || [])
+                  );
                 });
                 if (changed) {
                   try {
                     // Update only the balance/status in the invoices table
-                    await dataService.saveInvoice(changed, changed.items);
-                    // Note: saveInvoice uses insert/upsert logic in dataService.js
+                    const payload = {
+                      ...changed,
+                      id: changed.db_id || changed.id,
+                      status: String(changed?.status || 'pendiente'),
+                      mixed_details: {
+                        ...(changed?.mixedDetails || {}),
+                        cartera: {
+                          balance: Number(changed?.balance || 0),
+                          abonos: Array.isArray(changed?.abonos) ? changed.abonos : []
+                        }
+                      }
+                    };
+                    await dataService.saveInvoice(payload, changed.items);
+                    setSalesHistory((prev) => prev.map((s) => {
+                      const same = (s?.db_id && changed?.db_id && s.db_id === changed.db_id) || s.id === changed.id;
+                      if (!same) return s;
+                      return {
+                        ...s,
+                        status: changed.status,
+                        balance: Number(changed.balance || 0),
+                        abonos: Array.isArray(changed.abonos) ? changed.abonos : (s.abonos || []),
+                        mixedDetails: payload.mixed_details
+                      };
+                    }));
                   } catch (e) {
                     console.error("Error sync Cartera:", e);
                   }

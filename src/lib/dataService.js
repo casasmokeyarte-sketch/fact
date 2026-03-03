@@ -482,7 +482,12 @@ export const dataService = {
         dueDate: inv.due_date ?? null,
         status: inv.status ?? 'pagado',
         items: mappedItems,
-        balance: (inv.status ?? 'pagado') === 'pendiente' ? Number(inv.total ?? 0) : 0,
+        balance: (() => {
+          const stored = Number(inv?.mixed_details?.cartera?.balance);
+          if (Number.isFinite(stored) && stored >= 0) return stored;
+          return (inv.status ?? 'pagado') === 'pendiente' ? Number(inv.total ?? 0) : 0;
+        })(),
+        abonos: Array.isArray(inv?.mixed_details?.cartera?.abonos) ? inv.mixed_details.cartera.abonos : [],
       };
     });
   },
