@@ -199,6 +199,14 @@ export function ReportsModule({
             case 'cartera': {
                 const filteredCartera = (cartera || []).filter((c) => String(c?.clientName || '').toLowerCase().includes(f));
                 const totalCartera = filteredCartera.reduce((sum, c) => sum + Number(c.balance || 0), 0);
+                const carteraHistory = (sales || [])
+                    .filter((s) => {
+                        const hasCredit = String(s?.paymentMode || '').toLowerCase().includes('credito') || Number(s?.balance || 0) > 0;
+                        const hasAbonos = Array.isArray(s?.abonos) && s.abonos.length > 0;
+                        return hasCredit || hasAbonos || String(s?.status || '').toLowerCase() === 'pagado';
+                    })
+                    .filter((s) => String(s?.clientName || '').toLowerCase().includes(f))
+                    .sort((a, b) => new Date(b?.date || 0) - new Date(a?.date || 0));
                 return (
                     <>
                         <div style={{ marginBottom: '1rem', fontWeight: 'bold' }}>Total Deuda Pendiente: ${totalCartera.toLocaleString()}</div>
@@ -208,6 +216,32 @@ export function ReportsModule({
                                 {filteredCartera.map((c, i) => (
                                     <tr key={i}><td>{new Date(c.date).toLocaleDateString()}</td><td>{resolveUserLabel(c)}</td><td>{c.clientName}</td><td>{c.id}</td><td>${Number(c.balance || 0).toLocaleString()}</td></tr>
                                 ))}
+                            </tbody>
+                        </table>
+                        <h4 style={{ margin: '1.2rem 0 0.6rem' }}>Historial de Cartera (incluye facturas pagadas y abonos)</h4>
+                        <table>
+                            <thead><tr><th>Fecha</th><th>Factura</th><th>Cliente</th><th>Estado</th><th>Saldo</th><th>Abonos</th></tr></thead>
+                            <tbody>
+                                {carteraHistory.length === 0 ? (
+                                    <tr><td colSpan="6" style={{ textAlign: 'center' }}>Sin historial para el filtro actual</td></tr>
+                                ) : (
+                                    carteraHistory.map((inv, i) => {
+                                        const abonos = Array.isArray(inv?.abonos) ? inv.abonos : [];
+                                        const abonosText = abonos.length === 0
+                                            ? 'Sin abonos'
+                                            : abonos.slice(0, 3).map((a) => `${new Date(a.date).toLocaleDateString()}: $${Number(a.amount || 0).toLocaleString()} (${a.method || 'N/A'})`).join(' | ');
+                                        return (
+                                            <tr key={`${inv?.id || 'inv'}-${i}`}>
+                                                <td>{new Date(inv?.date || Date.now()).toLocaleDateString()}</td>
+                                                <td>{inv?.id || 'N/A'}</td>
+                                                <td>{inv?.clientName || 'Cliente'}</td>
+                                                <td>{String(inv?.status || 'N/A')}</td>
+                                                <td>${Number(inv?.balance || 0).toLocaleString()}</td>
+                                                <td>{abonosText}</td>
+                                            </tr>
+                                        );
+                                    })
+                                )}
                             </tbody>
                         </table>
                     </>

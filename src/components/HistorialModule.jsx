@@ -304,6 +304,17 @@ export function HistorialModule({
                   </div>
                 )}
 
+                {Array.isArray(previewInvoice?.abonos) && previewInvoice.abonos.length > 0 && (
+                  <div className="card" style={{ marginTop: '0.75rem', backgroundColor: '#f8fafc' }}>
+                    <div style={{ fontWeight: 700, marginBottom: '0.4rem' }}>Abonos de cartera</div>
+                    {previewInvoice.abonos.slice(0, 10).map((a, idx) => (
+                      <div key={`${a?.id || idx}-${idx}`} style={{ fontSize: '0.9rem', marginBottom: '0.25rem' }}>
+                        {new Date(a?.date || Date.now()).toLocaleString()} - ${Number(a?.amount || 0).toLocaleString()} - {a?.method || 'N/A'} {a?.reference ? `(${a.reference})` : ''}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.75rem' }}>
                   <button className="btn" onClick={() => handlePrint(previewInvoice, '58mm')}>Imprimir 58mm</button>
                   <button className="btn btn-primary" onClick={() => handlePrint(previewInvoice, 'a4')}>Imprimir A4</button>

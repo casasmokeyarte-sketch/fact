@@ -177,6 +177,7 @@ const INVOICE_DRAFTS_STORAGE_KEY = 'fact_invoice_drafts';
 const NOTIFICATIONS_SEEN_AT_STORAGE_KEY = 'fact_notifications_seen_at';
 const BOARD_NOTES_SEEN_AT_STORAGE_KEY = 'fact_board_notes_seen_at';
 const OPERATIONAL_DATE_SETTINGS_STORAGE_KEY = 'fact_operational_date_settings';
+const LAST_SHIFT_CLOSE_BY_USER_STORAGE_KEY = 'fact_last_shift_close_by_user';
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const isUuid = (value) => typeof value === 'string' && UUID_REGEX.test(value);
@@ -1001,8 +1002,13 @@ function App() {
   const getOperationalNow = useCallback(() => {
     const offset = Number(operationalDateSettings?.daysOffset || 0);
     const normalizedOffset = Number.isFinite(offset) ? Math.max(-30, Math.min(30, Math.trunc(offset))) : 0;
-    return new Date(Date.now() + normalizedOffset * 24 * 60 * 60 * 1000);
-  }, [operationalDateSettings?.daysOffset]);
+    const baseNow = new Date(Date.now() + normalizedOffset * 24 * 60 * 60 * 1000);
+    const shiftStart = shift?.startTime ? new Date(shift.startTime) : null;
+    if (shiftStart && !Number.isNaN(shiftStart.getTime()) && baseNow.getTime() < shiftStart.getTime()) {
+      return shiftStart;
+    }
+    return baseNow;
+  }, [operationalDateSettings?.daysOffset, shift?.startTime]);
 
   const getOperationalNowIso = useCallback(() => getOperationalNow().toISOString(), [getOperationalNow]);
 
@@ -1346,8 +1352,19 @@ function App() {
 
   const onStartShift = (initialCash) => {
     const startCash = Number(initialCash) > 0 ? Number(initialCash) : 0;
+    const nowIso = getOperationalNowIso();
+    const nowRealDateKey = getRealDateKey();
+    const closeMap = readLastShiftCloseByUser();
+    const userKey = String(currentUser?.id || '');
+    const lastClosedDateKey = String(closeMap[userKey] || '');
+
+    if (userKey && lastClosedDateKey && lastClosedDateKey === nowRealDateKey) {
+      alert(`Este usuario ya cerro jornada hoy (${nowRealDateKey}). Solo podra iniciar nueva jornada cuando cambie al siguiente dia real del sistema.`);
+      return;
+    }
+
     const openShift = {
-      startTime: getOperationalNowIso(),
+      startTime: nowIso,
       initialCash: startCash,
       user_id: currentUser?.id || null,
       user_name: currentUser?.name || currentUser?.email || 'Sistema'
@@ -1404,6 +1421,22 @@ function App() {
       isRecordOwnedByUser(log, userRef) &&
       ['Movimiento Efectivo', 'Recibir Dinero', 'Devolver Dinero'].includes(log.action)
     );
+    const shiftCarteraAbonos = (salesHistory || [])
+      .flatMap((sale) => {
+        const abonos = Array.isArray(sale?.abonos)
+          ? sale.abonos
+          : (Array.isArray(sale?.mixedDetails?.cartera?.abonos) ? sale.mixedDetails.cartera.abonos : []);
+        return abonos.map((abono) => ({
+          ...abono,
+          user_id: abono?.user_id || sale?.user_id || null,
+          user_name: abono?.user_name || sale?.user_name || sale?.user || null,
+          invoiceId: sale?.id || sale?.db_id || 'N/A'
+        }));
+      })
+      .filter((abono) =>
+        isDateInRange(abono?.date, startIso, endIso) &&
+        isRecordOwnedByUser(abono, userRef)
+      );
 
     const salesBreakdown = shiftSales.reduce((acc, sale) => {
       const total = Number(sale.total) || 0;
@@ -1441,12 +1474,26 @@ function App() {
       return acc;
     }, { majorToMinor: 0, minorToMajor: 0, receivedFromVault: 0, returnedToVault: 0 });
 
+    const abonosBreakdown = shiftCarteraAbonos.reduce((acc, abono) => {
+      const amount = Number(abono?.amount || 0);
+      const method = String(abono?.method || '').trim().toLowerCase();
+      acc.total += amount;
+      if (method.includes('efectivo')) acc.cash += amount;
+      else if (method.includes('transfer')) acc.transfer += amount;
+      else if (method.includes('tarjeta')) acc.card += amount;
+      else if (method.includes('credit')) acc.credit += amount;
+      else acc.other += amount;
+      return acc;
+    }, { total: 0, cash: 0, transfer: 0, card: 0, credit: 0, other: 0 });
+
     return {
       shiftSales,
       shiftExpenses,
       shiftPurchases,
       shiftCashLogs,
+      shiftCarteraAbonos,
       salesBreakdown,
+      abonosBreakdown,
       expensesTotal,
       purchasesTotal,
       cashMovements
@@ -1480,21 +1527,54 @@ function App() {
     }
 
     const salesTotal = summary.salesBreakdown.gross;
-    const theoreticalBalance = (
-      Number(shift.initialCash || 0) +
-      Number(summary.salesBreakdown.cash || 0) +
-      Number(summary.cashMovements.receivedFromVault || 0) +
-      Number(summary.cashMovements.majorToMinor || 0) -
-      Number(summary.expensesTotal || 0) -
-      Number(summary.purchasesTotal || 0) -
-      Number(summary.cashMovements.returnedToVault || 0) -
-      Number(summary.cashMovements.minorToMajor || 0)
-    );
-    const physicalCash = Number(data?.physicalCash || 0);
-    const discrepancy = physicalCash - theoreticalBalance;
+    const reconciliation = data?.reconciliation && typeof data.reconciliation === 'object'
+      ? data.reconciliation
+      : null;
+    const requiredAccountKeys = ['efectivo', 'transferencia', 'tarjeta', 'credito', 'otros', 'gastos', 'inversion'];
+    if (!reconciliation) {
+      alert('Debe diligenciar el formato de cuadre por cuentas.');
+      return;
+    }
+
+    const missingRequired = requiredAccountKeys.some((key) => reconciliation[key] === undefined || reconciliation[key] === null || reconciliation[key] === '');
+    if (missingRequired) {
+      alert('Debe diligenciar todas las cuentas. Si no hubo movimiento, escriba 0.');
+      return;
+    }
+
+    const enteredAccounts = {
+      efectivo: Number(reconciliation.efectivo || 0),
+      transferencia: Number(reconciliation.transferencia || 0),
+      tarjeta: Number(reconciliation.tarjeta || 0),
+      credito: Number(reconciliation.credito || 0),
+      otros: Number(reconciliation.otros || 0),
+      gastos: Number(reconciliation.gastos || 0),
+      inversion: Number(reconciliation.inversion || 0),
+    };
+
+    const systemAccounts = {
+      efectivo: Number(summary.salesBreakdown.cash || 0) + Number(summary.abonosBreakdown.cash || 0) + Number(summary.cashMovements.receivedFromVault || 0) + Number(summary.cashMovements.majorToMinor || 0) - Number(summary.cashMovements.returnedToVault || 0) - Number(summary.cashMovements.minorToMajor || 0),
+      transferencia: Number(summary.salesBreakdown.transfer || 0) + Number(summary.abonosBreakdown.transfer || 0),
+      tarjeta: Number(summary.salesBreakdown.card || 0) + Number(summary.abonosBreakdown.card || 0),
+      credito: Number(summary.salesBreakdown.credit || 0) + Number(summary.abonosBreakdown.credit || 0),
+      otros: Number(summary.salesBreakdown.other || 0) + Number(summary.abonosBreakdown.other || 0),
+      gastos: Number(summary.expensesTotal || 0),
+      inversion: Number(summary.purchasesTotal || 0),
+    };
+
+    const totalDeclarado = requiredAccountKeys.reduce((sum, key) => sum + Number(enteredAccounts[key] || 0), 0);
+    const totalSistema = requiredAccountKeys.reduce((sum, key) => sum + Number(systemAccounts[key] || 0), 0);
+    const discrepancy = totalDeclarado - totalSistema;
+    const accountDiffs = requiredAccountKeys.map((key) => ({
+      key,
+      declarado: Number(enteredAccounts[key] || 0),
+      sistema: Number(systemAccounts[key] || 0),
+      diff: Number(enteredAccounts[key] || 0) - Number(systemAccounts[key] || 0)
+    }));
+    const hasAccountMismatch = accountDiffs.some((row) => Math.abs(row.diff) > 1);
     let authorizedMismatch = false;
 
-    if (Math.abs(discrepancy) > 1) {
+    if (Math.abs(discrepancy) > 1 || hasAccountMismatch) {
       const pass = String(prompt('DESCUADRE DETECTADO. Ingrese clave Admin para autorizar cierre con descuadre:') || '').trim();
       if (pass !== 'Admin') {
         alert('Clave incorrecta o no autorizada. Debe cuadrar la caja.');
@@ -1519,20 +1599,22 @@ function App() {
       `Total horas trabajadas: ${workedDurationLabel}`,
       '------------------------------------------',
       'RESUMEN MONETARIO',
-      `Base Inicial: ${Number(shift.initialCash || 0).toLocaleString()}`,
       `Ventas Brutas: ${salesTotal.toLocaleString()} (${summary.shiftSales.length} facturas)`,
-      `  - Efectivo: ${summary.salesBreakdown.cash.toLocaleString()}`,
-      `  - Transferencia: ${summary.salesBreakdown.transfer.toLocaleString()}`,
-      `  - Tarjeta: ${summary.salesBreakdown.card.toLocaleString()}`,
-      `  - Credito (CxC): ${summary.salesBreakdown.credit.toLocaleString()}`,
-      `Gastos/Egresos: -${summary.expensesTotal.toLocaleString()} (${summary.shiftExpenses.length})`,
-      `Compras/Inversion: -${summary.purchasesTotal.toLocaleString()} (${summary.shiftPurchases.length})`,
-      `Saldo Teorico (jornada actual): ${Number(theoreticalBalance || 0).toLocaleString()}`,
-      `Efectivo Fisico contado: ${Number(physicalCash || 0).toLocaleString()}`,
-      `Diferencia: ${Number(discrepancy || 0).toLocaleString()}`,
+      `Abonos Cartera: ${Number(summary.abonosBreakdown.total || 0).toLocaleString()} (${summary.shiftCarteraAbonos.length} abono(s))`,
+      `Cuenta EFECTIVO: Sistema ${Number(systemAccounts.efectivo || 0).toLocaleString()} | Declarado ${Number(enteredAccounts.efectivo || 0).toLocaleString()}`,
+      `Cuenta TRANSFERENCIA: Sistema ${Number(systemAccounts.transferencia || 0).toLocaleString()} | Declarado ${Number(enteredAccounts.transferencia || 0).toLocaleString()}`,
+      `Cuenta TARJETA: Sistema ${Number(systemAccounts.tarjeta || 0).toLocaleString()} | Declarado ${Number(enteredAccounts.tarjeta || 0).toLocaleString()}`,
+      `Cuenta CREDITO: Sistema ${Number(systemAccounts.credito || 0).toLocaleString()} | Declarado ${Number(enteredAccounts.credito || 0).toLocaleString()}`,
+      `Cuenta OTROS: Sistema ${Number(systemAccounts.otros || 0).toLocaleString()} | Declarado ${Number(enteredAccounts.otros || 0).toLocaleString()}`,
+      `Cuenta GASTOS/EGRESOS: Sistema ${Number(systemAccounts.gastos || 0).toLocaleString()} | Declarado ${Number(enteredAccounts.gastos || 0).toLocaleString()}`,
+      `Cuenta COMPRAS/INVERSION: Sistema ${Number(systemAccounts.inversion || 0).toLocaleString()} | Declarado ${Number(enteredAccounts.inversion || 0).toLocaleString()}`,
+      `TOTAL SISTEMA (cuentas): ${Number(totalSistema || 0).toLocaleString()}`,
+      `TOTAL DECLARADO (cuentas): ${Number(totalDeclarado || 0).toLocaleString()}`,
+      `Diferencia Total: ${Number(discrepancy || 0).toLocaleString()}`,
       `Cierre con autorizacion admin: ${authorizedMismatch ? 'SI' : 'NO'}`,
       `Cierre sin movimientos: ${hasAnyUserMovement ? 'NO' : 'SI'}`,
       ...(hasAnyUserMovement ? [] : [`Motivo cierre sin movimientos: ${emptyCloseReason}`]),
+      ...(accountDiffs.map((row) => `Diff ${String(row.key).toUpperCase()}: ${Number(row.diff || 0).toLocaleString()}`)),
       '------------------------------------------',
       'MOVIMIENTOS DE CAJA INTERNOS (INFO)',
       `Mayor -> Menor: ${summary.cashMovements.majorToMinor.toLocaleString()}`,
@@ -1577,12 +1659,19 @@ function App() {
       endTime: shiftEndIso,
       initialCash: shift.initialCash,
       salesTotal: salesTotal,
-      theoreticalBalance,
-      physicalCash,
+      theoreticalBalance: totalSistema,
+      physicalCash: totalDeclarado,
       discrepancy,
       authorized: authorizedMismatch,
       closedWithoutMovements: !hasAnyUserMovement,
       closeWithoutMovementsReason: hasAnyUserMovement ? '' : emptyCloseReason,
+      reconciliation: {
+        enteredAccounts,
+        systemAccounts,
+        totalDeclarado,
+        totalSistema,
+        accountDiffs
+      },
       user: currentUser?.name || 'Sistema',
       user_name: currentUser?.name || currentUser?.email || 'Sistema',
       user_id: currentUser?.id || null,
@@ -1609,10 +1698,36 @@ function App() {
 
     alert(`Jornada cerrada con exito. Horas trabajadas: ${workedDurationLabel}. Se envio a impresion automaticamente.`);
 
-    setUserCashBalance(currentUser, physicalCash);
+    setUserCashBalance(currentUser, enteredAccounts.efectivo);
     setShift(null);
     clearOpenShift();
+    const closeMap = readLastShiftCloseByUser();
+    const userKey = String(currentUser?.id || '');
+    if (userKey) {
+      closeMap[userKey] = getRealDateKey();
+      writeLastShiftCloseByUser(closeMap);
+    }
     addLog({ module: 'Jornada', action: 'Cierre Jornada', details: reportText });
+  };
+
+  const getRealDateKey = () => new Date().toISOString().slice(0, 10);
+
+  const readLastShiftCloseByUser = () => {
+    try {
+      const raw = localStorage.getItem(LAST_SHIFT_CLOSE_BY_USER_STORAGE_KEY);
+      const parsed = raw ? JSON.parse(raw) : {};
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+      return {};
+    }
+  };
+
+  const writeLastShiftCloseByUser = (nextMap) => {
+    try {
+      localStorage.setItem(LAST_SHIFT_CLOSE_BY_USER_STORAGE_KEY, JSON.stringify(nextMap || {}));
+    } catch (e) {
+      console.error('No se pudo guardar cierre por usuario:', e);
+    }
   };
 
   const handleAddItem = (item) => {
@@ -2488,6 +2603,7 @@ function App() {
                 });
                 if (changed) {
                   try {
+                    const previous = cartera.find((oc) => oc.id === changed.id) || null;
                     // Update only the balance/status in the invoices table
                     const payload = {
                       ...changed,
@@ -2513,6 +2629,24 @@ function App() {
                         mixedDetails: payload.mixed_details
                       };
                     }));
+
+                    const prevAbonos = Array.isArray(previous?.abonos) ? previous.abonos : [];
+                    const nextAbonos = Array.isArray(changed?.abonos) ? changed.abonos : [];
+                    if (nextAbonos.length > prevAbonos.length) {
+                      const newAbono = nextAbonos[0];
+                      await addLog({
+                        module: 'Cartera',
+                        action: 'Registrar Abono',
+                        details: `Factura ${changed.id} abono ${Number(newAbono?.amount || 0).toLocaleString()} (${newAbono?.method || 'N/A'}) saldo: ${Number(changed.balance || 0).toLocaleString()}`
+                      });
+                    }
+                    if (String(previous?.status || '') !== String(changed?.status || '') && String(changed?.status || '').toLowerCase() === 'pagado') {
+                      await addLog({
+                        module: 'Cartera',
+                        action: 'Factura Pagada',
+                        details: `Factura ${changed.id} quedo pagada en su totalidad.`
+                      });
+                    }
                   } catch (e) {
                     console.error("Error sync Cartera:", e);
                   }
