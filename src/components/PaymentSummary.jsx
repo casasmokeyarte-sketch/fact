@@ -43,7 +43,8 @@ export function PaymentSummary({
   onCreateRemoteAuthRequest,
   remoteAuthDecisionByRequestId = {},
   remoteAuthRequestById = {},
-  onSaveDraft
+  onSaveDraft,
+  onFacturarCero
 }) {
   const normalizeRole = (role) => {
     const normalized = String(role || '').trim().toLowerCase();
@@ -362,6 +363,15 @@ export function PaymentSummary({
     printInvoiceDocument(previewInvoice, mode);
   };
 
+  const handleFacturarCero = () => {
+    if (!Array.isArray(items) || items.length === 0) {
+      return alert('Agregue productos antes de facturar en cero.');
+    }
+    const reason = String(prompt('Motivo obligatorio para factura interna en $0:') || '').trim();
+    if (reason.length < 10) return alert('Debe ingresar un motivo claro (minimo 10 caracteres).');
+    onFacturarCero?.(reason);
+  };
+
   return (
     <div className="card" style={{ position: 'sticky', top: '2rem' }}>
       <h2 style={{ marginTop: 0 }}>Total Pago</h2>
@@ -640,6 +650,13 @@ export function PaymentSummary({
           Guardar
         </button>
       </div>
+      <button
+        className="btn"
+        style={{ width: '100%', marginTop: '0.5rem', backgroundColor: '#0f766e', color: 'white' }}
+        onClick={handleFacturarCero}
+      >
+        Factura Interna $0 (sin ingreso)
+      </button>
 
       <button
         className="btn"

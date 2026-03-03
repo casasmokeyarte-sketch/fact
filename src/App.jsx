@@ -1644,6 +1644,7 @@ function App() {
     if (selectedClient?.blocked) {
       return alert("Este cliente esta bloqueado por Administracion. No puede facturar hasta ser desbloqueado.");
     }
+    const isInternalZero = invoiceMeta?.internalZero === true;
 
     // Stock Validation
     for (const item of items) {
@@ -1654,7 +1655,7 @@ function App() {
 
     // Reference validation for non-Cash/Credit
     const needsRef = ![PAYMENT_MODES.CONTADO, PAYMENT_MODES.CREDITO].includes(paymentMode);
-    if (needsRef && !paymentRef) return alert("Debe ingresar el numero de referencia de la transferencia");
+    if (!isInternalZero && needsRef && !paymentRef) return alert("Debe ingresar el numero de referencia de la transferencia");
 
     // Credit Limit check (Individual Invoice Max)
     const isCreditPortion = paymentMode === PAYMENT_MODES.CREDITO || mixedData?.credit > 0;
@@ -1662,15 +1663,15 @@ function App() {
     const automaticDiscountAmount = subtotal * (automaticDiscountPercent / 100);
     const totalDiscount = automaticDiscountAmount + Number(extraDiscount || 0);
     const totalAfterDiscounts = Math.max(0, subtotal + deliveryFee - totalDiscount);
-    if (isCreditPortion && selectedClient) {
+    if (!isInternalZero && isCreditPortion && selectedClient) {
       const creditPortion = mixedData ? mixedData.credit : totalAfterDiscounts;
       if (creditPortion > selectedClient.creditLimit) {
         return alert(`Supera el limite de factura para este nivel de credito (${selectedClient.creditLimit.toLocaleString()}). Realice un abono para continuar.`);
       }
     }
 
-    const finalMode = mixedData ? 'Mixto' : paymentMode;
-    const finalTotal = totalAfterDiscounts;
+    const finalMode = isInternalZero ? 'Factura Interna $0' : (mixedData ? 'Mixto' : paymentMode);
+    const finalTotal = isInternalZero ? 0 : totalAfterDiscounts;
     let invoiceCode = '';
     try {
       invoiceCode = await dataService.getNextInvoiceCode('SSOT');
@@ -1687,6 +1688,7 @@ function App() {
       ? invoiceMeta.authorization
       : null;
     const paymentMethodDetail = String(invoiceMeta?.otherPaymentDetail || '').trim();
+    const zeroReason = String(invoiceMeta?.zeroReason || '').trim();
 
     const newInvoice = {
       id: invoiceCode,
@@ -1714,11 +1716,15 @@ function App() {
         },
         authorization,
         payment_method_detail: paymentMethodDetail || undefined,
-        otherPaymentDetail: paymentMethodDetail || undefined
+        otherPaymentDetail: paymentMethodDetail || undefined,
+        internalZero: isInternalZero || undefined,
+        internalZeroReason: isInternalZero ? zeroReason : undefined
       }, // { cash, credit, invoiceCode }
       date: getOperationalNowIso(),
       dueDate: dueDateObj.toISOString(),
-      status: (paymentMode === PAYMENT_MODES.CREDITO || mixedData?.credit > 0) ? 'pendiente' : 'pagado',
+      status: isInternalZero
+        ? 'interna_cero'
+        : ((paymentMode === PAYMENT_MODES.CREDITO || mixedData?.credit > 0) ? 'pendiente' : 'pagado'),
     };
 
     const finalInvoice = {
@@ -1743,7 +1749,7 @@ function App() {
     });
     setStock({ ...stock, ventas: newStockVentas });
 
-    if (paymentMode === PAYMENT_MODES.CREDITO || mixedData?.credit > 0) {
+    if (!isInternalZero && (paymentMode === PAYMENT_MODES.CREDITO || mixedData?.credit > 0)) {
       const debtAmount = mixedData ? mixedData.credit : finalTotal;
       setCartera((prev) => [...prev, { ...finalInvoice, balance: debtAmount }]);
     }
@@ -1751,9 +1757,9 @@ function App() {
     setSalesHistory((prev) => [...prev, finalInvoice]);
 
     // Actualiza caja del usuario en tiempo real para reflejar facturacion en el circulo central.
-    if (finalMode === PAYMENT_MODES.CONTADO) {
+    if (!isInternalZero && finalMode === PAYMENT_MODES.CONTADO) {
       adjustUserCashBalance(currentUser, finalTotal);
-    } else if (finalMode === 'Mixto') {
+    } else if (!isInternalZero && finalMode === 'Mixto') {
       adjustUserCashBalance(currentUser, Number(mixedData?.cash || 0));
     }
 
@@ -1774,12 +1780,125 @@ function App() {
 
     addLog({
       module: 'Facturacion',
-      action: 'Generar Factura',
-      details: `Factura ${newInvoice.id} (${finalMode}) para ${clientName} - Total: $${newInvoice.total}`
+      action: isInternalZero ? 'Factura Interna Cero' : 'Generar Factura',
+      details: isInternalZero
+        ? `Factura interna ${newInvoice.id} para ${clientName}. Total $0. Motivo: ${zeroReason || 'N/A'}`
+        : `Factura ${newInvoice.id} (${finalMode}) para ${clientName} - Total: $${newInvoice.total}`
     });
 
     // Reset current form
     resetInvoiceComposer();
+  };
+
+  const onFacturarCero = async (reason) => {
+    await handleFacturar(null, 0, { internalZero: true, zeroReason: reason });
+  };
+
+  const onCancelInvoice = async (invoice, reason) => {
+    if (!invoice) return;
+    const currentStatus = String(invoice?.status || '').toLowerCase();
+    if (currentStatus === 'anulada' || currentStatus === 'devuelta') {
+      return alert('Esta factura ya fue cerrada como anulada o devuelta.');
+    }
+
+    const nextStock = { ...stock.ventas };
+    invoice.items.forEach((item) => {
+      nextStock[item.id] = (nextStock[item.id] || 0) + Number(item.quantity || 0);
+    });
+    setStock((prev) => ({ ...prev, ventas: nextStock }));
+
+    await Promise.all((invoice.items || []).map(async (item) => {
+      const prod = products.find((p) => String(p.id) === String(item.id));
+      if (!prod) return;
+      await dataService.updateProductStockById(prod.id, { stock: Number(nextStock[item.id]) || 0 }, currentUser?.id);
+    })).catch((e) => console.error('Error devolviendo stock por anulacion:', e));
+
+    const updatedInvoice = {
+      ...invoice,
+      id: invoice?.db_id || invoice?.id,
+      status: 'anulada',
+      mixedDetails: {
+        ...(invoice?.mixedDetails || {}),
+        cancellation: {
+          at: new Date().toISOString(),
+          by: currentUser?.name || currentUser?.email || 'Sistema',
+          reason
+        }
+      }
+    };
+
+    setSalesHistory((prev) => prev.map((s) => {
+      const same = (s?.db_id && invoice?.db_id && s.db_id === invoice.db_id) || s.id === invoice.id;
+      return same ? { ...s, status: 'anulada', mixedDetails: updatedInvoice.mixedDetails } : s;
+    }));
+    setCartera((prev) => prev.filter((c) => c.id !== invoice.id));
+
+    try {
+      await dataService.saveInvoice(updatedInvoice, invoice.items || []);
+    } catch (e) {
+      console.error('Error actualizando factura anulada en nube:', e);
+    }
+
+    addLog({
+      module: 'Facturacion',
+      action: 'Cancelar Factura',
+      details: `Factura ${invoice.id} anulada. Motivo: ${reason}. Stock devuelto a ventas.`
+    });
+    alert(`Factura ${invoice.id} anulada correctamente.`);
+  };
+
+  const onReturnInvoice = async (invoice, mode, reason) => {
+    if (!invoice) return;
+    const currentStatus = String(invoice?.status || '').toLowerCase();
+    if (currentStatus === 'anulada' || currentStatus === 'devuelta') {
+      return alert('Esta factura ya fue cerrada como anulada o devuelta.');
+    }
+
+    const nextStock = { ...stock.ventas };
+    invoice.items.forEach((item) => {
+      nextStock[item.id] = (nextStock[item.id] || 0) + Number(item.quantity || 0);
+    });
+    setStock((prev) => ({ ...prev, ventas: nextStock }));
+
+    await Promise.all((invoice.items || []).map(async (item) => {
+      const prod = products.find((p) => String(p.id) === String(item.id));
+      if (!prod) return;
+      await dataService.updateProductStockById(prod.id, { stock: Number(nextStock[item.id]) || 0 }, currentUser?.id);
+    })).catch((e) => console.error('Error devolviendo stock por devolucion:', e));
+
+    const updatedInvoice = {
+      ...invoice,
+      id: invoice?.db_id || invoice?.id,
+      status: 'devuelta',
+      mixedDetails: {
+        ...(invoice?.mixedDetails || {}),
+        returnData: {
+          mode,
+          reason,
+          at: new Date().toISOString(),
+          by: currentUser?.name || currentUser?.email || 'Sistema'
+        }
+      }
+    };
+
+    setSalesHistory((prev) => prev.map((s) => {
+      const same = (s?.db_id && invoice?.db_id && s.db_id === invoice.db_id) || s.id === invoice.id;
+      return same ? { ...s, status: 'devuelta', mixedDetails: updatedInvoice.mixedDetails } : s;
+    }));
+    setCartera((prev) => prev.filter((c) => c.id !== invoice.id));
+
+    try {
+      await dataService.saveInvoice(updatedInvoice, invoice.items || []);
+    } catch (e) {
+      console.error('Error actualizando factura devuelta en nube:', e);
+    }
+
+    addLog({
+      module: 'Facturacion',
+      action: 'Devolucion Factura',
+      details: `Factura ${invoice.id} devuelta (${mode}). Motivo: ${reason}. Stock reintegrado.`
+    });
+    alert(`Devolucion aplicada en factura ${invoice.id}.`);
   };
 
   const onDeleteInvoice = (invoice) => {
@@ -2292,6 +2411,7 @@ function App() {
                   remoteAuthDecisionByRequestId={remoteAuthDecisionByRequestId}
                   remoteAuthRequestById={remoteAuthRequestById}
                   onSaveDraft={onSaveInvoiceDraft}
+                  onFacturarCero={onFacturarCero}
                 />
                 <div className="card" style={{ marginTop: '1rem' }}>
                   <h3 style={{ marginTop: 0 }}>Borradores de Factura</h3>
@@ -2541,6 +2661,31 @@ function App() {
                   updateStockInDB('ventas', productId, nextVentas)
                 ]);
               }}
+              onAdjustStock={async (product, target, delta, reason) => {
+                const productId = product?.id;
+                if (!productId) throw new Error('Producto invalido.');
+                const normalizedTarget = target === 'bodega' ? 'bodega' : 'ventas';
+                const currentValue = Number(stock?.[normalizedTarget]?.[productId] || 0);
+                const nextValue = currentValue + Number(delta || 0);
+                if (nextValue < 0) {
+                  throw new Error('El ajuste deja stock negativo.');
+                }
+
+                setStock((prev) => ({
+                  ...prev,
+                  [normalizedTarget]: {
+                    ...prev[normalizedTarget],
+                    [productId]: nextValue
+                  }
+                }));
+
+                await updateStockInDB(normalizedTarget, productId, nextValue);
+                await addLog({
+                  module: 'Inventario',
+                  action: 'Ajuste Stock',
+                  details: `${currentUser?.name || 'Usuario'} ajusto ${product?.name || productId} en ${normalizedTarget}: ${currentValue} -> ${nextValue}. Motivo: ${reason}`
+                });
+              }}
               stock={stock}
               setStock={setStock}
               categories={categories}
@@ -2643,8 +2788,12 @@ function App() {
           {activeTab === 'historial' && (
             <HistorialModule
               sales={salesHistory}
+              logs={auditLogs}
+              currentUser={currentUser}
               isAdmin={currentUser?.role === 'Administrador'}
               onDeleteInvoice={onDeleteInvoice}
+              onCancelInvoice={onCancelInvoice}
+              onReturnInvoice={onReturnInvoice}
               onLog={addLog}
             />
           )}

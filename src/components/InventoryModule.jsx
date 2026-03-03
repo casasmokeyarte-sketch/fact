@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 
-export function InventoryModule({ currentUser, products, setProducts, onDeleteProduct, onAcceptFromBodega, stock, setStock, categories, onLog, setActiveTab, setPreselectedProductId }) {
+export function InventoryModule({ currentUser, products, setProducts, onDeleteProduct, onAcceptFromBodega, onAdjustStock, stock, setStock, categories, onLog, setActiveTab, setPreselectedProductId }) {
     const [view, setView] = useState('list'); // 'list', 'edit', 'count'
     const [editingProduct, setEditingProduct] = useState(null);
     const [physicalCounts, setPhysicalCounts] = useState({});
@@ -325,6 +325,27 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
         }
     };
 
+    const handleAdjustStock = async (product) => {
+        if (!canEdit) return alert('No tiene permisos para ajustar stock.');
+        const target = String(prompt('Ajustar en cual inventario? Escriba "bodega" o "ventas"') || '').trim().toLowerCase();
+        if (!['bodega', 'ventas'].includes(target)) return alert('Debe escribir "bodega" o "ventas".');
+
+        const delta = Number(prompt('Cantidad a ajustar. Use positivo para sumar y negativo para restar (ej: -2, 5):') || 0);
+        if (!Number.isFinite(delta) || delta === 0) return alert('El ajuste debe ser diferente de 0.');
+
+        const reason = String(prompt('Motivo obligatorio del ajuste de stock:') || '').trim();
+        if (reason.length < 10) return alert('Debe ingresar un motivo claro (minimo 10 caracteres).');
+
+        try {
+            if (typeof onAdjustStock === 'function') {
+                await onAdjustStock(product, target, delta, reason);
+            }
+        } catch (err) {
+            const message = err?.message || 'Error desconocido';
+            alert(`No se pudo aplicar el ajuste.\n\nDetalle: ${message}`);
+        }
+    };
+
     return (
         <div className="inventory-module">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -519,6 +540,7 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
                                     </td>
                                     <td>
                                         {canEdit && <button className="btn" onClick={() => { setEditingProduct(p); setView('edit'); }} title="Editar">{'\u270F\uFE0F'}</button>}
+                                        {canEdit && <button className="btn" style={{ marginLeft: '5px' }} onClick={() => handleAdjustStock(p)} title="Ajustar stock con auditoria">Ajustar</button>}
                                         {!isCajero && <button className="btn" style={{ marginLeft: '5px' }} onClick={() => { setPreselectedProductId(p.id); setActiveTab('codigos'); }} title="Generar Etiqueta">{'\uD83C\uDFF7\uFE0F'}</button>}
                                         {canDelete && <button className="btn" style={{ marginLeft: '5px' }} onClick={() => handleDelete(p.id)} title="Eliminar">{'\uD83D\uDDD1\uFE0F'}</button>}
                                         {isCajero && !canEdit && !canDelete && (

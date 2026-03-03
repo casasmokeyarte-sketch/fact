@@ -32,6 +32,12 @@ export function PurchasingModule({ warehouseStock, setWarehouseStock, purchases,
             date: new Date().toISOString()
         }, ...purchases]);
 
+        onLog?.({
+            module: 'Compras',
+            action: 'Registrar Compra',
+            details: `Compra #${purchase.invoiceNumber} proveedor ${purchase.supplier} - ${qty} x ${product?.name || purchase.productId}`
+        });
+
         // Reset form
         setPurchase({ invoiceNumber: '', supplier: '', productId: '', quantity: 0, unitCost: 0 });
         alert("Compra registrada y stock sumado a BODEGA");
@@ -44,6 +50,12 @@ export function PurchasingModule({ warehouseStock, setWarehouseStock, purchases,
             ...prev,
             [productId]: prev[productId] - amount
         }));
+        const product = products.find((p) => String(p.id) === String(productId));
+        onLog?.({
+            module: 'Compras',
+            action: 'Traslado Bodega a Ventas',
+            details: `Se traslado ${amount} unidad(es) de ${product?.name || productId} desde bodega a ventas`
+        });
         alert(`Se distribuyeron ${amount} unidades del producto a los puntos de venta.`);
     };
 

@@ -84,10 +84,11 @@ export function MainCashier({
             [transfer.productId]: (prev[transfer.productId] || 0) + transfer.quantity
         }));
 
+        const product = (products || []).find((p) => String(p.id) === String(transfer.productId));
         onLog?.({
             module: 'Caja Principal',
             action: 'Transferencia Inventario',
-            details: `Transferidas ${transfer.quantity} unidades del prod ID ${transfer.productId} a ${transfer.target}`
+            details: `Transferidas ${transfer.quantity} unidades de ${product?.name || `ID ${transfer.productId}`} desde Bodega hacia ${transfer.target}`
         });
 
         alert('Transferencia exitosa (Stock sumado a Ventas)');
