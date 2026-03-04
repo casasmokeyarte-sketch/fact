@@ -7,6 +7,7 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
     const [physicalCounts, setPhysicalCounts] = useState({});
     const [searchTerm, setSearchTerm] = useState('');
     const [acceptQuantities, setAcceptQuantities] = useState({});
+    const [openActionMenuId, setOpenActionMenuId] = useState(null);
     const filterStorageKey = `fact_filter_inventory_${currentUser?.id || 'anon'}`;
     
     // Check if user is Cajero (read-only mode)
@@ -120,6 +121,16 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
         if (!currentUser?.id) return;
         localStorage.setItem(filterStorageKey, searchTerm);
     }, [searchTerm, currentUser?.id]);
+
+    useEffect(() => {
+        const handleOutsideClick = (event) => {
+            if (!openActionMenuId) return;
+            const root = event.target?.closest?.('[data-inv-menu-root="1"]');
+            if (!root) setOpenActionMenuId(null);
+        };
+        document.addEventListener('mousedown', handleOutsideClick);
+        return () => document.removeEventListener('mousedown', handleOutsideClick);
+    }, [openActionMenuId]);
 
     // CRUD Functions
     const handleSaveProduct = (e) => {
@@ -539,10 +550,80 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
                                         </span>
                                     </td>
                                     <td>
-                                        {canEdit && <button className="btn" onClick={() => { setEditingProduct(p); setView('edit'); }} title="Editar">{'\u270F\uFE0F'}</button>}
-                                        {canEdit && <button className="btn" style={{ marginLeft: '5px' }} onClick={() => handleAdjustStock(p)} title="Ajustar stock con auditoria">Ajustar</button>}
-                                        {!isCajero && <button className="btn" style={{ marginLeft: '5px' }} onClick={() => { setPreselectedProductId(p.id); setActiveTab('codigos'); }} title="Generar Etiqueta">{'\uD83C\uDFF7\uFE0F'}</button>}
-                                        {canDelete && <button className="btn" style={{ marginLeft: '5px' }} onClick={() => handleDelete(p.id)} title="Eliminar">{'\uD83D\uDDD1\uFE0F'}</button>}
+                                        {!isCajero && (
+                                            <div data-inv-menu-root="1" style={{ position: 'relative', display: 'inline-block' }}>
+                                                <button
+                                                    className="btn"
+                                                    onClick={() => setOpenActionMenuId((prev) => (prev === p.id ? null : p.id))}
+                                                    title="Opciones del producto"
+                                                >
+                                                    {'\u22EE'}
+                                                </button>
+                                                {openActionMenuId === p.id && (
+                                                    <div className="card" style={{ position: 'absolute', right: 0, top: '105%', minWidth: '210px', zIndex: 20, padding: '0.4rem' }}>
+                                                        <button
+                                                            className="btn"
+                                                            style={{ width: '100%', marginBottom: '0.3rem' }}
+                                                            onClick={() => {
+                                                                setPreselectedProductId(p.id);
+                                                                setActiveTab('historial');
+                                                                setOpenActionMenuId(null);
+                                                            }}
+                                                        >
+                                                            Ver historial/movimientos
+                                                        </button>
+                                                        {canEdit && (
+                                                            <button
+                                                                className="btn"
+                                                                style={{ width: '100%', marginBottom: '0.3rem' }}
+                                                                onClick={() => {
+                                                                    setEditingProduct(p);
+                                                                    setView('edit');
+                                                                    setOpenActionMenuId(null);
+                                                                }}
+                                                            >
+                                                                Editar producto
+                                                            </button>
+                                                        )}
+                                                        {canEdit && (
+                                                            <button
+                                                                className="btn"
+                                                                style={{ width: '100%', marginBottom: '0.3rem' }}
+                                                                onClick={() => {
+                                                                    handleAdjustStock(p);
+                                                                    setOpenActionMenuId(null);
+                                                                }}
+                                                            >
+                                                                Ajustar stock
+                                                            </button>
+                                                        )}
+                                                        <button
+                                                            className="btn"
+                                                            style={{ width: '100%', marginBottom: canDelete ? '0.3rem' : 0 }}
+                                                            onClick={() => {
+                                                                setPreselectedProductId(p.id);
+                                                                setActiveTab('codigos');
+                                                                setOpenActionMenuId(null);
+                                                            }}
+                                                        >
+                                                            Generar etiqueta
+                                                        </button>
+                                                        {canDelete && (
+                                                            <button
+                                                                className="btn"
+                                                                style={{ width: '100%', color: '#e11d48', borderColor: '#e11d48' }}
+                                                                onClick={() => {
+                                                                    handleDelete(p.id);
+                                                                    setOpenActionMenuId(null);
+                                                                }}
+                                                            >
+                                                                Eliminar
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
                                         {isCajero && !canEdit && !canDelete && (
                                             <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center', marginLeft: '5px' }}>
                                                 <input

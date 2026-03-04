@@ -3010,6 +3010,8 @@ function App() {
               onCancelInvoice={onCancelInvoice}
               onReturnInvoice={onReturnInvoice}
               onLog={addLog}
+              preselectedProductId={preselectedProductId}
+              setPreselectedProductId={setPreselectedProductId}
             />
           )}
           {activeTab === 'cierres' && <ShiftHistoryModule shiftHistory={shiftHistory} onLog={addLog} />}

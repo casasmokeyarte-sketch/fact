@@ -10,7 +10,9 @@ export function HistorialModule({
   onDeleteInvoice,
   onCancelInvoice,
   onReturnInvoice,
-  onLog
+  onLog,
+  preselectedProductId = '',
+  setPreselectedProductId
 }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [previewInvoice, setPreviewInvoice] = useState(null);
@@ -211,6 +213,22 @@ export function HistorialModule({
     });
     return movementMap;
   }, [sales, products, logs]);
+
+  useEffect(() => {
+    const productId = String(preselectedProductId || '').trim();
+    if (!productId) return;
+    const movementList = productMovementsById[productId] || [];
+    const productName = products.find((p) => String(p.id) === productId)?.name || 'Producto';
+    const sourceInvoice = (sales || [])
+      .find((invoice) => (invoice?.items || []).some((it) => String(getItemProductId(it)) === productId));
+    setProductMovementView({
+      productId,
+      productName,
+      invoiceCode: sourceInvoice ? getInvoiceCode(sourceInvoice) : 'N/A',
+      movements: movementList
+    });
+    setPreselectedProductId?.('');
+  }, [preselectedProductId, productMovementsById, products, sales]);
 
   const handleDelete = (invoice) => {
     const code = getInvoiceCode(invoice);
