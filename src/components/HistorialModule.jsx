@@ -1,8 +1,9 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { printInvoiceDocument } from '../lib/printInvoice.js';
 
 export function HistorialModule({
   sales,
+  products = [],
   logs = [],
   currentUser,
   isAdmin,
@@ -14,6 +15,22 @@ export function HistorialModule({
   const [searchTerm, setSearchTerm] = useState('');
   const [previewInvoice, setPreviewInvoice] = useState(null);
   const [movementScope, setMovementScope] = useState('mine');
+  const [openInvoiceMenuId, setOpenInvoiceMenuId] = useState(null);
+  const [openProductMenuId, setOpenProductMenuId] = useState(null);
+  const [productMovementView, setProductMovementView] = useState(null);
+
+  useEffect(() => {
+    const handleOutsideClick = (event) => {
+      if (!openInvoiceMenuId && !openProductMenuId) return;
+      const root = event.target?.closest?.('[data-menu-root="1"]');
+      if (!root) {
+        setOpenInvoiceMenuId(null);
+        setOpenProductMenuId(null);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, [openInvoiceMenuId, openProductMenuId]);
 
   const getInvoiceCode = (invoice) => (
     invoice?.invoiceCode ||
@@ -22,6 +39,10 @@ export function HistorialModule({
     invoice?.id ||
     'N/A'
   );
+
+  const getInvoiceKey = (invoice) => String(invoice?.db_id || invoice?.id || '');
+  const normalizeName = (value) => String(value || '').trim().toLowerCase();
+  const getItemProductId = (item) => item?.productId ?? item?.product_id ?? item?.id ?? null;
 
   const normalizedSearch = searchTerm.toLowerCase();
   const filteredSales = (sales || []).filter((s) =>
@@ -38,12 +59,166 @@ export function HistorialModule({
     return scoped.sort((a, b) => new Date(b?.timestamp || 0) - new Date(a?.timestamp || 0)).slice(0, 120);
   }, [logs, movementScope, currentUser?.id]);
 
+  const getInvoiceUser = (invoice) => (
+    invoice?.user_name ||
+    invoice?.user ||
+    invoice?.mixedDetails?.user_name ||
+    invoice?.mixedDetails?.user ||
+    'Sin usuario'
+  );
+
+  const productMovementsById = useMemo(() => {
+    const movementMap = {};
+    const ensureBucket = (productId) => {
+      const id = String(productId || '').trim();
+      if (!id) return null;
+      if (!movementMap[id]) movementMap[id] = [];
+      return movementMap[id];
+    };
+
+    const nameToIds = new Map();
+    (products || []).forEach((product) => {
+      const key = normalizeName(product?.name);
+      if (!key) return;
+      const list = nameToIds.get(key) || [];
+      if (!list.includes(product.id)) list.push(product.id);
+      nameToIds.set(key, list);
+    });
+    (sales || []).forEach((invoice) => {
+      (invoice?.items || []).forEach((item) => {
+        const productId = getItemProductId(item);
+        const key = normalizeName(item?.name);
+        if (!key || !productId) return;
+        const list = nameToIds.get(key) || [];
+        if (!list.includes(productId)) list.push(productId);
+        nameToIds.set(key, list);
+      });
+    });
+
+    (sales || []).forEach((invoice) => {
+      const invoiceCode = getInvoiceCode(invoice);
+      const saleUser = getInvoiceUser(invoice);
+      const status = String(invoice?.status || 'pagado').toLowerCase();
+      const saleDate = invoice?.date || new Date().toISOString();
+
+      (invoice?.items || []).forEach((item) => {
+        const productId = getItemProductId(item);
+        const bucket = ensureBucket(productId);
+        if (!bucket) return;
+        const quantity = Number(item?.quantity || 0);
+        const baseName = item?.name || 'Producto';
+
+        bucket.push({
+          type: 'Salida por factura',
+          direction: 'out',
+          invoiceCode,
+          quantity,
+          timestamp: saleDate,
+          user: saleUser,
+          details: `${baseName} x${quantity} en factura #${invoiceCode}`,
+        });
+
+        if (status === 'anulada') {
+          const cancellation = invoice?.mixedDetails?.cancellation || {};
+          bucket.push({
+            type: 'Anulacion factura',
+            direction: 'in',
+            invoiceCode,
+            quantity,
+            timestamp: cancellation?.at || saleDate,
+            user: cancellation?.by || saleUser,
+            details: `Reintegro por anulacion. Motivo: ${cancellation?.reason || 'N/A'}`
+          });
+        }
+
+        if (status === 'devuelta') {
+          const returnData = invoice?.mixedDetails?.returnData || {};
+          bucket.push({
+            type: 'Devolucion factura',
+            direction: 'in',
+            invoiceCode,
+            quantity,
+            timestamp: returnData?.at || saleDate,
+            user: returnData?.by || saleUser,
+            details: `Reintegro por devolucion (${returnData?.mode || 'N/A'}). Motivo: ${returnData?.reason || 'N/A'}`
+          });
+        }
+      });
+    });
+
+    (logs || []).forEach((log) => {
+      const moduleName = String(log?.module || '').toLowerCase();
+      if (moduleName !== 'inventario') return;
+
+      const action = String(log?.action || '');
+      const actionLower = action.toLowerCase();
+      const details = String(log?.details || '');
+      const detailsLower = details.toLowerCase();
+      const matchedIds = [];
+      nameToIds.forEach((ids, normalizedProductName) => {
+        if (normalizedProductName && detailsLower.includes(normalizedProductName)) {
+          ids.forEach((id) => {
+            if (!matchedIds.includes(id)) matchedIds.push(id);
+          });
+        }
+      });
+
+      if (matchedIds.length === 0) return;
+
+      matchedIds.forEach((productId) => {
+        const bucket = ensureBucket(productId);
+        if (!bucket) return;
+        const item = {
+          type: 'Movimiento inventario',
+          direction: 'neutral',
+          invoiceCode: null,
+          quantity: null,
+          timestamp: log?.timestamp || new Date().toISOString(),
+          user: log?.user_name || log?.user || 'Sistema',
+          details
+        };
+
+        if (actionLower.includes('ajuste')) {
+          const m = details.match(/en\s+(bodega|ventas):\s*([+-]?\d+(?:\.\d+)?)\s*->\s*([+-]?\d+(?:\.\d+)?)/i);
+          const prev = Number(m?.[2]);
+          const next = Number(m?.[3]);
+          const delta = Number.isFinite(prev) && Number.isFinite(next) ? (next - prev) : null;
+          item.type = 'Ajuste stock';
+          item.quantity = delta;
+          item.direction = delta == null ? 'neutral' : (delta >= 0 ? 'in' : 'out');
+        } else if (actionLower.includes('aceptar desde boveda')) {
+          const m = details.match(/recibio\s+(\d+(?:\.\d+)?)\s+unidades/i);
+          const qty = Number(m?.[1]);
+          item.type = 'Entrada desde bodega';
+          item.quantity = Number.isFinite(qty) ? qty : null;
+          item.direction = 'in';
+        } else if (actionLower.includes('salida forzada')) {
+          item.type = 'Salida forzada';
+          item.direction = 'out';
+        } else if (actionLower.includes('entrada forzada')) {
+          item.type = 'Entrada forzada';
+          item.direction = 'in';
+        }
+
+        bucket.push(item);
+      });
+    });
+
+    Object.keys(movementMap).forEach((productId) => {
+      movementMap[productId] = movementMap[productId]
+        .sort((a, b) => new Date(b?.timestamp || 0) - new Date(a?.timestamp || 0))
+        .slice(0, 200);
+    });
+    return movementMap;
+  }, [sales, products, logs]);
+
   const handleDelete = (invoice) => {
     const code = getInvoiceCode(invoice);
     if (!isAdmin) return alert('Solo el administrador puede eliminar facturas.');
     if (confirm(`Seguro de eliminar la factura ${code}? El stock sera devuelto.`)) {
       onDeleteInvoice?.(invoice);
     }
+    setOpenInvoiceMenuId(null);
   };
 
   const handleCancel = (invoice) => {
@@ -51,6 +226,7 @@ export function HistorialModule({
     const reason = String(prompt('Motivo de anulacion (obligatorio):') || '').trim();
     if (reason.length < 10) return alert('Debe ingresar un motivo minimo de 10 caracteres.');
     onCancelInvoice?.(invoice, reason);
+    setOpenInvoiceMenuId(null);
   };
 
   const handleReturn = (invoice) => {
@@ -59,27 +235,36 @@ export function HistorialModule({
     const reason = String(prompt('Motivo de devolucion (obligatorio):') || '').trim();
     if (reason.length < 10) return alert('Debe ingresar un motivo minimo de 10 caracteres.');
     onReturnInvoice?.(invoice, mode, reason);
+    setOpenInvoiceMenuId(null);
   };
 
   const handlePrint = (invoice, mode = '58mm') => {
     const code = getInvoiceCode(invoice);
     printInvoiceDocument(invoice, mode);
     onLog?.({ module: 'Historial', action: 'Reimpresion', details: `Factura ${code} reimpresa (${mode})` });
+    setOpenInvoiceMenuId(null);
   };
 
   const handlePreview = (invoice) => {
     setPreviewInvoice(invoice);
     const code = getInvoiceCode(invoice);
     onLog?.({ module: 'Historial', action: 'Vista Previa', details: `Vista previa factura ${code}` });
+    setOpenInvoiceMenuId(null);
   };
 
-  const getInvoiceUser = (invoice) => (
-    invoice?.user_name ||
-    invoice?.user ||
-    invoice?.mixedDetails?.user_name ||
-    invoice?.mixedDetails?.user ||
-    'Sin usuario'
-  );
+  const openProductMovements = (invoice, item) => {
+    const productId = getItemProductId(item);
+    const movementList = productMovementsById[String(productId || '')] || [];
+    const productName = item?.name || products.find((p) => String(p.id) === String(productId))?.name || 'Producto';
+
+    setProductMovementView({
+      productId: String(productId || ''),
+      productName,
+      invoiceCode: getInvoiceCode(invoice),
+      movements: movementList
+    });
+    setOpenProductMenuId(null);
+  };
 
   const getDiscountInfo = (invoice) => {
     const automaticPercent = Number(invoice?.automaticDiscountPercent ?? invoice?.mixedDetails?.discount?.automaticPercent ?? 0);
@@ -127,7 +312,7 @@ export function HistorialModule({
               ) : (
                 facturationMovements.map((log, index) => (
                   <tr key={`${log?.timestamp || index}-${index}`} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                    <td style={{ padding: '0.5rem' }}>{new Date(log?.timestamp || Date.now()).toLocaleString()}</td>
+                    <td style={{ padding: '0.5rem' }}>{log?.timestamp ? new Date(log.timestamp).toLocaleString() : 'N/A'}</td>
                     <td style={{ padding: '0.5rem' }}>{log?.user_name || log?.user || 'Sistema'}</td>
                     <td style={{ padding: '0.5rem' }}>{log?.action || 'N/A'}</td>
                     <td style={{ padding: '0.5rem' }}>{log?.details || ''}</td>
@@ -170,64 +355,155 @@ export function HistorialModule({
               {filteredSales.length === 0 ? (
                 <tr><td colSpan="8" style={{ textAlign: 'center', padding: '3rem' }}>No se encontraron ventas</td></tr>
               ) : (
-                filteredSales.map((s) => (
-                  <tr key={s.db_id || s.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                    <td style={{ padding: '1rem' }}>
-                      <div style={{ fontWeight: 'bold' }}>#{getInvoiceCode(s)}</div>
-                      <div style={{ fontSize: '0.75rem', color: '#64748b' }}>{new Date(s.date).toLocaleString()}</div>
-                    </td>
-                    <td style={{ padding: '1rem' }}>{s.clientName || 'Cliente Ocasional'}</td>
-                    <td style={{ padding: '1rem' }}>{getInvoiceUser(s)}</td>
-                    <td style={{ padding: '1rem' }}>
-                      <div style={{ fontSize: '0.85rem' }}>
-                        {(s.items || []).map((it, idx) => (
-                          <div key={idx}>{it.name} x{it.quantity}</div>
-                        ))}
-                      </div>
-                    </td>
-                    <td style={{ padding: '1rem' }}>
-                      <span className="badge">{s.paymentMode}</span>
-                    </td>
-                    <td style={{ padding: '1rem' }}>
-                      <span className="badge">{String(s?.status || 'pagado')}</span>
-                    </td>
-                    <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold' }}>
-                      ${Number(s.total || 0).toLocaleString()}
-                    </td>
-                    <td style={{ padding: '1rem', textAlign: 'center' }}>
-                      <div style={{ display: 'flex', gap: '0.35rem', justifyContent: 'center', flexWrap: 'wrap' }}>
-                        <button className="btn" style={{ padding: '4px 8px' }} onClick={() => handlePreview(s)} title="Vista previa">Ver</button>
-                        <button className="btn" style={{ padding: '4px 8px' }} onClick={() => handlePrint(s, '58mm')} title="Imprimir 58mm">58mm</button>
-                        <button className="btn" style={{ padding: '4px 8px' }} onClick={() => handlePrint(s, 'a4')} title="Imprimir A4">A4</button>
-                        {isAdmin && !['anulada', 'devuelta'].includes(String(s?.status || '').toLowerCase()) && (
-                          <>
-                            <button className="btn" style={{ padding: '4px 8px', borderColor: '#b45309', color: '#b45309' }} onClick={() => handleCancel(s)}>
-                              Anular
-                            </button>
-                            <button className="btn" style={{ padding: '4px 8px', borderColor: '#0369a1', color: '#0369a1' }} onClick={() => handleReturn(s)}>
-                              Devolver
-                            </button>
-                          </>
-                        )}
-                        {isAdmin && (
+                filteredSales.map((s) => {
+                  const invoiceKey = getInvoiceKey(s);
+                  const invoiceMenuOpen = openInvoiceMenuId === invoiceKey;
+                  return (
+                    <tr key={invoiceKey} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                      <td style={{ padding: '1rem' }}>
+                        <div style={{ fontWeight: 'bold' }}>#{getInvoiceCode(s)}</div>
+                        <div style={{ fontSize: '0.75rem', color: '#64748b' }}>{new Date(s.date).toLocaleString()}</div>
+                      </td>
+                      <td style={{ padding: '1rem' }}>{s.clientName || 'Cliente Ocasional'}</td>
+                      <td style={{ padding: '1rem' }}>{getInvoiceUser(s)}</td>
+                      <td style={{ padding: '1rem' }}>
+                        <div style={{ fontSize: '0.85rem', display: 'grid', gap: '0.2rem' }}>
+                          {(s.items || []).map((it, idx) => {
+                            const productMenuId = `${invoiceKey}-${idx}`;
+                            const isOpen = openProductMenuId === productMenuId;
+                            return (
+                              <div key={`${productMenuId}-${it?.id || it?.name || 'item'}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.35rem' }}>
+                                <span>{it.name} x{it.quantity}</span>
+                                <div data-menu-root="1" style={{ position: 'relative' }}>
+                                  <button
+                                    className="btn"
+                                    style={{ padding: '0 6px', lineHeight: 1, minHeight: '22px' }}
+                                    title="Opciones del producto"
+                                    onClick={() => setOpenProductMenuId((prev) => (prev === productMenuId ? null : productMenuId))}
+                                  >
+                                    {'\u22EE'}
+                                  </button>
+                                  {isOpen && (
+                                    <div className="card" style={{ position: 'absolute', right: 0, top: '105%', minWidth: '190px', zIndex: 20, padding: '0.4rem' }}>
+                                      <button className="btn" style={{ width: '100%' }} onClick={() => openProductMovements(s, it)}>
+                                        Ver movimientos del producto
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </td>
+                      <td style={{ padding: '1rem' }}>
+                        <span className="badge">{s.paymentMode}</span>
+                      </td>
+                      <td style={{ padding: '1rem' }}>
+                        <span className="badge">{String(s?.status || 'pagado')}</span>
+                      </td>
+                      <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold' }}>
+                        ${Number(s.total || 0).toLocaleString()}
+                      </td>
+                      <td style={{ padding: '1rem', textAlign: 'center' }}>
+                        <div data-menu-root="1" style={{ position: 'relative', display: 'inline-block' }}>
                           <button
                             className="btn"
-                            style={{ padding: '4px 8px', color: '#e11d48', borderColor: '#e11d48' }}
-                            onClick={() => handleDelete(s)}
-                            title="Eliminar"
+                            style={{ padding: '4px 10px' }}
+                            title="Opciones de la factura"
+                            onClick={() => setOpenInvoiceMenuId((prev) => (prev === invoiceKey ? null : invoiceKey))}
                           >
-                            {'\uD83D\uDDD1\uFE0F'}
+                            {'\u22EE'}
                           </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))
+                          {invoiceMenuOpen && (
+                            <div className="card" style={{ position: 'absolute', right: 0, top: '105%', minWidth: '220px', zIndex: 30, padding: '0.4rem' }}>
+                              <button className="btn" style={{ width: '100%', marginBottom: '0.3rem' }} onClick={() => handlePreview(s)}>Ver factura</button>
+                              <button className="btn" style={{ width: '100%', marginBottom: '0.3rem' }} onClick={() => handlePrint(s, '58mm')}>Imprimir 58mm</button>
+                              <button className="btn" style={{ width: '100%', marginBottom: '0.3rem' }} onClick={() => handlePrint(s, 'a4')}>Imprimir A4</button>
+                              {isAdmin && !['anulada', 'devuelta'].includes(String(s?.status || '').toLowerCase()) && (
+                                <>
+                                  <button className="btn" style={{ width: '100%', marginBottom: '0.3rem', borderColor: '#b45309', color: '#b45309' }} onClick={() => handleCancel(s)}>Anular</button>
+                                  <button className="btn" style={{ width: '100%', marginBottom: '0.3rem', borderColor: '#0369a1', color: '#0369a1' }} onClick={() => handleReturn(s)}>Devolver</button>
+                                </>
+                              )}
+                              {isAdmin && (
+                                <button className="btn" style={{ width: '100%', color: '#e11d48', borderColor: '#e11d48' }} onClick={() => handleDelete(s)}>Eliminar</button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
         </div>
       </div>
+
+      {productMovementView && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          backgroundColor: 'rgba(15, 23, 42, 0.6)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1250,
+          padding: '1rem'
+        }}>
+          <div className="card" style={{ width: 'min(980px, 100%)', maxHeight: '88vh', overflow: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+              <div>
+                <h3 style={{ margin: 0 }}>Movimientos del producto</h3>
+                <div style={{ fontSize: '0.9rem', color: '#64748b' }}>
+                  {productMovementView.productName} ({productMovementView.productId || 'sin id'}) - Desde factura #{productMovementView.invoiceCode}
+                </div>
+              </div>
+              <button className="btn" onClick={() => setProductMovementView(null)}>Cerrar</button>
+            </div>
+
+            <div className="table-container">
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid #e2e8f0', textAlign: 'left' }}>
+                    <th style={{ padding: '0.5rem' }}>Fecha</th>
+                    <th style={{ padding: '0.5rem' }}>Tipo</th>
+                    <th style={{ padding: '0.5rem', textAlign: 'right' }}>Cantidad</th>
+                    <th style={{ padding: '0.5rem' }}>Factura</th>
+                    <th style={{ padding: '0.5rem' }}>Usuario</th>
+                    <th style={{ padding: '0.5rem' }}>Detalle</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {productMovementView.movements.length === 0 ? (
+                    <tr><td colSpan="6" style={{ padding: '0.75rem', textAlign: 'center' }}>Sin movimientos detectados para este producto.</td></tr>
+                  ) : (
+                    productMovementView.movements.map((mv, idx) => {
+                      const qty = Number(mv?.quantity);
+                      const qtyLabel = Number.isFinite(qty)
+                        ? `${qty > 0 ? '+' : ''}${qty.toLocaleString()}`
+                        : 'N/A';
+                      const qtyColor = mv?.direction === 'in' ? '#15803d' : mv?.direction === 'out' ? '#b91c1c' : '#334155';
+                      return (
+                        <tr key={`${mv?.timestamp || idx}-${idx}`} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                          <td style={{ padding: '0.5rem' }}>{mv?.timestamp ? new Date(mv.timestamp).toLocaleString() : 'N/A'}</td>
+                          <td style={{ padding: '0.5rem' }}>{mv?.type || 'Movimiento'}</td>
+                          <td style={{ padding: '0.5rem', textAlign: 'right', color: qtyColor, fontWeight: 700 }}>{qtyLabel}</td>
+                          <td style={{ padding: '0.5rem' }}>{mv?.invoiceCode ? `#${mv.invoiceCode}` : 'N/A'}</td>
+                          <td style={{ padding: '0.5rem' }}>{mv?.user || 'Sistema'}</td>
+                          <td style={{ padding: '0.5rem' }}>{mv?.details || ''}</td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
 
       {previewInvoice && (
         (() => {
@@ -256,7 +532,7 @@ export function HistorialModule({
                 </div>
 
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
-                  <div><strong>Fecha:</strong> {new Date(previewInvoice?.date || Date.now()).toLocaleString()}</div>
+                  <div><strong>Fecha:</strong> {previewInvoice?.date ? new Date(previewInvoice.date).toLocaleString() : 'N/A'}</div>
                   <div><strong>Cliente:</strong> {previewInvoice?.clientName || 'Cliente Ocasional'}</div>
                   <div><strong>Documento:</strong> {previewInvoice?.clientDoc || 'N/A'}</div>
                   <div><strong>Usuario:</strong> {getInvoiceUser(previewInvoice)}</div>
@@ -309,7 +585,7 @@ export function HistorialModule({
                     <div style={{ fontWeight: 700, marginBottom: '0.4rem' }}>Abonos de cartera</div>
                     {previewInvoice.abonos.slice(0, 10).map((a, idx) => (
                       <div key={`${a?.id || idx}-${idx}`} style={{ fontSize: '0.9rem', marginBottom: '0.25rem' }}>
-                        {new Date(a?.date || Date.now()).toLocaleString()} - ${Number(a?.amount || 0).toLocaleString()} - {a?.method || 'N/A'} {a?.reference ? `(${a.reference})` : ''}
+                        {a?.date ? new Date(a.date).toLocaleString() : 'N/A'} - ${Number(a?.amount || 0).toLocaleString()} - {a?.method || 'N/A'} {a?.reference ? `(${a.reference})` : ''}
                       </div>
                     ))}
                   </div>

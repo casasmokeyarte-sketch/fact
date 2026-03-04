@@ -1359,8 +1359,28 @@ function App() {
     const lastClosedDateKey = String(closeMap[userKey] || '');
 
     if (userKey && lastClosedDateKey && lastClosedDateKey === nowRealDateKey) {
-      alert(`Este usuario ya cerro jornada hoy (${nowRealDateKey}). Solo podra iniciar nueva jornada cuando cambie al siguiente dia real del sistema.`);
-      return;
+      const isAdminUser = normalizeRole(currentUser?.role) === 'Administrador';
+      if (!isAdminUser) {
+        alert(`Este usuario ya cerro jornada hoy (${nowRealDateKey}). Solo podra iniciar nueva jornada cuando cambie al siguiente dia real del sistema.`);
+        return;
+      }
+
+      const allowReopen = confirm(
+        `Este usuario ya cerro jornada hoy (${nowRealDateKey}).\n\nComo administrador puede hacer una reapertura excepcional.\n\nDesea continuar?`
+      );
+      if (!allowReopen) return;
+
+      const pass = String(prompt('Ingrese clave Admin para autorizar reapertura de jornada:') || '').trim();
+      if (pass !== 'Admin') {
+        alert('Clave incorrecta. No se autorizo reapertura.');
+        return;
+      }
+
+      addLog({
+        module: 'Jornada',
+        action: 'Reapertura Excepcional',
+        details: `Reapertura autorizada para ${currentUser?.name || 'Usuario'} en fecha real ${nowRealDateKey}.`
+      });
     }
 
     const openShift = {
@@ -1930,6 +1950,10 @@ function App() {
     await handleFacturar(null, 0, { internalZero: true, zeroReason: reason });
   };
 
+  const getInvoiceItemProductId = (item) => (
+    item?.productId ?? item?.product_id ?? item?.id ?? null
+  );
+
   const onCancelInvoice = async (invoice, reason) => {
     if (!invoice) return;
     const currentStatus = String(invoice?.status || '').toLowerCase();
@@ -1938,15 +1962,18 @@ function App() {
     }
 
     const nextStock = { ...stock.ventas };
-    invoice.items.forEach((item) => {
-      nextStock[item.id] = (nextStock[item.id] || 0) + Number(item.quantity || 0);
+    (invoice.items || []).forEach((item) => {
+      const productId = getInvoiceItemProductId(item);
+      if (!productId) return;
+      nextStock[productId] = (nextStock[productId] || 0) + Number(item.quantity || 0);
     });
     setStock((prev) => ({ ...prev, ventas: nextStock }));
 
     await Promise.all((invoice.items || []).map(async (item) => {
-      const prod = products.find((p) => String(p.id) === String(item.id));
+      const productId = getInvoiceItemProductId(item);
+      const prod = products.find((p) => String(p.id) === String(productId));
       if (!prod) return;
-      await dataService.updateProductStockById(prod.id, { stock: Number(nextStock[item.id]) || 0 }, currentUser?.id);
+      await dataService.updateProductStockById(prod.id, { stock: Number(nextStock[productId]) || 0 }, currentUser?.id);
     })).catch((e) => console.error('Error devolviendo stock por anulacion:', e));
 
     const updatedInvoice = {
@@ -1991,15 +2018,18 @@ function App() {
     }
 
     const nextStock = { ...stock.ventas };
-    invoice.items.forEach((item) => {
-      nextStock[item.id] = (nextStock[item.id] || 0) + Number(item.quantity || 0);
+    (invoice.items || []).forEach((item) => {
+      const productId = getInvoiceItemProductId(item);
+      if (!productId) return;
+      nextStock[productId] = (nextStock[productId] || 0) + Number(item.quantity || 0);
     });
     setStock((prev) => ({ ...prev, ventas: nextStock }));
 
     await Promise.all((invoice.items || []).map(async (item) => {
-      const prod = products.find((p) => String(p.id) === String(item.id));
+      const productId = getInvoiceItemProductId(item);
+      const prod = products.find((p) => String(p.id) === String(productId));
       if (!prod) return;
-      await dataService.updateProductStockById(prod.id, { stock: Number(nextStock[item.id]) || 0 }, currentUser?.id);
+      await dataService.updateProductStockById(prod.id, { stock: Number(nextStock[productId]) || 0 }, currentUser?.id);
     })).catch((e) => console.error('Error devolviendo stock por devolucion:', e));
 
     const updatedInvoice = {
@@ -2040,8 +2070,10 @@ function App() {
   const onDeleteInvoice = (invoice) => {
     // 1. Revert Stock
     const newStock = { ...stock };
-    invoice.items.forEach(item => {
-      newStock.ventas[item.id] = (newStock.ventas[item.id] || 0) + item.quantity;
+    (invoice.items || []).forEach((item) => {
+      const productId = getInvoiceItemProductId(item);
+      if (!productId) return;
+      newStock.ventas[productId] = (newStock.ventas[productId] || 0) + Number(item.quantity || 0);
     });
     setStock(newStock);
 
@@ -2970,6 +3002,7 @@ function App() {
           {activeTab === 'historial' && (
             <HistorialModule
               sales={salesHistory}
+              products={products}
               logs={auditLogs}
               currentUser={currentUser}
               isAdmin={currentUser?.role === 'Administrador'}
