@@ -1,4 +1,4 @@
-c:\Users\PC\AppData\Local\Packages\5319275A.WhatsAppDesktop_cv1g1gvanyjgm\LocalState\sessions\D4C6F839882DBF9990F02A9B3E86E5C2F79ED5E4\transfers\2026-09\WhatsApp Image 2026-03-02 at 9.25.07 PM.jpegimport { useState } from 'react';
+import { useState } from 'react';
 
 const MAX_ATTACHMENTS = 2;
 const MAX_FILE_SIZE_BYTES = 450 * 1024;
