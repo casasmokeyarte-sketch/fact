@@ -475,6 +475,8 @@ function App() {
   const getQuickLookupHistoryStorageKey = (userId) => `${QUICK_LOOKUP_HISTORY_STORAGE_KEY}_${userId || 'anon'}`;
   const getProductsCacheStorageKey = (userId) => `${PRODUCTS_CACHE_STORAGE_KEY}_${userId || 'anon'}`;
   const getClientsCacheStorageKey = (userId) => `${CLIENTS_CACHE_STORAGE_KEY}_${userId || 'anon'}`;
+  const MAX_OPEN_SHIFT_HOURS = 24;
+  const MAX_OPEN_SHIFT_MS = MAX_OPEN_SHIFT_HOURS * 60 * 60 * 1000;
 
   const saveOpenShift = (userId, openShift) => {
     if (!userId || !openShift) return;
@@ -497,6 +499,19 @@ function App() {
       if (!raw) return;
       const parsed = JSON.parse(raw);
       if (parsed?.userId === userId && parsed?.shift) {
+        const startMs = new Date(parsed.shift?.startTime).getTime();
+        const ageMs = Date.now() - startMs;
+        const isValidStart = Number.isFinite(startMs) && !Number.isNaN(startMs);
+        const isStaleOpenShift = isValidStart && ageMs > MAX_OPEN_SHIFT_MS;
+
+        if (!isValidStart || isStaleOpenShift) {
+          clearOpenShift();
+          if (isStaleOpenShift) {
+            console.warn(`Jornada abierta descartada por antiguedad (${MAX_OPEN_SHIFT_HOURS}h max).`);
+          }
+          return;
+        }
+
         setShift(parsed.shift);
       }
     } catch (e) {
@@ -1522,6 +1537,19 @@ function App() {
 
   const onEndShift = (data) => {
     if (!shift?.startTime) return;
+    const shiftStartMsReal = new Date(shift.startTime).getTime();
+    const openShiftAgeMs = Date.now() - shiftStartMsReal;
+    const staleOpenShift = Number.isFinite(shiftStartMsReal) && !Number.isNaN(shiftStartMsReal) && openShiftAgeMs > MAX_OPEN_SHIFT_MS;
+    if (!Number.isFinite(shiftStartMsReal) || Number.isNaN(shiftStartMsReal) || staleOpenShift) {
+      clearOpenShift();
+      setShift(null);
+      alert(
+        staleOpenShift
+          ? `La jornada abierta supero ${MAX_OPEN_SHIFT_HOURS} horas y fue descartada para evitar arrastre de dias anteriores. Inicie una nueva jornada.`
+          : 'La jornada abierta es invalida y fue descartada. Inicie una nueva jornada.'
+      );
+      return;
+    }
     const shiftEndIso = getOperationalNowIso();
     const summary = getShiftFinancialSnapshot(shift.startTime, shiftEndIso, currentUser);
     const hasAnyUserMovement =

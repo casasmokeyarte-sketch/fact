@@ -17,9 +17,14 @@ export function HistorialModule({
   const [searchTerm, setSearchTerm] = useState('');
   const [previewInvoice, setPreviewInvoice] = useState(null);
   const [movementScope, setMovementScope] = useState('mine');
+  const [invoiceScope, setInvoiceScope] = useState(isAdmin ? 'all' : 'mine');
   const [openInvoiceMenuId, setOpenInvoiceMenuId] = useState(null);
   const [openProductMenuId, setOpenProductMenuId] = useState(null);
   const [productMovementView, setProductMovementView] = useState(null);
+
+  useEffect(() => {
+    setInvoiceScope(isAdmin ? 'all' : 'mine');
+  }, [isAdmin]);
 
   useEffect(() => {
     const handleOutsideClick = (event) => {
@@ -45,9 +50,29 @@ export function HistorialModule({
   const getInvoiceKey = (invoice) => String(invoice?.db_id || invoice?.id || '');
   const normalizeName = (value) => String(value || '').trim().toLowerCase();
   const getItemProductId = (item) => item?.productId ?? item?.product_id ?? item?.id ?? null;
+  const isOwnedByCurrentUser = (record) => {
+    const ownId = String(currentUser?.id || '').trim();
+    const recordId = String(record?.user_id || record?.userId || '').trim();
+    if (ownId && recordId) return ownId === recordId;
+
+    const ownName = normalizeName(currentUser?.name || currentUser?.email || '');
+    const recordName = normalizeName(
+      record?.user_name ||
+      record?.user ||
+      record?.mixedDetails?.user_name ||
+      record?.mixedDetails?.user ||
+      ''
+    );
+    if (ownName && recordName) return ownName === recordName;
+
+    return false;
+  };
 
   const normalizedSearch = searchTerm.toLowerCase();
-  const filteredSales = (sales || []).filter((s) =>
+  const salesByScope = (sales || []).filter((s) => (
+    invoiceScope === 'all' ? true : isOwnedByCurrentUser(s)
+  ));
+  const filteredSales = salesByScope.filter((s) =>
     String(getInvoiceCode(s)).toLowerCase().includes(normalizedSearch) ||
     String(s?.clientName ?? '').toLowerCase().includes(normalizedSearch)
   ).sort((a, b) => new Date(b.date) - new Date(a.date));
@@ -344,14 +369,24 @@ export function HistorialModule({
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
         <h2>Historial de Facturas</h2>
-        <input
-          type="text"
-          className="input-field"
-          placeholder="Buscar por ID o Cliente..."
-          style={{ maxWidth: '300px' }}
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-        />
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          <button className={`btn ${invoiceScope === 'mine' ? 'btn-primary' : ''}`} onClick={() => setInvoiceScope('mine')}>
+            Mis facturas
+          </button>
+          {isAdmin && (
+            <button className={`btn ${invoiceScope === 'all' ? 'btn-primary' : ''}`} onClick={() => setInvoiceScope('all')}>
+              Todas
+            </button>
+          )}
+          <input
+            type="text"
+            className="input-field"
+            placeholder="Buscar por ID o Cliente..."
+            style={{ maxWidth: '300px' }}
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
+        </div>
       </div>
 
       <div className="card">
