@@ -1437,6 +1437,51 @@ function App() {
     return Number(match[1].replace(/[^\d]/g, '')) || 0;
   };
 
+  const normalizePaymentMethodLabel = (value) => String(value || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
+  const addAmountToBreakdown = (acc, method, amount) => {
+    const safeAmount = Number(amount || 0);
+    if (safeAmount <= 0) return acc;
+
+    const normalizedMethod = normalizePaymentMethodLabel(method);
+    if (normalizedMethod.includes('efectivo') || normalizedMethod.includes('contado') || normalizedMethod.includes('cash')) {
+      acc.cash += safeAmount;
+    } else if (normalizedMethod.includes('transfer')) {
+      acc.transfer += safeAmount;
+    } else if (normalizedMethod.includes('tarjeta') || normalizedMethod.includes('card')) {
+      acc.card += safeAmount;
+    } else if (normalizedMethod.includes('credito') || normalizedMethod.includes('credit')) {
+      acc.credit += safeAmount;
+    } else {
+      acc.other += safeAmount;
+    }
+
+    return acc;
+  };
+
+  const getSalePaymentBreakdown = (sale) => {
+    const breakdown = { gross: Number(sale?.total || 0), cash: 0, transfer: 0, card: 0, credit: 0, other: 0 };
+    const paymentModeLabel = String(sale?.paymentMode || '');
+    const mixedParts = Array.isArray(sale?.mixedDetails?.parts) ? sale.mixedDetails.parts : [];
+
+    if (paymentModeLabel === 'Mixto' || paymentModeLabel.startsWith('Mixto')) {
+      if (mixedParts.length > 0) {
+        mixedParts.forEach((part) => addAmountToBreakdown(breakdown, part?.method, part?.amount));
+      } else {
+        addAmountToBreakdown(breakdown, PAYMENT_MODES.CONTADO, sale?.mixedDetails?.cash);
+        addAmountToBreakdown(breakdown, PAYMENT_MODES.CREDITO, sale?.mixedDetails?.credit);
+      }
+      return breakdown;
+    }
+
+    addAmountToBreakdown(breakdown, paymentModeLabel, sale?.total);
+    return breakdown;
+  };
+
   const getShiftFinancialSnapshot = (startIso, endIso, userRef = currentUser) => {
     const shiftSales = salesHistory.filter((sale) =>
       isDateInRange(sale.date, startIso, endIso) &&
@@ -1474,20 +1519,13 @@ function App() {
       );
 
     const salesBreakdown = shiftSales.reduce((acc, sale) => {
-      const total = Number(sale.total) || 0;
-      acc.gross += total;
-
-      if (sale.paymentMode === PAYMENT_MODES.CONTADO) acc.cash += total;
-      else if (sale.paymentMode === PAYMENT_MODES.CREDITO) acc.credit += total;
-      else if (sale.paymentMode === PAYMENT_MODES.TRANSFERENCIA) acc.transfer += total;
-      else if (sale.paymentMode === PAYMENT_MODES.TARJETA) acc.card += total;
-      else if (sale.paymentMode === 'Mixto') {
-        acc.cash += Number(sale.mixedDetails?.cash) || 0;
-        acc.credit += Number(sale.mixedDetails?.credit) || 0;
-      } else {
-        acc.other += total;
-      }
-
+      const saleBreakdown = getSalePaymentBreakdown(sale);
+      acc.gross += saleBreakdown.gross;
+      acc.cash += saleBreakdown.cash;
+      acc.transfer += saleBreakdown.transfer;
+      acc.card += saleBreakdown.card;
+      acc.credit += saleBreakdown.credit;
+      acc.other += saleBreakdown.other;
       return acc;
     }, { gross: 0, cash: 0, transfer: 0, card: 0, credit: 0, other: 0 });
 
@@ -1511,13 +1549,8 @@ function App() {
 
     const abonosBreakdown = shiftCarteraAbonos.reduce((acc, abono) => {
       const amount = Number(abono?.amount || 0);
-      const method = String(abono?.method || '').trim().toLowerCase();
       acc.total += amount;
-      if (method.includes('efectivo')) acc.cash += amount;
-      else if (method.includes('transfer')) acc.transfer += amount;
-      else if (method.includes('tarjeta')) acc.card += amount;
-      else if (method.includes('credit')) acc.credit += amount;
-      else acc.other += amount;
+      addAmountToBreakdown(acc, abono?.method, amount);
       return acc;
     }, { total: 0, cash: 0, transfer: 0, card: 0, credit: 0, other: 0 });
 
@@ -2694,6 +2727,10 @@ function App() {
                     const nextAbonos = Array.isArray(changed?.abonos) ? changed.abonos : [];
                     if (nextAbonos.length > prevAbonos.length) {
                       const newAbono = nextAbonos[0];
+                      const normalizedMethod = normalizePaymentMethodLabel(newAbono?.method);
+                      if (normalizedMethod.includes('efectivo') || normalizedMethod.includes('contado') || normalizedMethod.includes('cash')) {
+                        adjustUserCashBalance(currentUser, Number(newAbono?.amount || 0));
+                      }
                       await addLog({
                         module: 'Cartera',
                         action: 'Registrar Abono',

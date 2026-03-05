@@ -122,7 +122,9 @@ export function CarteraModule({ currentUser, clients = [], paymentMethods = [], 
                     method: selectedMethod,
                     reference: reference || null,
                     date: new Date().toISOString(),
-                    user: currentUser?.name || currentUser?.email || "Sistema"
+                    user: currentUser?.name || currentUser?.email || "Sistema",
+                    user_id: currentUser?.id || null,
+                    user_name: currentUser?.name || currentUser?.email || "Sistema"
                 };
                 return {
                     ...inv,

@@ -34,10 +34,53 @@ export function MainCashier({
         if (isCajero) setSubTab('cajero');
     }, [isCajero]);
 
+    const normalizePaymentMethod = (value) => String(value || '')
+        .trim()
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '');
+
+    const getCashPortionFromSale = (sale) => {
+        const total = Number(sale?.total || 0);
+        const paymentMode = String(sale?.paymentMode || '');
+        const mixedParts = Array.isArray(sale?.mixedDetails?.parts) ? sale.mixedDetails.parts : [];
+
+        if (paymentMode === 'Mixto' || paymentMode.startsWith('Mixto')) {
+            if (mixedParts.length > 0) {
+                return mixedParts.reduce((sum, part) => {
+                    const method = normalizePaymentMethod(part?.method);
+                    return method.includes('efectivo') || method.includes('contado') || method.includes('cash')
+                        ? sum + (Number(part?.amount || 0))
+                        : sum;
+                }, 0);
+            }
+            return Number(sale?.mixedDetails?.cash || 0);
+        }
+
+        const normalizedMode = normalizePaymentMethod(paymentMode);
+        return normalizedMode.includes('efectivo') || normalizedMode.includes('contado') || normalizedMode.includes('cash')
+            ? total
+            : 0;
+    };
+
+    const getCashAbonosFromSale = (sale) => {
+        const abonos = Array.isArray(sale?.abonos)
+            ? sale.abonos
+            : (Array.isArray(sale?.mixedDetails?.cartera?.abonos) ? sale.mixedDetails.cartera.abonos : []);
+
+        return abonos.reduce((sum, abono) => {
+            const method = normalizePaymentMethod(abono?.method);
+            if (method.includes('efectivo') || method.includes('contado') || method.includes('cash')) {
+                return sum + (Number(abono?.amount || 0));
+            }
+            return sum;
+        }, 0);
+    };
+
     const today = new Date().toLocaleDateString();
-    const dailySales = salesHistory
+    const dailyCashIncome = salesHistory
         .filter((s) => new Date(s.date).toLocaleDateString() === today)
-        .reduce((sum, s) => sum + s.total, 0);
+        .reduce((sum, s) => sum + getCashPortionFromSale(s) + getCashAbonosFromSale(s), 0);
 
     const dailyExpenses = expenses
         .filter((e) => new Date(e.date).toLocaleDateString() === today)
@@ -218,8 +261,8 @@ export function MainCashier({
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
                     <div className="card" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', textAlign: 'center', backgroundColor: '#f8fafc' }}>
                         <div>
-                            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Ventas del Dia (Ingreso a Menor)</p>
-                            <p style={{ fontSize: '1.2rem', fontWeight: 'bold', color: '#10b981' }}>+ ${dailySales.toLocaleString()}</p>
+                            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Ingresos en Efectivo del Dia</p>
+                            <p style={{ fontSize: '1.2rem', fontWeight: 'bold', color: '#10b981' }}>+ ${dailyCashIncome.toLocaleString()}</p>
                         </div>
                         <div>
                             <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Gastos del Dia</p>
@@ -249,7 +292,7 @@ export function MainCashier({
                             <span style={{ fontSize: '3rem' }}></span>
                             <h3>Caja Menor</h3>
                             <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>Fondo para Operaciones Diarias</p>
-                            <p style={{ fontSize: '2rem', fontWeight: 'bold', margin: '1rem 0' }}>${(cajaMenor + dailySales - dailyExpenses).toLocaleString()}</p>
+                            <p style={{ fontSize: '2rem', fontWeight: 'bold', margin: '1rem 0' }}>${(cajaMenor + dailyCashIncome - dailyExpenses).toLocaleString()}</p>
                             {canTransferCash && (
                                 <button className="btn" onClick={() => {
                                     const amount = Number(prompt('Monto a retornar de Caja Menor hacia Caja Mayor:'));
