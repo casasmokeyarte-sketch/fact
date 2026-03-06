@@ -2426,20 +2426,24 @@ function App() {
         </div>
 
         <aside className="promo-card promo-lubricante">
-          <div className="promo-badge">Nuevo producto</div>
-          <div className="promo-title">Lubricante de la casa</div>
-          <div className="promo-copy">
-            RecuErdalo en cada atencion y ofrEcelo al cliente como complemento recomendado.
+          <div className="promo-content">
+            <div className="promo-text">
+              <div className="promo-badge">Nuevo producto</div>
+              <div className="promo-title">Lubricante de la casa</div>
+              <div className="promo-copy">
+                RecuErdalo en cada atencion y ofrEcelo al cliente como complemento recomendado.
+              </div>
+              <div className="promo-footer">Sugerencia al asesor: menciOnalo antes de cerrar la venta.</div>
+            </div>
+            <video
+              className="promo-media"
+              src="/liubrigif.mp4"
+              autoPlay
+              loop
+              muted
+              playsInline
+            />
           </div>
-          <video
-            className="promo-media"
-            src="/liubrigif.mp4"
-            autoPlay
-            loop
-            muted
-            playsInline
-          />
-          <div className="promo-footer">Sugerencia al asesor: menciOnalo antes de cerrar la venta.</div>
         </aside>
 
         {allowedMenuItems.length === 0 && (
