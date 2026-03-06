@@ -2425,6 +2425,23 @@ function App() {
           </div>
         </div>
 
+        <aside className="promo-card promo-lubricante">
+          <div className="promo-badge">Nuevo producto</div>
+          <div className="promo-title">Lubricante de la casa</div>
+          <div className="promo-copy">
+            RecuErdalo en cada atencion y ofrEcelo al cliente como complemento recomendado.
+          </div>
+          <video
+            className="promo-media"
+            src="/liubrigif.mp4"
+            autoPlay
+            loop
+            muted
+            playsInline
+          />
+          <div className="promo-footer">Sugerencia al asesor: menciOnalo antes de cerrar la venta.</div>
+        </aside>
+
         {allowedMenuItems.length === 0 && (
           <div className="card" style={{ maxWidth: '580px', margin: '2rem auto', textAlign: 'center' }}>
             <h3 style={{ marginTop: 0 }}>Sin modulos habilitados</h3>

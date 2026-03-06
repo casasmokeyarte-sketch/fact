@@ -97,7 +97,7 @@ export function SettingsModule({
             <nav style={{ display: 'flex', gap: '1rem', marginBottom: '1.5rem' }}>
                 <button className={`btn ${subTab === 'usuarios' ? 'btn-primary' : ''}`} onClick={() => setSubTab('usuarios')}>Usuarios</button>
                 <button className={`btn ${subTab === 'pagos' ? 'btn-primary' : ''}`} onClick={() => setSubTab('pagos')}>Pagos</button>
-                <button className={`btn ${subTab === 'categorias' ? 'btn-primary' : ''}`} onClick={() => setSubTab('categorias')}>Categoriass</button>
+                <button className={`btn ${subTab === 'categorias' ? 'btn-primary' : ''}`} onClick={() => setSubTab('categorias')}>Categorias</button>
                 <button className={`btn ${subTab === 'sistema' ? 'btn-primary' : ''}`} onClick={() => setSubTab('sistema')}>Sistema</button>
             </nav>
 
@@ -200,8 +200,8 @@ export function SettingsModule({
 
             {subTab === 'pagos' && (
                 <div className="card">
-                    <h3 style={{ marginTop: 0 }}>Editar MAtodos de Pago</h3>
-                    <p>Configure las opciones disponibles en la zona de facturaciAn.</p>
+                    <h3 style={{ marginTop: 0 }}>Editar Metodos de Pago</h3>
+                    <p>Configure las opciones disponibles en la zona de Facturaciòn.</p>
                     <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.5rem' }}>
                         <input
                             type="text" className="input-field" placeholder="Nuevo mAtodo (ej: Bitcoin, Giro)"
@@ -224,7 +224,7 @@ export function SettingsModule({
                             </div>
                         ))}
                     </div>
-                    <p style={{ fontSize: '0.8em', color: '#64748b', marginTop: '1rem' }}>Nota: MAtodos bAsicos (Efectivo/Credito) no se pueden eliminar.</p>
+                    <p style={{ fontSize: '0.8em', color: '#64748b', marginTop: '1rem' }}>Nota: Metodos bAsicos (Efectivo/Credito) no se pueden eliminar.</p>
                 </div>
             )}
 
@@ -346,8 +346,8 @@ export function SettingsModule({
 
             {subTab === 'categorias' && (
                 <div className="card">
-                    <h3 style={{ marginTop: 0 }}>Gestionar Categoriass</h3>
-                    <p>Defina las Categoriass de productos para organizar su inventario.</p>
+                    <h3 style={{ marginTop: 0 }}>Gestionar Categorias</h3>
+                    <p>Defina las Categorias de productos para organizar su inventario.</p>
                     <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.5rem' }}>
                         <input
                             type="text" className="input-field" placeholder="Nueva Categorias (ej: Bebidas, Ropa)"
