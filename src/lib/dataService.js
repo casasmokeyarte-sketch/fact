@@ -567,7 +567,6 @@ export const dataService = {
 
     const invoicePayload = {
       user_id: invoice.user_id || userId,
-      user_name: userName,
       client_id: isUuid(invoice.client_id) ? invoice.client_id : null,
       client_name: invoice.client_name ?? invoice.clientName ?? null,
       client_doc: invoice.client_doc ?? invoice.clientDoc ?? null,
@@ -589,17 +588,6 @@ export const dataService = {
     ).select();
 
     let { data: invData, error: invError } = await invoiceQuery;
-    if (invError && isUndefinedColumnError(invError)) {
-      const { user_name, ...fallbackInvoicePayload } = invoicePayload;
-      const fallbackQuery = (
-        isUpdate
-          ? supabase.from('invoices').upsert({ id: invoice.id, ...fallbackInvoicePayload })
-          : supabase.from('invoices').insert(fallbackInvoicePayload)
-      ).select();
-      const retry = await fallbackQuery;
-      invData = retry.data;
-      invError = retry.error;
-    }
     if (invError) throw formatDbError(invError, 'invoices.insert/upsert');
 
     const invoiceId = invData[0].id;
