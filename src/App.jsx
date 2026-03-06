@@ -389,6 +389,8 @@ function App() {
   const lastAuthEventRef = useRef({ event: null, userId: null, at: 0 });
   const pendingProductsSyncRef = useRef(false);
   const pendingClientsSyncRef = useRef(false);
+  const userCashBalancesHydratedRef = useRef(false);
+  const lastSyncedUserCashBalancesRef = useRef('');
 
   // New States
   const [registeredClients, setRegisteredClients] = useState([]);
@@ -493,27 +495,64 @@ function App() {
     localStorage.removeItem(OPEN_SHIFT_STORAGE_KEY);
   };
 
-  const restoreOpenShift = (userId) => {
+  const hydrateOpenShift = (rawShift) => {
+    if (!rawShift) return null;
+
+    return {
+      ...rawShift,
+      db_id: rawShift?.db_id || rawShift?.id || null,
+      startTime: rawShift?.startTime || rawShift?.start_time || null,
+      initialCash: Number(rawShift?.initialCash ?? rawShift?.initial_cash ?? 0),
+      user_id: rawShift?.user_id || null,
+      user_name: rawShift?.user_name || rawShift?.user || null,
+    };
+  };
+
+  const isValidOpenShift = (candidateShift) => {
+    const startMs = new Date(candidateShift?.startTime).getTime();
+    const ageMs = Date.now() - startMs;
+    const isValidStart = Number.isFinite(startMs) && !Number.isNaN(startMs);
+    const isStaleOpenShift = isValidStart && ageMs > MAX_OPEN_SHIFT_MS;
+    return {
+      isValidStart,
+      isStaleOpenShift
+    };
+  };
+
+  const restoreOpenShift = async (userId) => {
     try {
       const raw = localStorage.getItem(OPEN_SHIFT_STORAGE_KEY);
-      if (!raw) return;
-      const parsed = JSON.parse(raw);
-      if (parsed?.userId === userId && parsed?.shift) {
-        const startMs = new Date(parsed.shift?.startTime).getTime();
-        const ageMs = Date.now() - startMs;
-        const isValidStart = Number.isFinite(startMs) && !Number.isNaN(startMs);
-        const isStaleOpenShift = isValidStart && ageMs > MAX_OPEN_SHIFT_MS;
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed?.userId === userId && parsed?.shift) {
+          const localShift = hydrateOpenShift(parsed.shift);
+          const { isValidStart, isStaleOpenShift } = isValidOpenShift(localShift);
 
-        if (!isValidStart || isStaleOpenShift) {
+          if (isValidStart && !isStaleOpenShift) {
+            setShift(localShift);
+            return;
+          }
+
           clearOpenShift();
           if (isStaleOpenShift) {
-            console.warn(`Jornada abierta descartada por antiguedad (${MAX_OPEN_SHIFT_HOURS}h max).`);
+            console.warn(`Jornada abierta local descartada por antiguedad (${MAX_OPEN_SHIFT_HOURS}h max).`);
           }
-          return;
         }
-
-        setShift(parsed.shift);
       }
+
+      const cloudShift = hydrateOpenShift(await dataService.getOpenShiftForUser(userId));
+      if (!cloudShift) return;
+
+      const { isValidStart, isStaleOpenShift } = isValidOpenShift(cloudShift);
+      if (!isValidStart || isStaleOpenShift) {
+        if (isStaleOpenShift) {
+          console.warn(`Jornada abierta en nube descartada por antiguedad (${MAX_OPEN_SHIFT_HOURS}h max).`);
+        }
+        return;
+      }
+
+      setShift(cloudShift);
+      saveOpenShift(userId, cloudShift);
     } catch (e) {
       console.error('Error restaurando jornada abierta:', e);
     }
@@ -614,7 +653,7 @@ function App() {
         permissions: normalizePermissionsForRole(normalizedRole, profile?.permissions)
       });
       setIsAdminAuth(normalizedRole === 'Administrador');
-      restoreOpenShift(user.id);
+      await restoreOpenShift(user.id);
       restoreActiveTab(user.id);
       restoreQuickTrayState(user.id);
       restoreQuickLookupHistory(user.id);
@@ -630,7 +669,7 @@ function App() {
         permissions: { ...DEFAULT_PERMISSIONS }
       });
       setIsAdminAuth(true);
-      restoreOpenShift(user.id);
+      await restoreOpenShift(user.id);
       restoreActiveTab(user.id);
       restoreQuickTrayState(user.id);
       restoreQuickLookupHistory(user.id);
@@ -721,14 +760,15 @@ function App() {
   const refreshCloudData = useCallback(async ({ showLoader = false, silent = false } = {}) => {
     try {
       if (showLoader) setLoading(true);
-      const [dbProducts, dbClients, dbSales, dbExpenses, dbPurchases, dbLogs, dbShiftHistory] = await Promise.all([
+      const [dbProducts, dbClients, dbSales, dbExpenses, dbPurchases, dbLogs, dbShiftHistory, dbUserCashBalances] = await Promise.all([
         dataService.getProducts(),
         dataService.getClients(),
         dataService.getInvoices(),
         dataService.getExpenses(),
         dataService.getPurchases(),
         dataService.getAuditLogs(),
-        dataService.getShiftHistory()
+        dataService.getShiftHistory(),
+        dataService.getUserCashBalances()
       ]);
 
       const safeProducts = dedupeProducts(dbProducts || []);
@@ -789,6 +829,11 @@ function App() {
       setPurchases(enrichedPurchases);
       setAuditLogs(dbLogs || []);
       setShiftHistory(enrichedShiftHistory);
+      if (dbUserCashBalances && typeof dbUserCashBalances === 'object') {
+        setUserCashBalances(dbUserCashBalances);
+        lastSyncedUserCashBalancesRef.current = JSON.stringify(dbUserCashBalances);
+        userCashBalancesHydratedRef.current = true;
+      }
 
       // Reconstruct carteras/debts from invoices
       const pendingSales = enrichedSales.filter(s => s.status === 'pendiente');
@@ -846,6 +891,7 @@ function App() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'expenses' }, scheduleRealtimeRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'purchases' }, scheduleRealtimeRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'shift_history' }, scheduleRealtimeRefresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'user_cash_balances' }, scheduleRealtimeRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'audit_logs' }, scheduleRealtimeRefresh)
       .subscribe();
 
@@ -874,6 +920,33 @@ function App() {
   useEffect(() => {
     localStorage.setItem(USER_CASH_BALANCES_STORAGE_KEY, JSON.stringify(userCashBalances));
   }, [userCashBalances]);
+
+  useEffect(() => {
+    if (!currentUser?.id) return;
+    if (!userCashBalancesHydratedRef.current) return;
+
+    const serialized = JSON.stringify(userCashBalances || {});
+    if (serialized === lastSyncedUserCashBalancesRef.current) return;
+
+    const persistBalances = async () => {
+      try {
+        const entries = Object.entries(userCashBalances || {});
+        for (const [cashKey, balance] of entries) {
+          await dataService.saveUserCashBalance({
+            cashKey,
+            balance,
+            userId: cashKey,
+            userName: users.find((u) => String(getCashUserKey(u)) === String(cashKey))?.name || null,
+          });
+        }
+        lastSyncedUserCashBalancesRef.current = serialized;
+      } catch (error) {
+        console.error('Error sincronizando saldos de caja por usuario:', error);
+      }
+    };
+
+    persistBalances();
+  }, [currentUser?.id, userCashBalances, users]);
 
   useEffect(() => {
     if (!currentUser?.id) return;
@@ -1365,7 +1438,7 @@ function App() {
     }
   };
 
-  const onStartShift = (initialCash) => {
+  const onStartShift = async (initialCash) => {
     const startCash = Number(initialCash) > 0 ? Number(initialCash) : 0;
     const nowIso = getOperationalNowIso();
     const nowRealDateKey = getRealDateKey();
@@ -1408,6 +1481,27 @@ function App() {
     setUserCashBalance(currentUser, startCash);
     saveOpenShift(currentUser?.id, openShift);
     addLog({ module: 'Jornada', action: 'Inicio Jornada', details: `Iniciada con base de $${startCash}` });
+
+    try {
+      const savedShift = await dataService.saveShift({
+        ...openShift,
+        endTime: null,
+        salesTotal: 0,
+        theoreticalBalance: 0,
+        physicalCash: 0,
+        discrepancy: 0,
+        authorized: false,
+        reportText: ''
+      });
+      const persistedRow = Array.isArray(savedShift) ? savedShift[0] : savedShift;
+      if (persistedRow?.id) {
+        const persistedShift = { ...openShift, db_id: persistedRow.id };
+        setShift(persistedShift);
+        saveOpenShift(currentUser?.id, persistedShift);
+      }
+    } catch (err) {
+      console.error('Error persistiendo jornada abierta en nube:', err);
+    }
   };
 
   const isDateInRange = (dateValue, startIso, endIso) => {
@@ -1735,7 +1829,8 @@ function App() {
     const reportText = reportLines.join('\n');
 
     const shiftData = {
-      id: Date.now(),
+      id: shift?.db_id || shift?.id || Date.now(),
+      db_id: shift?.db_id || null,
       startTime: shift.startTime,
       endTime: shiftEndIso,
       initialCash: shift.initialCash,
@@ -2233,7 +2328,7 @@ function App() {
             return permission === true || (typeof permission === 'object' && permission !== null);
           });
 
-    const cashBalance = getUserCashBalance(currentUser);
+    const cashBalance = activeShiftCashBalance;
 
     const radius = 255;
 
@@ -2360,6 +2455,17 @@ function App() {
   const activeShiftSalesTotal = shift?.startTime
     ? getShiftFinancialSnapshot(shift.startTime, getOperationalNowIso(), currentUser).salesBreakdown.gross
     : 0;
+  const activeShiftCashBalance = useMemo(() => {
+    if (!shift?.startTime) return getUserCashBalance(currentUser);
+
+    const summary = getShiftFinancialSnapshot(shift.startTime, getOperationalNowIso(), currentUser);
+    const initialCash = Number(shift?.initialCash || 0);
+    return initialCash
+      + Number(summary.salesBreakdown.cash || 0)
+      + Number(summary.abonosBreakdown.cash || 0)
+      + Number(summary.cashMovements.receivedFromVault || 0)
+      - Number(summary.cashMovements.returnedToVault || 0);
+  }, [shift, currentUser, salesHistory, expenses, purchases, auditLogs, getOperationalNowIso, userCashBalances]);
 
   const selectedClientPendingBalance = selectedClient
     ? (cartera || [])

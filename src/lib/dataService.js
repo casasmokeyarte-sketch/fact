@@ -53,6 +53,43 @@ function isMissingIsVisibleColumnError(error) {
   return code === '42703' || code === 'PGRST204' || blob.includes('is_visible');
 }
 
+function isMissingRelationError(error) {
+  const code = String(error?.code || '');
+  const blob = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`.toLowerCase();
+  return code === '42P01' || blob.includes('relation') || blob.includes('does not exist');
+}
+
+function reportClientSyncIssue(scope, payload, error) {
+  const details = {
+    scope,
+    message: error?.message || String(error || 'Error desconocido'),
+    code: error?.code || null,
+    details: error?.details || null,
+    hint: error?.hint || null,
+    payload,
+    at: new Date().toISOString(),
+  };
+
+  console.error(`[SYNC:${scope}]`, details);
+
+  if (typeof window === 'undefined') return;
+
+  try {
+    const now = Date.now();
+    const lastShownAt = Number(window.__factLastSyncAlertAt || 0);
+    if (now - lastShownAt < 12000) return;
+    window.__factLastSyncAlertAt = now;
+    window.alert(
+      `Error sincronizando ${scope}.\n\n` +
+      `Mensaje: ${details.message}\n` +
+      `${details.code ? `Codigo: ${details.code}\n` : ''}` +
+      'Revise la consola del navegador para mas detalle.'
+    );
+  } catch {
+    // noop
+  }
+}
+
 async function withRetry(operation, retries = 2, delayMs = 450) {
   let lastError;
   for (let attempt = 0; attempt <= retries; attempt += 1) {
@@ -700,7 +737,9 @@ export const dataService = {
       .order('created_at', { ascending: false });
     if (error) throw error;
 
-    return (data || []).map((s) => ({
+    return (data || [])
+      .filter((s) => s?.end_time)
+      .map((s) => ({
       id: s.id,
       user_id: s.user_id ?? null,
       user_name: s.user_name ?? s.user ?? null,
@@ -717,14 +756,50 @@ export const dataService = {
     }));
   },
 
+  async getOpenShiftForUser(userId) {
+    if (!userId) return null;
+
+    const { data, error } = await supabase
+      .from('shift_history')
+      .select('*')
+      .eq('user_id', userId)
+      .is('end_time', null)
+      .order('start_time', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!data) return null;
+
+    return {
+      id: data.id,
+      user_id: data.user_id ?? null,
+      user_name: data.user_name ?? data.user ?? null,
+      startTime: data.start_time,
+      endTime: data.end_time,
+      initialCash: Number(data.initial_cash ?? 0),
+      salesTotal: Number(data.sales_total ?? 0),
+      theoreticalBalance: Number(data.theoretical_balance ?? 0),
+      physicalCash: Number(data.physical_cash ?? 0),
+      discrepancy: Number(data.discrepancy ?? 0),
+      authorized: !!data.authorized,
+      reportText: data.report_text ?? '',
+      user: data.user_name ?? data.user ?? null,
+    };
+  },
+
   async saveShift(shift) {
     const userId = shift?.user_id || await getAuthUserId();
+    const hasEndTime = Object.prototype.hasOwnProperty.call(shift || {}, 'end_time') || Object.prototype.hasOwnProperty.call(shift || {}, 'endTime');
+    const resolvedEndTime = Object.prototype.hasOwnProperty.call(shift || {}, 'end_time')
+      ? shift.end_time
+      : (Object.prototype.hasOwnProperty.call(shift || {}, 'endTime') ? shift.endTime : new Date().toISOString());
     const payload = {
-      id: shift.id,
+      id: shift.id ?? shift.db_id,
       user_id: shift.user_id || userId,
       user_name: shift.user_name ?? shift.user ?? null,
       start_time: shift.start_time ?? shift.startTime ?? null,
-      end_time: shift.end_time ?? shift.endTime ?? new Date().toISOString(),
+      end_time: hasEndTime ? resolvedEndTime : new Date().toISOString(),
       initial_cash: Number(shift.initial_cash ?? shift.initialCash ?? 0),
       sales_total: Number(shift.sales_total ?? shift.salesTotal ?? 0),
       theoretical_balance: Number(shift.theoretical_balance ?? shift.theoreticalBalance ?? 0),
@@ -756,5 +831,81 @@ export const dataService = {
     }
     if (error) throw error;
     return data;
+  },
+
+  async getUserCashBalances() {
+    try {
+      const { data, error } = await supabase
+        .from('user_cash_balances')
+        .select('*')
+        .order('updated_at', { ascending: false });
+      if (error) throw error;
+      return (data || []).reduce((acc, row) => {
+        const cashKey = String(row?.cash_key || row?.user_id || '').trim();
+        if (!cashKey) return acc;
+        acc[cashKey] = Number(row?.balance ?? 0);
+        return acc;
+      }, {});
+    } catch (error) {
+      if (isMissingRelationError(error)) {
+        console.warn('Tabla user_cash_balances no existe aun en Supabase. Se usa respaldo local.');
+        return {};
+      }
+      throw error;
+    }
+  },
+
+  async saveUserCashBalance({ cashKey, balance, userId = null, userName = null }) {
+    if (!cashKey) return null;
+
+    const authUserId = await getAuthUserId();
+    const payload = {
+      cash_key: String(cashKey).trim(),
+      user_id: isUuid(userId) ? userId : authUserId,
+      user_name: userName ?? null,
+      balance: Number(balance || 0),
+      updated_by: authUserId,
+      updated_at: new Date().toISOString(),
+    };
+
+    try {
+      let lastError = null;
+
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        const { data, error } = await supabase
+          .from('user_cash_balances')
+          .upsert(payload, { onConflict: 'cash_key' })
+          .select();
+
+        if (!error) {
+          if (attempt > 1) {
+            console.warn(`[SYNC:user_cash_balances] recuperado en intento ${attempt}`, payload);
+          }
+          return data;
+        }
+
+        lastError = error;
+        console.warn(`[SYNC:user_cash_balances] intento ${attempt} fallido`, {
+          payload,
+          message: error?.message || null,
+          code: error?.code || null,
+          details: error?.details || null,
+          hint: error?.hint || null,
+        });
+
+        if (attempt < 3) {
+          await new Promise((resolve) => setTimeout(resolve, 350 * attempt));
+        }
+      }
+
+      throw lastError;
+    } catch (error) {
+      if (isMissingRelationError(error)) {
+        console.warn('No se pudo sincronizar user_cash_balances porque la tabla no existe aun.');
+        return null;
+      }
+      reportClientSyncIssue('user_cash_balances', payload, error);
+      throw error;
+    }
   },
 };

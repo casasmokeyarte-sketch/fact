@@ -270,7 +270,7 @@ export function MainCashier({
                         </div>
                         <div>
                             <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Balance Operativo</p>
-                            <p style={{ fontSize: '1.2rem', fontWeight: 'bold' }}>$ {(dailySales - dailyExpenses).toLocaleString()}</p>
+                            <p style={{ fontSize: '1.2rem', fontWeight: 'bold' }}>$ {(dailyCashIncome - dailyExpenses).toLocaleString()}</p>
                         </div>
                     </div>
 
