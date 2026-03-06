@@ -930,13 +930,19 @@ function App() {
 
     const persistBalances = async () => {
       try {
-        const entries = Object.entries(userCashBalances || {});
+        const currentCashKey = String(getCashUserKey(currentUser) || '').trim();
+        const allEntries = Object.entries(userCashBalances || {});
+        const entries = liveProfile?.company_id
+          ? allEntries
+          : allEntries.filter(([cashKey]) => String(cashKey || '').trim() === currentCashKey);
+
         for (const [cashKey, balance] of entries) {
           await dataService.saveUserCashBalance({
             cashKey,
             balance,
             userId: cashKey,
             userName: users.find((u) => String(getCashUserKey(u)) === String(cashKey))?.name || null,
+            companyId: liveProfile?.company_id || null,
           });
         }
         lastSyncedUserCashBalancesRef.current = serialized;
@@ -946,7 +952,7 @@ function App() {
     };
 
     persistBalances();
-  }, [currentUser?.id, userCashBalances, users]);
+  }, [currentUser, userCashBalances, users, liveProfile?.company_id]);
 
   useEffect(() => {
     if (!currentUser?.id) return;

@@ -855,7 +855,7 @@ export const dataService = {
     }
   },
 
-  async saveUserCashBalance({ cashKey, balance, userId = null, userName = null }) {
+  async saveUserCashBalance({ cashKey, balance, userId = null, userName = null, companyId = null }) {
     if (!cashKey) return null;
 
     const authUserId = await getAuthUserId();
@@ -864,6 +864,7 @@ export const dataService = {
       user_id: isUuid(userId) ? userId : authUserId,
       user_name: userName ?? null,
       balance: Number(balance || 0),
+      company_id: isUuid(companyId) ? companyId : null,
       updated_by: authUserId,
       updated_at: new Date().toISOString(),
     };
