@@ -516,6 +516,7 @@ function App() {
       return [];
     }
   });
+  const [loadedDraftState, setLoadedDraftState] = useState(null);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notificationsSeenAt, setNotificationsSeenAt] = useState(() => {
     const raw = Number(localStorage.getItem(NOTIFICATIONS_SEEN_AT_STORAGE_KEY) || 0);
@@ -1440,6 +1441,7 @@ function App() {
     setDeliveryFee(0);
     setPaymentMode(PAYMENT_MODES.CONTADO);
     setPaymentRef('');
+    setLoadedDraftState(null);
   };
 
   const onSaveInvoiceDraft = async (draftExtra = {}) => {
@@ -1488,6 +1490,15 @@ function App() {
     setDeliveryFee(Number(draft.deliveryFee || 0));
     setPaymentMode(draft.paymentMode || PAYMENT_MODES.CONTADO);
     setPaymentRef(draft.paymentRef || '');
+    setLoadedDraftState({
+      draftId: draft.id,
+      extraDiscount: Number(draft.extraDiscount || 0),
+      authNote: String(draft.authNote || ''),
+      activeRemoteRequestId: String(draft.authRequestId || ''),
+      isMixed: !!draft.mixedData,
+      mixedData: draft.mixedData || null,
+      otherPaymentDetail: String(draft.otherPaymentDetail || ''),
+    });
     setActiveTab('facturacion');
 
     setInvoiceDrafts((prev) => prev.filter((d) => d.id !== draftId));
@@ -2959,6 +2970,7 @@ function App() {
                   remoteAuthDecisionByRequestId={remoteAuthDecisionByRequestId}
                   remoteAuthRequestById={remoteAuthRequestById}
                   buildApprovalAttachments={(payload) => buildApprovalPreviewAttachments(payload)}
+                  loadedDraftState={loadedDraftState}
                   onSaveDraft={onSaveInvoiceDraft}
                   onFacturarCero={onFacturarCero}
                 />

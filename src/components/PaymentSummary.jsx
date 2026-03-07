@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { CLIENT_OCASIONAL, PAYMENT_MODES } from '../constants';
 import { printInvoiceDocument } from '../lib/printInvoice.js';
 import { playSound } from '../lib/soundService';
@@ -44,6 +44,7 @@ export function PaymentSummary({
   remoteAuthDecisionByRequestId = {},
   remoteAuthRequestById = {},
   buildApprovalAttachments,
+  loadedDraftState,
   onSaveDraft,
   onFacturarCero
 }) {
@@ -113,6 +114,35 @@ export function PaymentSummary({
   const currentRemoteDecision = currentRemoteRequest?.status || (
     activeRemoteRequestId ? remoteAuthDecisionByRequestId?.[activeRemoteRequestId] : null
   );
+
+  useEffect(() => {
+    if (!loadedDraftState?.draftId) return;
+
+    setExtraDiscount(Number(loadedDraftState.extraDiscount || 0));
+    setAuthNote(String(loadedDraftState.authNote || ''));
+    setActiveRemoteRequestId(String(loadedDraftState.activeRemoteRequestId || ''));
+    setIsMixed(!!loadedDraftState.isMixed);
+    setOtherPaymentDetail(String(loadedDraftState.otherPaymentDetail || ''));
+
+    const mixed = loadedDraftState.mixedData || null;
+    if (mixed) {
+      setMixedModeA(mixed.modeA || CASH_MODE);
+      setMixedModeB(mixed.modeB || CREDIT_MODE);
+      setMixedAmountA(Number(mixed.amountA || 0));
+      setMixedRefA(String(mixed.refA || ''));
+      setMixedRefB(String(mixed.refB || ''));
+      setMixedOtherA(String(mixed.otherA || ''));
+      setMixedOtherB(String(mixed.otherB || ''));
+    } else {
+      setMixedModeA(CASH_MODE);
+      setMixedModeB(CREDIT_MODE);
+      setMixedAmountA(0);
+      setMixedRefA('');
+      setMixedRefB('');
+      setMixedOtherA('');
+      setMixedOtherB('');
+    }
+  }, [loadedDraftState?.draftId]);
 
   const reasonType = hasGift
     ? 'REGALO'
