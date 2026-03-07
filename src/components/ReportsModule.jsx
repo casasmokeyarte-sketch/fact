@@ -61,6 +61,11 @@ export function ReportsModule({
         'Sin usuario'
     );
 
+    const isFinanciallyClosedInvoice = (invoice) => {
+        const status = String(invoice?.status || '').trim().toLowerCase();
+        return status === 'anulada' || status === 'devuelta';
+    };
+
     const CompanyHeader = () => (
         <div className="report-header only-print" style={{ display: 'none', textAlign: 'center', marginBottom: '2rem', borderBottom: '2px solid #e2e8f0', paddingBottom: '1rem' }}>
             <img src={COMPANY_INFO.logo} alt="Logo" style={{ maxWidth: '150px', marginBottom: '0.5rem' }} />
@@ -91,7 +96,9 @@ export function ReportsModule({
                 );
 
             case 'ventas': {
-                const filteredSales = (sales || []).filter((s) => String(s?.clientName || '').toLowerCase().includes(f));
+                const filteredSales = (sales || [])
+                    .filter((s) => !isFinanciallyClosedInvoice(s))
+                    .filter((s) => String(s?.clientName || '').toLowerCase().includes(f));
                 const totalSales = filteredSales.reduce((sum, s) => sum + Number(s.total || 0), 0);
                 return (
                     <>
@@ -330,7 +337,9 @@ export function ReportsModule({
             }
 
             case 'balance': {
-                const totalSalesBal = (sales || []).reduce((sum, s) => sum + Number(s.total || 0), 0);
+                const totalSalesBal = (sales || [])
+                    .filter((s) => !isFinanciallyClosedInvoice(s))
+                    .reduce((sum, s) => sum + Number(s.total || 0), 0);
                 const totalGastosBal = (expenses || []).reduce((sum, g) => sum + Number(g.amount || 0), 0);
                 const net = totalSalesBal - totalGastosBal;
                 return (
@@ -364,6 +373,7 @@ export function ReportsModule({
                 };
 
                 const salesByUser = (sales || []).reduce((acc, s) => {
+                    if (isFinanciallyClosedInvoice(s)) return acc;
                     const key = toUserKey(s?.user_name || s?.user || 'Sin usuario');
                     if (!key) return acc;
                     if (!acc[key]) acc[key] = { count: 0, total: 0, label: s?.user_name || s?.user || 'Sin usuario' };

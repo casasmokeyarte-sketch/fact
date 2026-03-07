@@ -44,7 +44,12 @@ function isNetworkFetchError(error) {
 function isUndefinedColumnError(error) {
   const code = String(error?.code || '');
   const blob = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`.toLowerCase();
-  return code === '42703' || code === 'PGRST204' || blob.includes("could not find the 'user_name' column");
+  return (
+    code === '42703' ||
+    code === 'PGRST204' ||
+    blob.includes("could not find the 'user_name' column") ||
+    blob.includes("could not find the 'company_id' column")
+  );
 }
 
 function isMissingIsVisibleColumnError(error) {
@@ -786,6 +791,7 @@ export const dataService = {
       id: shift.id ?? shift.db_id,
       user_id: shift.user_id || userId,
       user_name: shift.user_name ?? shift.user ?? null,
+      company_id: isUuid(shift.company_id ?? shift.companyId) ? (shift.company_id ?? shift.companyId) : null,
       start_time: shift.start_time ?? shift.startTime ?? null,
       end_time: hasEndTime ? resolvedEndTime : new Date().toISOString(),
       initial_cash: Number(shift.initial_cash ?? shift.initialCash ?? 0),
@@ -800,7 +806,7 @@ export const dataService = {
     if (isUuid(payload.id)) {
       let { data, error } = await supabase.from('shift_history').upsert(payload).select();
       if (error && isUndefinedColumnError(error)) {
-        const { user_name, ...fallbackPayload } = payload;
+        const { user_name, company_id, ...fallbackPayload } = payload;
         const retry = await supabase.from('shift_history').upsert(fallbackPayload).select();
         data = retry.data;
         error = retry.error;
@@ -812,7 +818,7 @@ export const dataService = {
     const insertPayload = removeInvalidUuidId(payload);
     let { data, error } = await supabase.from('shift_history').insert(insertPayload).select();
     if (error && isUndefinedColumnError(error)) {
-      const { user_name, ...fallbackPayload } = insertPayload;
+      const { user_name, company_id, ...fallbackPayload } = insertPayload;
       const retry = await supabase.from('shift_history').insert(fallbackPayload).select();
       data = retry.data;
       error = retry.error;

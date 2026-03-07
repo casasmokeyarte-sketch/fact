@@ -53,6 +53,35 @@ export function printInvoiceDocument(invoice, mode = '58mm') {
   const subtotalAmount = Number(invoice?.subtotal ?? 0);
   const deliveryFeeAmount = Number(invoice?.deliveryFee ?? 0);
   const authorization = invoice?.authorization || invoice?.mixedDetails?.authorization || null;
+  const normalizedStatus = String(invoice?.status || 'pagado').trim().toLowerCase();
+  const isCancelled = normalizedStatus === 'anulada';
+  const isReturned = normalizedStatus === 'devuelta';
+  const cancellationData = invoice?.mixedDetails?.cancellation || null;
+  const returnData = invoice?.mixedDetails?.returnData || null;
+  const statusStampLabel = isCancelled ? 'ANULADO' : (isReturned ? 'DEVOLUCION' : '');
+  const statusStampColor = isCancelled ? '#b91c1c' : '#0369a1';
+  const statusDetailsHtml = isCancelled
+    ? `
+      <div class="status-note">
+        <div><strong>Documento:</strong> ANULADO</div>
+        <div><strong>Fecha:</strong> ${escapeHtml(cancellationData?.at ? new Date(cancellationData.at).toLocaleString() : 'N/A')}</div>
+        <div><strong>Responsable:</strong> ${escapeHtml(cancellationData?.by || 'N/A')}</div>
+        <div><strong>Motivo:</strong> ${escapeHtml(cancellationData?.reason || 'N/A')}</div>
+        ${Number(cancellationData?.refundedCash || 0) > 0 ? `<div><strong>Reintegro caja:</strong> $${Number(cancellationData.refundedCash || 0).toLocaleString('es-CO')}</div>` : ''}
+      </div>
+    `
+    : (isReturned
+      ? `
+        <div class="status-note">
+          <div><strong>Documento:</strong> DEVOLUCION</div>
+          <div><strong>Tipo:</strong> ${escapeHtml(returnData?.mode || 'N/A')}</div>
+          <div><strong>Fecha:</strong> ${escapeHtml(returnData?.at ? new Date(returnData.at).toLocaleString() : 'N/A')}</div>
+          <div><strong>Responsable:</strong> ${escapeHtml(returnData?.by || 'N/A')}</div>
+          <div><strong>Motivo:</strong> ${escapeHtml(returnData?.reason || 'N/A')}</div>
+          ${Number(returnData?.refundedCash || 0) > 0 ? `<div><strong>Reintegro caja:</strong> $${Number(returnData.refundedCash || 0).toLocaleString('es-CO')}</div>` : ''}
+        </div>
+      `
+      : '');
 
   const mixedDetailsHtml = mixedParts.length > 0
     ? `
@@ -126,6 +155,27 @@ export function printInvoiceDocument(invoice, mode = '58mm') {
           th { text-align: left; background: #f9fafb; }
           .total { text-align: right; margin-top: 10px; font-weight: 700; }
           .pay-details { margin-top: 8px; font-size: 11px; color: #374151; }
+          .status-stamp {
+            margin: 0 auto 10px;
+            width: fit-content;
+            padding: 6px 18px;
+            border: 3px solid ${statusStampColor};
+            color: ${statusStampColor};
+            font-weight: 800;
+            letter-spacing: 2px;
+            transform: rotate(-9deg);
+            opacity: 0.88;
+            font-size: 20px;
+          }
+          .status-note {
+            margin-top: 10px;
+            padding: 10px;
+            border: 1px dashed ${statusStampColor};
+            background: ${isCancelled ? '#fef2f2' : '#eff6ff'};
+            color: #1f2937;
+            font-size: 11px;
+            line-height: 1.45;
+          }
           .footer { margin-top: 12px; font-size: 10px; color: #4b5563; text-align: center; }
           ${pageCss}
         </style>
@@ -139,6 +189,7 @@ export function printInvoiceDocument(invoice, mode = '58mm') {
             <div class="company">${escapeHtml(COMPANY_INFO.address)}</div>
             <div class="company">Tel: ${escapeHtml(COMPANY_INFO.phone)} | ${escapeHtml(COMPANY_INFO.email)}</div>
           </div>
+          ${statusStampLabel ? `<div class="status-stamp">${escapeHtml(statusStampLabel)}</div>` : ''}
           <div class="meta">
             <div>
               <div><strong>Consecutivo:</strong> ${escapeHtml(invoiceCode)}</div>
@@ -177,6 +228,7 @@ export function printInvoiceDocument(invoice, mode = '58mm') {
               <div><strong>Aprobado por:</strong> ${escapeHtml(authorization?.approvedBy?.name || 'No registrado')}</div>
             </div>
           ` : ''}
+          ${statusDetailsHtml}
           <div class="total">TOTAL: $${Number(invoice?.total || 0).toLocaleString('es-CO')}</div>
           <div class="footer">Gracias por su compra</div>
         </div>

@@ -1661,6 +1661,7 @@ function App() {
     try {
       const savedShift = await dataService.saveShift({
         ...openShift,
+        companyId: liveProfile?.company_id || null,
         endTime: null,
         salesTotal: 0,
         theoreticalBalance: 0,
@@ -1713,6 +1714,11 @@ function App() {
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '');
 
+  const isInvoiceFinanciallyClosed = (invoice) => {
+    const normalizedStatus = String(invoice?.status || '').trim().toLowerCase();
+    return normalizedStatus === 'anulada' || normalizedStatus === 'devuelta';
+  };
+
   const addAmountToBreakdown = (acc, method, amount) => {
     const safeAmount = Number(amount || 0);
     if (safeAmount <= 0) return acc;
@@ -1752,10 +1758,67 @@ function App() {
     return breakdown;
   };
 
+  const getCashAbonosFromInvoice = (invoice) => {
+    const abonos = Array.isArray(invoice?.abonos)
+      ? invoice.abonos
+      : (Array.isArray(invoice?.mixedDetails?.cartera?.abonos) ? invoice.mixedDetails.cartera.abonos : []);
+
+    return abonos.reduce((sum, abono) => {
+      const normalizedMethod = normalizePaymentMethodLabel(abono?.method);
+      if (normalizedMethod.includes('efectivo') || normalizedMethod.includes('contado') || normalizedMethod.includes('cash')) {
+        return sum + Number(abono?.amount || 0);
+      }
+      return sum;
+    }, 0);
+  };
+
+  const resolveInvoiceCashOwner = (invoice) => {
+    const invoiceUserId = String(invoice?.user_id || '').trim();
+    if (invoiceUserId) {
+      const byId = users.find((user) => String(user?.id || '').trim() === invoiceUserId);
+      if (byId) return byId;
+    }
+
+    const invoiceUserName = String(
+      invoice?.user_name ||
+      invoice?.user ||
+      invoice?.mixedDetails?.user_name ||
+      invoice?.mixedDetails?.user ||
+      ''
+    ).trim().toLowerCase();
+
+    if (invoiceUserName) {
+      const byName = users.find((user) => {
+        const candidate = String(user?.name || user?.email || user?.username || '').trim().toLowerCase();
+        return candidate && candidate === invoiceUserName;
+      });
+      if (byName) return byName;
+    }
+
+    return {
+      id: invoice?.user_id || null,
+      name: invoice?.user_name || invoice?.user || invoice?.mixedDetails?.user_name || invoice?.mixedDetails?.user || 'Sistema',
+      email: invoice?.user_name || invoice?.user || null,
+    };
+  };
+
+  const getInvoiceCashRefundAmount = (invoice, operationType, returnMode = '') => {
+    if (!invoice || isInvoiceFinanciallyClosed(invoice)) return 0;
+    const saleCash = Number(getSalePaymentBreakdown(invoice).cash || 0);
+    const cashAbonos = Number(getCashAbonosFromInvoice(invoice) || 0);
+
+    if (operationType === 'return' && String(returnMode || '').trim().toUpperCase() !== 'DINERO') {
+      return 0;
+    }
+
+    return Math.max(0, saleCash + cashAbonos);
+  };
+
   const getShiftFinancialSnapshot = (startIso, endIso, userRef = currentUser) => {
     const shiftSales = salesHistory.filter((sale) =>
       isDateInRange(sale.date, startIso, endIso) &&
-      isRecordOwnedByUser(sale, userRef)
+      isRecordOwnedByUser(sale, userRef) &&
+      !isInvoiceFinanciallyClosed(sale)
     );
     const shiftExpenses = expenses.filter((expense) =>
       isDateInRange(expense.date, startIso, endIso) &&
@@ -1913,8 +1976,12 @@ function App() {
       inversion: Number(summary.purchasesTotal || 0),
     };
 
-    const totalDeclarado = requiredAccountKeys.reduce((sum, key) => sum + Number(enteredAccounts[key] || 0), 0);
-    const totalSistema = requiredAccountKeys.reduce((sum, key) => sum + Number(systemAccounts[key] || 0), 0);
+    const positiveAccountKeys = ['efectivo', 'transferencia', 'tarjeta', 'credito', 'otros'];
+    const negativeAccountKeys = ['gastos', 'inversion'];
+    const totalDeclarado = positiveAccountKeys.reduce((sum, key) => sum + Number(enteredAccounts[key] || 0), 0)
+      - negativeAccountKeys.reduce((sum, key) => sum + Number(enteredAccounts[key] || 0), 0);
+    const totalSistema = positiveAccountKeys.reduce((sum, key) => sum + Number(systemAccounts[key] || 0), 0)
+      - negativeAccountKeys.reduce((sum, key) => sum + Number(systemAccounts[key] || 0), 0);
     const discrepancy = totalDeclarado - totalSistema;
     const accountDiffs = requiredAccountKeys.map((key) => ({
       key,
@@ -1959,8 +2026,8 @@ function App() {
       `Cuenta OTROS: Sistema ${Number(systemAccounts.otros || 0).toLocaleString()} | Declarado ${Number(enteredAccounts.otros || 0).toLocaleString()}`,
       `Cuenta GASTOS/EGRESOS: Sistema ${Number(systemAccounts.gastos || 0).toLocaleString()} | Declarado ${Number(enteredAccounts.gastos || 0).toLocaleString()}`,
       `Cuenta COMPRAS/INVERSION: Sistema ${Number(systemAccounts.inversion || 0).toLocaleString()} | Declarado ${Number(enteredAccounts.inversion || 0).toLocaleString()}`,
-      `TOTAL SISTEMA (cuentas): ${Number(totalSistema || 0).toLocaleString()}`,
-      `TOTAL DECLARADO (cuentas): ${Number(totalDeclarado || 0).toLocaleString()}`,
+      `TOTAL SISTEMA NETO (cuentas): ${Number(totalSistema || 0).toLocaleString()}`,
+      `TOTAL DECLARADO NETO (cuentas): ${Number(totalDeclarado || 0).toLocaleString()}`,
       `Diferencia Total: ${Number(discrepancy || 0).toLocaleString()}`,
       `Cierre con autorizacion admin: ${authorizedMismatch ? 'SI' : 'NO'}`,
       `Cierre sin movimientos: ${hasAnyUserMovement ? 'NO' : 'SI'}`,
@@ -2007,6 +2074,7 @@ function App() {
     const shiftData = {
       id: shift?.db_id || shift?.id || Date.now(),
       db_id: shift?.db_id || null,
+      companyId: liveProfile?.company_id || null,
       startTime: shift.startTime,
       endTime: shiftEndIso,
       initialCash: shift.initialCash,
@@ -2308,6 +2376,9 @@ function App() {
       await dataService.updateProductStockById(prod.id, { stock: Number(nextStock[productId]) || 0 }, currentUser?.id);
     })).catch((e) => console.error('Error devolviendo stock por anulacion:', e));
 
+    const refundCashAmount = getInvoiceCashRefundAmount(invoice, 'cancel');
+    const cashOwner = resolveInvoiceCashOwner(invoice);
+
     const updatedInvoice = {
       ...invoice,
       id: invoice?.db_id || invoice?.id,
@@ -2317,7 +2388,8 @@ function App() {
         cancellation: {
           at: new Date().toISOString(),
           by: currentUser?.name || currentUser?.email || 'Sistema',
-          reason
+          reason,
+          refundedCash: refundCashAmount
         }
       }
     };
@@ -2327,6 +2399,9 @@ function App() {
       return same ? { ...s, status: 'anulada', mixedDetails: updatedInvoice.mixedDetails } : s;
     }));
     setCartera((prev) => prev.filter((c) => c.id !== invoice.id));
+    if (refundCashAmount > 0) {
+      adjustUserCashBalance(cashOwner, -refundCashAmount);
+    }
 
     try {
       await dataService.saveInvoice(updatedInvoice, invoice.items || []);
@@ -2337,7 +2412,7 @@ function App() {
     addLog({
       module: 'Facturacion',
       action: 'Cancelar Factura',
-      details: `Factura ${invoice.id} anulada. Motivo: ${reason}. Stock devuelto a ventas.`
+      details: `Factura ${invoice.id} anulada. Motivo: ${reason}. Stock devuelto a ventas.${refundCashAmount > 0 ? ` Reintegro de caja: $${refundCashAmount.toLocaleString()}.` : ''}`
     });
     alert(`Factura ${invoice.id} anulada correctamente.`);
   };
@@ -2364,6 +2439,9 @@ function App() {
       await dataService.updateProductStockById(prod.id, { stock: Number(nextStock[productId]) || 0 }, currentUser?.id);
     })).catch((e) => console.error('Error devolviendo stock por devolucion:', e));
 
+    const refundCashAmount = getInvoiceCashRefundAmount(invoice, 'return', mode);
+    const cashOwner = resolveInvoiceCashOwner(invoice);
+
     const updatedInvoice = {
       ...invoice,
       id: invoice?.db_id || invoice?.id,
@@ -2374,7 +2452,8 @@ function App() {
           mode,
           reason,
           at: new Date().toISOString(),
-          by: currentUser?.name || currentUser?.email || 'Sistema'
+          by: currentUser?.name || currentUser?.email || 'Sistema',
+          refundedCash: refundCashAmount
         }
       }
     };
@@ -2384,6 +2463,9 @@ function App() {
       return same ? { ...s, status: 'devuelta', mixedDetails: updatedInvoice.mixedDetails } : s;
     }));
     setCartera((prev) => prev.filter((c) => c.id !== invoice.id));
+    if (refundCashAmount > 0) {
+      adjustUserCashBalance(cashOwner, -refundCashAmount);
+    }
 
     try {
       await dataService.saveInvoice(updatedInvoice, invoice.items || []);
@@ -2394,7 +2476,7 @@ function App() {
     addLog({
       module: 'Facturacion',
       action: 'Devolucion Factura',
-      details: `Factura ${invoice.id} devuelta (${mode}). Motivo: ${reason}. Stock reintegrado.`
+      details: `Factura ${invoice.id} devuelta (${mode}). Motivo: ${reason}. Stock reintegrado.${refundCashAmount > 0 ? ` Reintegro de caja: $${refundCashAmount.toLocaleString()}.` : ''}`
     });
     alert(`Devolucion aplicada en factura ${invoice.id}.`);
   };
@@ -2652,6 +2734,31 @@ function App() {
   const activeShiftSalesTotal = shift?.startTime
     ? getShiftFinancialSnapshot(shift.startTime, getOperationalNowIso(), currentUser).salesBreakdown.gross
     : 0;
+  const activeShiftReconciliationPreview = useMemo(() => {
+    if (!shift?.startTime) return null;
+
+    const summary = getShiftFinancialSnapshot(shift.startTime, getOperationalNowIso(), currentUser);
+    const systemAccounts = {
+      efectivo: Number(summary.salesBreakdown.cash || 0) + Number(summary.abonosBreakdown.cash || 0) + Number(summary.cashMovements.receivedFromVault || 0) + Number(summary.cashMovements.majorToMinor || 0) - Number(summary.cashMovements.returnedToVault || 0) - Number(summary.cashMovements.minorToMajor || 0),
+      transferencia: Number(summary.salesBreakdown.transfer || 0) + Number(summary.abonosBreakdown.transfer || 0),
+      tarjeta: Number(summary.salesBreakdown.card || 0) + Number(summary.abonosBreakdown.card || 0),
+      credito: Number(summary.salesBreakdown.credit || 0) + Number(summary.abonosBreakdown.credit || 0),
+      otros: Number(summary.salesBreakdown.other || 0) + Number(summary.abonosBreakdown.other || 0),
+      gastos: Number(summary.expensesTotal || 0),
+      inversion: Number(summary.purchasesTotal || 0),
+    };
+    const netSystemTotal =
+      Number(systemAccounts.efectivo || 0) +
+      Number(systemAccounts.transferencia || 0) +
+      Number(systemAccounts.tarjeta || 0) +
+      Number(systemAccounts.credito || 0) +
+      Number(systemAccounts.otros || 0) -
+      Number(systemAccounts.gastos || 0) -
+      Number(systemAccounts.inversion || 0);
+
+    return { systemAccounts, netSystemTotal };
+  }, [shift, currentUser, salesHistory, expenses, purchases, auditLogs, getOperationalNowIso]);
+
   const activeShiftCashBalance = useMemo(() => {
     if (!shift?.startTime) return getUserCashBalance(currentUser);
 
@@ -2720,6 +2827,7 @@ function App() {
                 onStartShift={onStartShift}
                 onEndShift={onEndShift}
                 salesTotal={activeShiftSalesTotal}
+                reconciliationPreview={activeShiftReconciliationPreview}
               />
             </div>
           </div>
@@ -2880,6 +2988,7 @@ function App() {
           onStartShift={onStartShift}
           onEndShift={onEndShift}
           salesTotal={activeShiftSalesTotal}
+          reconciliationPreview={activeShiftReconciliationPreview}
         />
       ) : (
         <>

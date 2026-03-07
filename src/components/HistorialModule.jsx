@@ -323,6 +323,49 @@ export function HistorialModule({
     null
   );
 
+  const getInvoiceStatusMeta = (invoice) => {
+    const normalizedStatus = String(invoice?.status || 'pagado').trim().toLowerCase();
+    if (normalizedStatus === 'anulada') {
+      return {
+        label: 'ANULADO',
+        color: '#b91c1c',
+        bg: '#fef2f2',
+        details: invoice?.mixedDetails?.cancellation || null,
+      };
+    }
+    if (normalizedStatus === 'devuelta') {
+      return {
+        label: 'DEVOLUCION',
+        color: '#0369a1',
+        bg: '#eff6ff',
+        details: invoice?.mixedDetails?.returnData || null,
+      };
+    }
+    return null;
+  };
+
+  const renderInvoiceStatusBadge = (invoice) => {
+    const statusMeta = getInvoiceStatusMeta(invoice);
+    if (!statusMeta) {
+      return <span className="badge">{String(invoice?.status || 'pagado')}</span>;
+    }
+
+    return (
+      <span
+        className="badge"
+        style={{
+          backgroundColor: statusMeta.bg,
+          color: statusMeta.color,
+          border: `1px solid ${statusMeta.color}`,
+          fontWeight: 800,
+          letterSpacing: '0.4px',
+        }}
+      >
+        {statusMeta.label}
+      </span>
+    );
+  };
+
   return (
     <div className="historial-module">
       <div className="card" style={{ marginBottom: '1rem' }}>
@@ -453,7 +496,7 @@ export function HistorialModule({
                         <span className="badge">{s.paymentMode}</span>
                       </td>
                       <td style={{ padding: '1rem' }}>
-                        <span className="badge">{String(s?.status || 'pagado')}</span>
+                        {renderInvoiceStatusBadge(s)}
                       </td>
                       <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold' }}>
                         ${Number(s.total || 0).toLocaleString()}
@@ -562,6 +605,7 @@ export function HistorialModule({
         (() => {
           const discount = getDiscountInfo(previewInvoice);
           const authorization = getAuthorizationInfo(previewInvoice);
+          const statusMeta = getInvoiceStatusMeta(previewInvoice);
           const subtotal = Number(previewInvoice?.subtotal || 0);
           const deliveryFee = Number(previewInvoice?.deliveryFee || 0);
           const automaticLabel = discount.automaticPercent > 0
@@ -592,6 +636,19 @@ export function HistorialModule({
                   <div><strong>Pago:</strong> {previewInvoice?.paymentMode || 'N/A'}</div>
                   <div><strong>Total:</strong> ${Number(previewInvoice?.total || 0).toLocaleString()}</div>
                 </div>
+
+                {statusMeta && (
+                  <div className="card" style={{ marginBottom: '0.75rem', border: `2px solid ${statusMeta.color}`, backgroundColor: statusMeta.bg }}>
+                    <div style={{ fontSize: '1.2rem', fontWeight: 800, color: statusMeta.color, letterSpacing: '1px' }}>{statusMeta.label}</div>
+                    {statusMeta.details?.mode && <div><strong>Tipo:</strong> {statusMeta.details.mode}</div>}
+                    {statusMeta.details?.at && <div><strong>Fecha:</strong> {new Date(statusMeta.details.at).toLocaleString()}</div>}
+                    {statusMeta.details?.by && <div><strong>Responsable:</strong> {statusMeta.details.by}</div>}
+                    {statusMeta.details?.reason && <div><strong>Motivo:</strong> {statusMeta.details.reason}</div>}
+                    {Number(statusMeta.details?.refundedCash || 0) > 0 && (
+                      <div><strong>Reintegro caja:</strong> ${Number(statusMeta.details.refundedCash || 0).toLocaleString()}</div>
+                    )}
+                  </div>
+                )}
 
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>

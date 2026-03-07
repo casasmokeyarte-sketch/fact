@@ -11,16 +11,31 @@ const ACCOUNT_FIELDS = [
 ];
 
 const parseMoneyInput = (value) => Number(String(value || '').replace(/[^\d]/g, '')) || 0;
+const POSITIVE_ACCOUNT_KEYS = ['efectivo', 'transferencia', 'tarjeta', 'credito', 'otros'];
+const NEGATIVE_ACCOUNT_KEYS = ['gastos', 'inversion'];
 
-export function ShiftManager({ shift, onStartShift, onEndShift }) {
+export function ShiftManager({ shift, onStartShift, onEndShift, reconciliationPreview = null }) {
   const [showReconciliation, setShowReconciliation] = useState(false);
   const [accounts, setAccounts] = useState(() => (
     ACCOUNT_FIELDS.reduce((acc, f) => ({ ...acc, [f.key]: '' }), {})
   ));
 
-  const totalDeclared = useMemo(() => (
-    ACCOUNT_FIELDS.reduce((sum, f) => sum + parseMoneyInput(accounts[f.key]), 0)
+  const parsedAccounts = useMemo(() => (
+    ACCOUNT_FIELDS.reduce((acc, f) => {
+      acc[f.key] = parseMoneyInput(accounts[f.key]);
+      return acc;
+    }, {})
   ), [accounts]);
+
+  const totalDeclared = useMemo(() => (
+    POSITIVE_ACCOUNT_KEYS.reduce((sum, key) => sum + Number(parsedAccounts[key] || 0), 0) -
+    NEGATIVE_ACCOUNT_KEYS.reduce((sum, key) => sum + Number(parsedAccounts[key] || 0), 0)
+  ), [parsedAccounts]);
+
+  const differenceAmount = useMemo(() => {
+    const systemNet = Number(reconciliationPreview?.netSystemTotal || 0);
+    return totalDeclared - systemNet;
+  }, [reconciliationPreview?.netSystemTotal, totalDeclared]);
 
   const allRequiredFilled = useMemo(() => (
     ACCOUNT_FIELDS.every((f) => String(accounts[f.key]).trim() !== '')
@@ -36,14 +51,9 @@ export function ShiftManager({ shift, onStartShift, onEndShift }) {
       return;
     }
 
-    const parsed = ACCOUNT_FIELDS.reduce((acc, f) => {
-      acc[f.key] = parseMoneyInput(accounts[f.key]);
-      return acc;
-    }, {});
-
     onEndShift({
       reconciliation: {
-        ...parsed,
+        ...parsedAccounts,
         totalDeclarado: totalDeclared,
       },
     });
@@ -120,6 +130,11 @@ export function ShiftManager({ shift, onStartShift, onEndShift }) {
               <p style={{ margin: 0 }}>
                 Total declarado: <strong>${Number(totalDeclared || 0).toLocaleString()}</strong>
               </p>
+              {Math.abs(Number(differenceAmount || 0)) > 0 && (
+                <p style={{ margin: '0.45rem 0 0', fontWeight: 700, color: differenceAmount < 0 ? '#b91c1c' : '#15803d' }}>
+                  {differenceAmount < 0 ? 'Faltante' : 'Sobrante'}: ${Math.abs(Number(differenceAmount || 0)).toLocaleString()}
+                </p>
+              )}
             </div>
 
             <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>

@@ -40,6 +40,11 @@ export function MainCashier({
         .normalize('NFD')
         .replace(/[\u0300-\u036f]/g, '');
 
+    const isFinanciallyClosedInvoice = (sale) => {
+        const status = String(sale?.status || '').trim().toLowerCase();
+        return status === 'anulada' || status === 'devuelta';
+    };
+
     const getCashPortionFromSale = (sale) => {
         const total = Number(sale?.total || 0);
         const paymentMode = String(sale?.paymentMode || '');
@@ -79,6 +84,7 @@ export function MainCashier({
 
     const today = new Date().toLocaleDateString();
     const dailyCashIncome = salesHistory
+        .filter((s) => !isFinanciallyClosedInvoice(s))
         .filter((s) => new Date(s.date).toLocaleDateString() === today)
         .reduce((sum, s) => sum + getCashPortionFromSale(s) + getCashAbonosFromSale(s), 0);
 
