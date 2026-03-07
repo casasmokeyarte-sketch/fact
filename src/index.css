@@ -102,6 +102,11 @@ body {
   transition: transform 0.25s ease;
 }
 
+.quick-price-wrapper.movable,
+.promo-card.movable {
+  touch-action: none;
+}
+
 .quick-price-tab {
   writing-mode: vertical-rl;
   transform: rotate(180deg);
@@ -129,10 +134,34 @@ body {
   padding: 12px;
 }
 
+.floating-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 2px;
+}
+
 .quick-price-tray h3 {
   margin: 0;
   font-size: 0.95rem;
   color: #0f172a;
+}
+
+.floating-panel-handle {
+  border: 1px dashed #94a3b8;
+  background: #f8fafc;
+  color: #334155;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 0.72rem;
+  font-weight: 800;
+  cursor: grab;
+  box-shadow: none;
+}
+
+.floating-panel-handle:active {
+  cursor: grabbing;
 }
 
 .quick-price-tray p {
@@ -188,6 +217,18 @@ body {
   grid-template-columns: minmax(0, 1fr) 108px;
   gap: 12px;
   align-items: center;
+}
+
+.promo-panel-head {
+  margin-bottom: 10px;
+}
+
+.promo-panel-title {
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #c2410c;
 }
 
 .promo-text {
@@ -963,6 +1004,7 @@ body {
     position: relative;
     top: auto;
     right: auto;
+    left: auto !important;
     width: min(95vw, 410px);
     margin: 0 auto 24px;
   }
@@ -974,6 +1016,7 @@ body {
   .promo-card {
     position: relative;
     left: auto;
+    top: auto;
     bottom: auto;
     width: min(95vw, 410px);
     margin: 0 auto 24px;

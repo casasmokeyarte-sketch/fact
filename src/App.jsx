@@ -451,9 +451,16 @@ function App() {
   const [quickLookupResult, setQuickLookupResult] = useState(null);
   const [quickLookupHistory, setQuickLookupHistory] = useState([]);
   const [quickTrayOpen, setQuickTrayOpen] = useState(true);
+  const [quickPanelPosition, setQuickPanelPosition] = useState(null);
+  const [promoPanelPosition, setPromoPanelPosition] = useState(null);
+  const [homePanelsMovable, setHomePanelsMovable] = useState(() => (
+    typeof window === 'undefined' ? true : window.innerWidth > 768
+  ));
   const quickScanInputRef = useRef(null);
   const quickScanBufferRef = useRef('');
   const quickScanLastKeyAtRef = useRef(0);
+  const homeDashboardRef = useRef(null);
+  const homePanelDragRef = useRef(null);
   const realtimeRefreshTimeoutRef = useRef(null);
   const realtimeRefreshInFlightRef = useRef(false);
   const queuedRealtimeRefreshRef = useRef(false);
@@ -547,6 +554,8 @@ function App() {
   const getActiveTabStorageKey = (userId) => `${ACTIVE_TAB_STORAGE_KEY}_${userId}`;
   const getQuickTrayStorageKey = (userId) => `${QUICK_TRAY_OPEN_STORAGE_KEY}_${userId || 'anon'}`;
   const getQuickLookupHistoryStorageKey = (userId) => `${QUICK_LOOKUP_HISTORY_STORAGE_KEY}_${userId || 'anon'}`;
+  const getQuickPanelPositionStorageKey = (userId) => `fact_quick_panel_pos_${userId || 'anon'}`;
+  const getPromoPanelPositionStorageKey = (userId) => `fact_promo_panel_pos_${userId || 'anon'}`;
   const getProductsCacheStorageKey = (userId) => `${PRODUCTS_CACHE_STORAGE_KEY}_${userId || 'anon'}`;
   const getClientsCacheStorageKey = (userId) => `${CLIENTS_CACHE_STORAGE_KEY}_${userId || 'anon'}`;
   const MAX_OPEN_SHIFT_HOURS = 24;
@@ -663,6 +672,32 @@ function App() {
     }
   };
 
+  const restoreFloatingPanelPosition = (userId, type) => {
+    const storageKey = type === 'quick'
+      ? getQuickPanelPositionStorageKey(userId)
+      : getPromoPanelPositionStorageKey(userId);
+    try {
+      const raw = localStorage.getItem(storageKey);
+      if (!raw) {
+        if (type === 'quick') setQuickPanelPosition(null);
+        else setPromoPanelPosition(null);
+        return;
+      }
+
+      const parsed = JSON.parse(raw);
+      const normalized = {
+        x: Number(parsed?.x || 0),
+        y: Number(parsed?.y || 0),
+      };
+      if (!Number.isFinite(normalized.x) || !Number.isFinite(normalized.y)) return;
+
+      if (type === 'quick') setQuickPanelPosition(normalized);
+      else setPromoPanelPosition(normalized);
+    } catch (e) {
+      console.error(`Error restaurando posicion panel ${type}:`, e);
+    }
+  };
+
   const restoreCloudCache = (userId) => {
     try {
       const rawProducts = localStorage.getItem(getProductsCacheStorageKey(userId));
@@ -729,6 +764,8 @@ function App() {
       restoreActiveTab(user.id);
       restoreQuickTrayState(user.id);
       restoreQuickLookupHistory(user.id);
+      restoreFloatingPanelPosition(user.id, 'quick');
+      restoreFloatingPanelPosition(user.id, 'promo');
       restoreCloudCache(user.id);
     } catch (err) {
       console.error('Error loading profile:', err);
@@ -745,6 +782,8 @@ function App() {
       restoreActiveTab(user.id);
       restoreQuickTrayState(user.id);
       restoreQuickLookupHistory(user.id);
+      restoreFloatingPanelPosition(user.id, 'quick');
+      restoreFloatingPanelPosition(user.id, 'promo');
       restoreCloudCache(user.id);
     }
   };
@@ -1040,6 +1079,16 @@ function App() {
   }, [quickLookupHistory, currentUser?.id]);
 
   useEffect(() => {
+    if (!currentUser?.id || !quickPanelPosition) return;
+    localStorage.setItem(getQuickPanelPositionStorageKey(currentUser.id), JSON.stringify(quickPanelPosition));
+  }, [quickPanelPosition, currentUser?.id]);
+
+  useEffect(() => {
+    if (!currentUser?.id || !promoPanelPosition) return;
+    localStorage.setItem(getPromoPanelPositionStorageKey(currentUser.id), JSON.stringify(promoPanelPosition));
+  }, [promoPanelPosition, currentUser?.id]);
+
+  useEffect(() => {
     if (!currentUser?.id) return;
     localStorage.setItem(getProductsCacheStorageKey(currentUser.id), JSON.stringify(dedupeProducts(products || [])));
   }, [products, currentUser?.id]);
@@ -1056,6 +1105,51 @@ function App() {
   useEffect(() => {
     localStorage.setItem(INVOICE_DRAFTS_STORAGE_KEY, JSON.stringify((invoiceDrafts || []).slice(0, 120)));
   }, [invoiceDrafts]);
+
+  useEffect(() => {
+    const syncViewportMode = () => {
+      setHomePanelsMovable(window.innerWidth > 768);
+    };
+
+    syncViewportMode();
+    window.addEventListener('resize', syncViewportMode);
+    return () => window.removeEventListener('resize', syncViewportMode);
+  }, []);
+
+  useEffect(() => {
+    const handlePointerMove = (event) => {
+      const drag = homePanelDragRef.current;
+      if (!drag) return;
+
+      const container = homeDashboardRef.current;
+      const rect = container?.getBoundingClientRect();
+      if (!rect) return;
+
+      const panelSize = drag.type === 'quick'
+        ? { width: quickTrayOpen ? 360 : 76, height: quickTrayOpen ? 320 : 120 }
+        : { width: 390, height: 240 };
+
+      const next = {
+        x: Math.min(Math.max(12, event.clientX - rect.left - drag.offsetX), Math.max(12, rect.width - panelSize.width - 12)),
+        y: Math.min(Math.max(12, event.clientY - rect.top - drag.offsetY), Math.max(12, rect.height - panelSize.height - 12)),
+      };
+
+      if (drag.type === 'quick') setQuickPanelPosition(next);
+      else setPromoPanelPosition(next);
+    };
+
+    const handlePointerUp = () => {
+      homePanelDragRef.current = null;
+      document.body.style.userSelect = '';
+    };
+
+    window.addEventListener('mousemove', handlePointerMove);
+    window.addEventListener('mouseup', handlePointerUp);
+    return () => {
+      window.removeEventListener('mousemove', handlePointerMove);
+      window.removeEventListener('mouseup', handlePointerUp);
+    };
+  }, [quickTrayOpen]);
 
   useEffect(() => {
     localStorage.setItem(NOTIFICATIONS_SEEN_AT_STORAGE_KEY, String(Number(notificationsSeenAt || 0)));
@@ -2547,6 +2641,48 @@ function App() {
     setQuickScanCode('');
   };
 
+  const getDefaultFloatingPanelPosition = (type) => {
+    const container = homeDashboardRef.current;
+    const containerWidth = Number(container?.clientWidth || (typeof window !== 'undefined' ? window.innerWidth : 1280));
+    const containerHeight = Number(container?.clientHeight || (typeof window !== 'undefined' ? window.innerHeight : 720));
+
+    if (type === 'quick') {
+      return { x: Math.max(18, containerWidth - 350), y: 18 };
+    }
+
+    return { x: 22, y: Math.max(22, containerHeight - 250) };
+  };
+
+  const getFloatingPanelStyle = (type) => {
+    if (!homePanelsMovable) return undefined;
+    const position = type === 'quick'
+      ? (quickPanelPosition || getDefaultFloatingPanelPosition('quick'))
+      : (promoPanelPosition || getDefaultFloatingPanelPosition('promo'));
+
+    return {
+      left: `${Number(position.x || 0)}px`,
+      top: `${Number(position.y || 0)}px`,
+      right: 'auto',
+      bottom: 'auto',
+    };
+  };
+
+  const startFloatingPanelDrag = (type, event) => {
+    if (!homePanelsMovable || event.button !== 0) return;
+
+    const panelElement = event.currentTarget.closest('[data-floating-panel]');
+    const container = homeDashboardRef.current;
+    if (!panelElement || !container) return;
+
+    const panelRect = panelElement.getBoundingClientRect();
+    homePanelDragRef.current = {
+      type,
+      offsetX: event.clientX - panelRect.left,
+      offsetY: event.clientY - panelRect.top,
+    };
+    document.body.style.userSelect = 'none';
+  };
+
   const renderHome = () => {
     const menuItems = [
       { id: 'facturacion', label: 'Facturacion', icon: '\uD83E\uDDFE', tab: 'facturacion' },
@@ -2591,8 +2727,12 @@ function App() {
     const radius = 255;
 
     return (
-      <div className="radial-container">
-        <div className={`quick-price-wrapper ${quickTrayOpen ? 'open' : 'closed'}`}>
+      <div className="radial-container" ref={homeDashboardRef}>
+        <div
+          data-floating-panel="quick"
+          className={`quick-price-wrapper ${quickTrayOpen ? 'open' : 'closed'} ${homePanelsMovable ? 'movable' : ''}`}
+          style={getFloatingPanelStyle('quick')}
+        >
           <button
             type="button"
             className="quick-price-tab"
@@ -2602,7 +2742,19 @@ function App() {
             {quickTrayOpen ? 'Ocultar' : 'Consulta'}
           </button>
           <aside className="quick-price-tray">
-          <h3>Consulta Rapida</h3>
+          <div className="floating-panel-head">
+            <h3>Consulta Rapida</h3>
+            {homePanelsMovable && (
+              <button
+                type="button"
+                className="floating-panel-handle"
+                onMouseDown={(event) => startFloatingPanelDrag('quick', event)}
+                title="Mover consulta rapida"
+              >
+                Mover
+              </button>
+            )}
+          </div>
           <p>Escanea el codigo y presiona Enter.</p>
 
           <form
@@ -2677,7 +2829,24 @@ function App() {
           </div>
         </div>
 
-        <aside className="promo-card promo-lubricante">
+        <aside
+          data-floating-panel="promo"
+          className={`promo-card promo-lubricante ${homePanelsMovable ? 'movable' : ''}`}
+          style={getFloatingPanelStyle('promo')}
+        >
+          {homePanelsMovable && (
+            <div className="floating-panel-head promo-panel-head">
+              <span className="promo-panel-title">Publicidad</span>
+              <button
+                type="button"
+                className="floating-panel-handle"
+                onMouseDown={(event) => startFloatingPanelDrag('promo', event)}
+                title="Mover publicidad"
+              >
+                Mover
+              </button>
+            </div>
+          )}
           <div className="promo-content">
             <div className="promo-text">
               <div className="promo-badge">Nuevo producto</div>
