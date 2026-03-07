@@ -29,12 +29,14 @@ body {
 .radial-container {
   position: relative;
   width: 100%;
-  height: calc(100vh - 120px);
+  min-height: calc(100vh - 120px);
+  height: auto;
   display: flex;
   justify-content: center;
   align-items: center;
-  overflow: hidden;
+  overflow: visible;
   background: transparent;
+  padding-bottom: 120px;
 }
 
 .center-cash-widget {

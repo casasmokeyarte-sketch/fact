@@ -556,6 +556,7 @@ function App() {
   const getQuickLookupHistoryStorageKey = (userId) => `${QUICK_LOOKUP_HISTORY_STORAGE_KEY}_${userId || 'anon'}`;
   const getQuickPanelPositionStorageKey = (userId) => `fact_quick_panel_pos_${userId || 'anon'}`;
   const getPromoPanelPositionStorageKey = (userId) => `fact_promo_panel_pos_${userId || 'anon'}`;
+  const getOpenShiftStorageKey = (userId) => `${OPEN_SHIFT_STORAGE_KEY}_${userId || 'anon'}`;
   const getProductsCacheStorageKey = (userId) => `${PRODUCTS_CACHE_STORAGE_KEY}_${userId || 'anon'}`;
   const getClientsCacheStorageKey = (userId) => `${CLIENTS_CACHE_STORAGE_KEY}_${userId || 'anon'}`;
   const MAX_OPEN_SHIFT_HOURS = 24;
@@ -563,6 +564,7 @@ function App() {
 
   const saveOpenShift = (userId, openShift) => {
     if (!userId || !openShift) return;
+    localStorage.setItem(getOpenShiftStorageKey(userId), JSON.stringify(openShift));
     localStorage.setItem(
       OPEN_SHIFT_STORAGE_KEY,
       JSON.stringify({
@@ -572,7 +574,10 @@ function App() {
     );
   };
 
-  const clearOpenShift = () => {
+  const clearOpenShift = (userId = currentUser?.id) => {
+    if (userId) {
+      localStorage.removeItem(getOpenShiftStorageKey(userId));
+    }
     localStorage.removeItem(OPEN_SHIFT_STORAGE_KEY);
   };
 
@@ -602,6 +607,19 @@ function App() {
 
   const restoreOpenShift = async (userId) => {
     try {
+      const perUserRaw = localStorage.getItem(getOpenShiftStorageKey(userId));
+      if (perUserRaw) {
+        const localShift = hydrateOpenShift(JSON.parse(perUserRaw));
+        const { isValidStart, isStaleOpenShift } = isValidOpenShift(localShift);
+
+        if (isValidStart && !isStaleOpenShift) {
+          setShift(localShift);
+          return;
+        }
+
+        localStorage.removeItem(getOpenShiftStorageKey(userId));
+      }
+
       const raw = localStorage.getItem(OPEN_SHIFT_STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
@@ -614,7 +632,7 @@ function App() {
             return;
           }
 
-          clearOpenShift();
+          clearOpenShift(userId);
           if (isStaleOpenShift) {
             console.warn(`Jornada abierta local descartada por antiguedad (${MAX_OPEN_SHIFT_HOURS}h max).`);
           }
@@ -883,6 +901,7 @@ function App() {
       ]);
 
       const safeProducts = dedupeProducts(dbProducts || []);
+      const safeClients = dedupeClients(dbClients || []);
       if (!pendingProductsSyncRef.current) {
         setProducts((prev) => {
           // Guard against transient empty refreshes that can wipe local state.
@@ -933,7 +952,14 @@ function App() {
       }));
 
       if (!pendingClientsSyncRef.current) {
-        setRegisteredClients(dedupeClients(dbClients || []));
+        setRegisteredClients((prev) => {
+          const hasOtherCloudData = safeProducts.length > 0 || (dbSales || []).length > 0 || (dbLogs || []).length > 0 || (dbShiftHistory || []).length > 0;
+          if (safeClients.length === 0 && (prev || []).length > 0 && hasOtherCloudData) {
+            console.warn('Refresh de clientes devolvio vacio; se conserva cache local para evitar perdida visual.');
+            return prev;
+          }
+          return safeClients;
+        });
       }
       setSalesHistory(enrichedSales);
       setExpenses(enrichedExpenses);
