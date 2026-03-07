@@ -43,6 +43,7 @@ export function PaymentSummary({
   onCreateRemoteAuthRequest,
   remoteAuthDecisionByRequestId = {},
   remoteAuthRequestById = {},
+  buildApprovalAttachments,
   onSaveDraft,
   onFacturarCero
 }) {
@@ -192,12 +193,26 @@ export function PaymentSummary({
         try {
           setIsRequestingRemoteAuth(true);
           const requestId = await onCreateRemoteAuthRequest({
+            module: 'Facturacion',
+            requestCategory: 'AUTHORIZATION',
             reasonType,
             reasonLabel,
             note: String(authNote || '').trim(),
             clientName,
             total: Number(total || 0),
             paymentMode: isMixed ? `Mixto (${mixedModeA} + ${mixedModeB})` : paymentMode,
+            attachments: buildApprovalAttachments?.({
+              title: 'Solicitud factura',
+              requester: currentUser?.name || currentUser?.email || 'Usuario',
+              reasonLabel,
+              total,
+              paymentMode: isMixed ? `Mixto (${mixedModeA} + ${mixedModeB})` : paymentMode,
+              items,
+              extraLines: [
+                Number(extraDiscount || 0) > 0 ? `Descuento extra: $${Number(extraDiscount || 0).toLocaleString()}` : null,
+                String(authNote || '').trim() ? `Nota: ${String(authNote || '').trim()}` : null,
+              ].filter(Boolean),
+            }) || [],
           });
           if (requestId) {
             setActiveRemoteRequestId(requestId);

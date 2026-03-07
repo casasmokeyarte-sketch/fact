@@ -1,42 +1,59 @@
 import React, { useState } from 'react';
 import { COMPANY_INFO } from '../constants';
 
-export function GastosModule({ expenses, setExpenses, onLog, setActiveTab }) {
+export function GastosModule({
+    expenses,
+    setExpenses,
+    onLog,
+    setActiveTab,
+    currentUser,
+    userCashBalance = 0,
+    onRegisterExpense,
+}) {
     const [form, setForm] = useState({ type: 'Oficina', amount: '', description: '', beneficiary: '', docId: '' });
     const [selectedReceipt, setSelectedReceipt] = useState(null);
 
-    const handleAddExpense = (e) => {
+    const handleAddExpense = async (e) => {
         e.preventDefault();
-        if (!form.amount || !form.description) return alert("Complete los campos de Monto y Descripción.");
+        if (!form.amount || !form.description) return alert('Complete los campos de monto y descripcion.');
+
+        const amount = Number(form.amount);
+        if (!Number.isFinite(amount) || amount <= 0) return alert('Ingrese un monto valido.');
+        if (amount > Number(userCashBalance || 0)) {
+            return alert(`Saldo insuficiente en caja. Disponible: $${Number(userCashBalance || 0).toLocaleString()}`);
+        }
 
         const newExpense = {
             id: Date.now(),
             ...form,
-            amount: Number(form.amount),
-            date: new Date().toISOString()
+            amount,
+            date: new Date().toISOString(),
+            user_id: currentUser?.id || null,
+            user_name: currentUser?.name || currentUser?.email || 'Sistema',
         };
 
+        await onRegisterExpense?.(newExpense);
         setExpenses([newExpense, ...expenses]);
         onLog?.({
             module: 'Gastos',
             action: 'Nuevo Gasto',
-            details: `${form.type}: $${form.amount} - ${form.description}${form.beneficiary ? ` (A: ${form.beneficiary})` : ''}`
+            details: `${form.type}: $${amount} - ${form.description}${form.beneficiary ? ` (A: ${form.beneficiary})` : ''} | Caja usuario: ${currentUser?.name || currentUser?.email || 'Sistema'}`,
         });
 
-        if (window.confirm("ADesea imprimir el recibo de caja ahora?")) {
+        if (window.confirm('Desea imprimir el recibo de caja ahora?')) {
             setSelectedReceipt(newExpense);
         }
 
         setForm({ type: 'Oficina', amount: '', description: '', beneficiary: '', docId: '' });
-        alert("Gasto registrado con Axito.");
+        alert('Gasto registrado con exito.');
     };
 
-    const handlePrintSelected = (g) => {
-        setSelectedReceipt(g);
+    const handlePrintSelected = (expense) => {
+        setSelectedReceipt(expense);
         setTimeout(() => window.print(), 100);
     };
 
-    const totalExpenses = expenses.reduce((sum, g) => sum + g.amount, 0);
+    const totalExpenses = expenses.reduce((sum, item) => sum + Number(item.amount || 0), 0);
 
     if (selectedReceipt) {
         return (
@@ -49,8 +66,8 @@ export function GastosModule({ expenses, setExpenses, onLog, setActiveTab }) {
                     }
                 `}</style>
                 <div className="no-print" style={{ marginBottom: '2rem' }}>
-                    <button className="btn" onClick={() => setSelectedReceipt(null)}>{'\u2B05'} Volver al Modulo</button>
-                    <button className="btn btn-primary" onClick={() => window.print()} style={{ marginLeft: '1rem' }}>{'\uD83D\uDDA8\uFE0F'} Imprimir Recibo</button>
+                    <button className="btn" onClick={() => setSelectedReceipt(null)}>{'\u2B05'} Volver al modulo</button>
+                    <button className="btn btn-primary" onClick={() => window.print()} style={{ marginLeft: '1rem' }}>{'\uD83D\uDDA8\uFE0F'} Imprimir recibo</button>
                 </div>
 
                 <div className="printable-receipt card" style={{ maxWidth: '800px', margin: '0 auto', padding: '3rem', border: '2px solid #333' }}>
@@ -75,7 +92,7 @@ export function GastosModule({ expenses, setExpenses, onLog, setActiveTab }) {
                         </div>
                         <div style={{ textAlign: 'right' }}>
                             <div style={{ fontSize: '1.5rem', fontWeight: 'bold', border: '2px solid #333', padding: '0.5rem', display: 'inline-block' }}>
-                                VALOR: ${selectedReceipt.amount.toLocaleString()}
+                                VALOR: ${Number(selectedReceipt.amount || 0).toLocaleString()}
                             </div>
                         </div>
                     </div>
@@ -83,7 +100,7 @@ export function GastosModule({ expenses, setExpenses, onLog, setActiveTab }) {
                     <div style={{ marginBottom: '3rem', minHeight: '100px', border: '1px solid #ccc', padding: '1rem' }}>
                         <p><strong>CONCEPTO DE:</strong></p>
                         <p>{selectedReceipt.description}</p>
-                        <p style={{ marginTop: '1rem', color: '#666', fontSize: '0.9rem' }}>Categorias: {selectedReceipt.type}</p>
+                        <p style={{ marginTop: '1rem', color: '#666', fontSize: '0.9rem' }}>Categoria: {selectedReceipt.type}</p>
                     </div>
 
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4rem', marginTop: '5rem' }}>
@@ -93,7 +110,7 @@ export function GastosModule({ expenses, setExpenses, onLog, setActiveTab }) {
                         </div>
                         <div style={{ borderTop: '1px solid #333', textAlign: 'center', paddingTop: '0.5rem' }}>
                             <p style={{ margin: 0, fontWeight: 'bold' }}>AUTORIZADO POR</p>
-                            <p style={{ margin: 0, fontSize: '0.8rem' }}>Sello de la Empresa</p>
+                            <p style={{ margin: 0, fontSize: '0.8rem' }}>Sello de la empresa</p>
                         </div>
                     </div>
                 </div>
@@ -104,75 +121,52 @@ export function GastosModule({ expenses, setExpenses, onLog, setActiveTab }) {
     return (
         <div className="gastos-module">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <h2>Modulo de Gastos e Inversiòn n</h2>
-                <button className="btn" onClick={() => setActiveTab('home')}>{'\uD83C\uDFE0'} Regresar</button>
+                <h2>Modulo de Gastos e Inversion</h2>
+                <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                    <span className="badge" style={{ backgroundColor: '#dcfce7', color: '#166534' }}>
+                        Caja disponible: ${Number(userCashBalance || 0).toLocaleString()}
+                    </span>
+                    <button className="btn" onClick={() => setActiveTab('home')}>{'\uD83C\uDFE0'} Regresar</button>
+                </div>
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '2rem' }}>
                 <div className="card">
-                    <h3>Registrar Gasto</h3>
+                    <h3>Registrar gasto</h3>
                     <form onSubmit={handleAddExpense}>
                         <div className="input-group">
-                            <label className="input-label">Tipo de Gasto</label>
-                            <select
-                                className="input-field"
-                                value={form.type}
-                                onChange={e => setForm({ ...form, type: e.target.value })}
-                            >
+                            <label className="input-label">Tipo de gasto</label>
+                            <select className="input-field" value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}>
                                 <option value="Oficina">Oficina / Insumos</option>
-                                <option value="Inversiòn n">Inversiòn n / Activos</option>
-                                <option value="Servicios">Servicios PAblicos</option>
-                                <option value="Personal">Pago Personal / NAmina</option>
+                                <option value="Inversion">Inversion / Activos</option>
+                                <option value="Servicios">Servicios publicos</option>
+                                <option value="Personal">Pago personal / Nomina</option>
                                 <option value="Otros">Otros</option>
                             </select>
                         </div>
                         <div className="input-group">
-                            <label className="input-label">Beneficiario (Nombre)</label>
-                            <input
-                                type="text"
-                                className="input-field"
-                                value={form.beneficiary}
-                                onChange={e => setForm({ ...form, beneficiary: e.target.value })}
-                                placeholder="A quiAn se le paga..."
-                            />
+                            <label className="input-label">Beneficiario</label>
+                            <input type="text" className="input-field" value={form.beneficiary} onChange={(e) => setForm({ ...form, beneficiary: e.target.value })} placeholder="A quien se le paga" />
                         </div>
                         <div className="input-group">
-                            <label className="input-label">IdentificaciAn / NIT</label>
-                            <input
-                                type="text"
-                                className="input-field"
-                                value={form.docId}
-                                onChange={e => setForm({ ...form, docId: e.target.value })}
-                                placeholder="C.C. o NIT del beneficiario"
-                            />
+                            <label className="input-label">Identificacion / NIT</label>
+                            <input type="text" className="input-field" value={form.docId} onChange={(e) => setForm({ ...form, docId: e.target.value })} placeholder="C.C. o NIT del beneficiario" />
                         </div>
                         <div className="input-group">
                             <label className="input-label">Monto ($)</label>
-                            <input
-                                type="number"
-                                className="input-field"
-                                value={form.amount}
-                                onChange={e => setForm({ ...form, amount: e.target.value })}
-                                placeholder="0.00"
-                            />
+                            <input type="number" className="input-field" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} placeholder="0" />
                         </div>
                         <div className="input-group">
-                            <label className="input-label">Descripciòn</label>
-                            <textarea
-                                className="input-field"
-                                style={{ height: '60px' }}
-                                value={form.description}
-                                onChange={e => setForm({ ...form, description: e.target.value })}
-                                placeholder="Detalle del gasto..."
-                            />
+                            <label className="input-label">Descripcion</label>
+                            <textarea className="input-field" style={{ height: '60px' }} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Detalle del gasto" />
                         </div>
-                        <button type="submit" className="btn btn-primary" style={{ width: '100%' }}>Guardar Gasto</button>
+                        <button type="submit" className="btn btn-primary" style={{ width: '100%' }}>Guardar gasto</button>
                     </form>
                 </div>
 
                 <div className="card">
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                        <h3>Historial Reciente</h3>
+                        <h3>Historial reciente</h3>
                         <div style={{ fontSize: '1.2rem', fontWeight: 'bold' }}>
                             Total: <span style={{ color: '#e11d48' }}>${totalExpenses.toLocaleString()}</span>
                         </div>
@@ -185,26 +179,26 @@ export function GastosModule({ expenses, setExpenses, onLog, setActiveTab }) {
                                     <th style={{ textAlign: 'left', padding: '0.75rem' }}>Fecha</th>
                                     <th style={{ textAlign: 'left', padding: '0.75rem' }}>Beneficiario</th>
                                     <th style={{ textAlign: 'right', padding: '0.75rem' }}>Monto</th>
-                                    <th style={{ textAlign: 'center', padding: '0.75rem' }}>AcciAn</th>
+                                    <th style={{ textAlign: 'center', padding: '0.75rem' }}>Accion</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {expenses.length === 0 ? (
                                     <tr><td colSpan="4" style={{ textAlign: 'center', padding: '2rem', color: '#64748b' }}>No hay gastos registrados</td></tr>
                                 ) : (
-                                    expenses.map(g => (
-                                        <tr key={g.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                    expenses.map((expense) => (
+                                        <tr key={expense.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
                                             <td style={{ padding: '0.75rem', fontSize: '0.85rem' }}>
-                                                {new Date(g.date).toLocaleDateString()}
-                                                <div style={{ fontSize: '0.75rem', color: '#64748b' }}>{g.type}</div>
+                                                {new Date(expense.date).toLocaleDateString()}
+                                                <div style={{ fontSize: '0.75rem', color: '#64748b' }}>{expense.type}</div>
                                             </td>
                                             <td style={{ padding: '0.75rem' }}>
-                                                <strong>{g.beneficiary || 'Sin beneficiario'}</strong>
-                                                <div style={{ fontSize: '0.75rem', color: '#64748b' }}>{g.description.slice(0, 30)}...</div>
+                                                <strong>{expense.beneficiary || 'Sin beneficiario'}</strong>
+                                                <div style={{ fontSize: '0.75rem', color: '#64748b' }}>{String(expense.description || '').slice(0, 30)}...</div>
                                             </td>
-                                            <td style={{ padding: '0.75rem', textAlign: 'right', fontWeight: '600' }}>${g.amount.toLocaleString()}</td>
+                                            <td style={{ padding: '0.75rem', textAlign: 'right', fontWeight: '600' }}>${Number(expense.amount || 0).toLocaleString()}</td>
                                             <td style={{ padding: '0.75rem', textAlign: 'center' }}>
-                                                <button className="btn" onClick={() => handlePrintSelected(g)} title="Imprimir Recibo">{'\uD83D\uDDA8\uFE0F'}</button>
+                                                <button className="btn" onClick={() => handlePrintSelected(expense)} title="Imprimir recibo">{'\uD83D\uDDA8\uFE0F'}</button>
                                             </td>
                                         </tr>
                                     ))

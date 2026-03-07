@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 
-export function InventoryModule({ currentUser, products, setProducts, onDeleteProduct, onAcceptFromBodega, onAdjustStock, stock, setStock, categories, onLog, setActiveTab, setPreselectedProductId }) {
+export function InventoryModule({ currentUser, products, setProducts, onDeleteProduct, onCreateInventoryRequest, pendingInventoryRequests = [], onAdjustStock, stock, categories, onLog, setActiveTab, setPreselectedProductId }) {
     const [view, setView] = useState('list'); // 'list', 'edit', 'count'
     const [editingProduct, setEditingProduct] = useState(null);
     const [physicalCounts, setPhysicalCounts] = useState({});
@@ -309,7 +309,19 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
         setView('list');
     };
 
-    const handleAcceptFromBodega = async (product) => {
+    const pendingRequestByProductId = useMemo(() => {
+        const ownUserId = String(currentUser?.id || '');
+        return (pendingInventoryRequests || []).reduce((acc, request) => {
+            if (String(request?.requestedBy?.id || '') !== ownUserId) return acc;
+            if (String(request?.module || '') !== 'Inventario') return acc;
+            if (String(request?.status || '') !== 'PENDING') return acc;
+            const productId = String(request?.inventoryRequest?.productId || '');
+            if (productId) acc[productId] = request;
+            return acc;
+        }, {});
+    }, [pendingInventoryRequests, currentUser?.id]);
+
+    const handleRequestFromBodega = async (product) => {
         const quantity = Number(acceptQuantities[product.id] || 0);
         if (quantity <= 0 || Number.isNaN(quantity)) {
             return alert('Ingrese una cantidad valida');
@@ -321,18 +333,18 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
         }
 
         try {
-            if (typeof onAcceptFromBodega === 'function') {
-                await onAcceptFromBodega(product.id, quantity);
+            if (typeof onCreateInventoryRequest === 'function') {
+                await onCreateInventoryRequest(product, quantity);
             }
             onLog?.({
                 module: 'Inventario',
-                action: 'Aceptar desde Boveda',
-                details: `${currentUser?.name || currentUser?.email || 'Cajero'} recibio ${quantity} unidades de ${product.name}`
+                action: 'Solicitud inventario',
+                details: `${currentUser?.name || currentUser?.email || 'Usuario'} solicito ${quantity} unidades de ${product.name} desde bodega`
             });
             setAcceptQuantities((prev) => ({ ...prev, [product.id]: 0 }));
         } catch (err) {
             const message = err?.message || 'Error desconocido';
-            alert(`No se pudo aceptar inventario desde bodega.\n\nDetalle: ${message}`);
+            alert(`No se pudo crear la solicitud de inventario.\n\nDetalle: ${message}`);
         }
     };
 
@@ -625,20 +637,38 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
                                             </div>
                                         )}
                                         {isCajero && !canEdit && !canDelete && (
-                                            <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center', marginLeft: '5px' }}>
-                                                <input
-                                                    type="number"
-                                                    min="0"
-                                                    className="input-field"
-                                                    style={{ width: '80px', padding: '0.25rem 0.35rem' }}
-                                                    value={acceptQuantities[p.id] || ''}
-                                                    onChange={(e) => setAcceptQuantities((prev) => ({ ...prev, [p.id]: e.target.value }))}
-                                                    placeholder="Cant."
-                                                />
-                                                <button className="btn btn-primary" onClick={() => handleAcceptFromBodega(p)} title="Aceptar desde bodega">
-                                                    Aceptar
-                                                </button>
-                                            </div>
+                                            (() => {
+                                                const pendingRequest = pendingRequestByProductId[p.id];
+                                                return (
+                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', alignItems: 'flex-start', marginLeft: '5px' }}>
+                                                        <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
+                                                            <input
+                                                                type="number"
+                                                                min="0"
+                                                                className="input-field"
+                                                                style={{ width: '80px', padding: '0.25rem 0.35rem' }}
+                                                                value={acceptQuantities[p.id] || ''}
+                                                                onChange={(e) => setAcceptQuantities((prev) => ({ ...prev, [p.id]: e.target.value }))}
+                                                                placeholder="Cant."
+                                                                disabled={!!pendingRequest}
+                                                            />
+                                                            <button
+                                                                className="btn btn-primary"
+                                                                onClick={() => handleRequestFromBodega(p)}
+                                                                title="Solicitar inventario"
+                                                                disabled={!!pendingRequest}
+                                                            >
+                                                                Solicitar
+                                                            </button>
+                                                        </div>
+                                                        {pendingRequest && (
+                                                            <span className="badge" style={{ backgroundColor: '#fff7ed', color: '#9a3412' }}>
+                                                                Pendiente: {Number(pendingRequest?.inventoryRequest?.quantity || 0)}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })()
                                         )}
                                     </td>
                                 </tr>

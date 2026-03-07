@@ -267,6 +267,73 @@ const parseAuthRequestLogEvent = (details) => {
   }
 };
 
+const escapeXml = (value) => String(value || '')
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&apos;');
+
+const createRequestPreviewAttachment = ({
+  title = 'Solicitud',
+  lines = [],
+  tone = '#0f172a',
+  accent = '#2563eb',
+}) => {
+  const safeLines = (lines || []).slice(0, 7).map((line) => escapeXml(line));
+  const lineMarkup = safeLines
+    .map((line, index) => `<text x="32" y="${108 + (index * 38)}" font-size="24" fill="${tone}" font-family="Segoe UI, Arial, sans-serif">${line}</text>`)
+    .join('');
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="900" height="520" viewBox="0 0 900 520">
+      <rect width="900" height="520" rx="26" fill="#f8fafc"/>
+      <rect x="20" y="20" width="860" height="480" rx="22" fill="#ffffff" stroke="#e2e8f0" stroke-width="2"/>
+      <rect x="32" y="32" width="280" height="44" rx="12" fill="${accent}" opacity="0.12"/>
+      <text x="48" y="61" font-size="26" font-weight="700" fill="${accent}" font-family="Segoe UI, Arial, sans-serif">${escapeXml(title)}</text>
+      <line x1="32" y1="92" x2="868" y2="92" stroke="#cbd5e1" stroke-width="2"/>
+      ${lineMarkup}
+    </svg>
+  `.trim();
+
+  return {
+    id: `att-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    name: `${title.toLowerCase().replace(/\s+/g, '-')}.svg`,
+    type: 'image/svg+xml',
+    dataUrl: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
+  };
+};
+
+const buildApprovalPreviewAttachments = ({
+  title,
+  requester,
+  reasonLabel,
+  total,
+  paymentMode,
+  items = [],
+  extraLines = [],
+}) => {
+  const previewItems = (items || []).slice(0, 3).map((item) => {
+    const qty = Number(item?.quantity || 0);
+    const name = String(item?.name || 'Producto');
+    return `${qty} x ${name}`;
+  });
+
+  return [
+    createRequestPreviewAttachment({
+      title,
+      accent: '#ea580c',
+      lines: [
+        `Usuario: ${requester || 'N/A'}`,
+        reasonLabel ? `Motivo: ${reasonLabel}` : null,
+        Number(total || 0) > 0 ? `Total: $${Number(total || 0).toLocaleString('es-CO')}` : null,
+        paymentMode ? `Pago: ${paymentMode}` : null,
+        ...previewItems,
+        ...extraLines,
+      ].filter(Boolean),
+    }),
+  ];
+};
+
 const buildRemoteAuthRequestsFromLogs = (logs) => {
   const byId = new Map();
   const ordered = [...(logs || [])].sort((a, b) => {
@@ -288,12 +355,16 @@ const buildRemoteAuthRequestsFromLogs = (logs) => {
         status: existing?.status || 'PENDING',
         createdAt: event.createdAt || log?.timestamp || new Date().toISOString(),
         requestedBy: event.requestedBy || existing?.requestedBy || null,
+        module: event.module || existing?.module || 'Facturacion',
+        requestCategory: event.requestCategory || existing?.requestCategory || 'AUTHORIZATION',
         reasonType: event.reasonType || existing?.reasonType || '',
         reasonLabel: event.reasonLabel || existing?.reasonLabel || '',
         note: event.note || existing?.note || '',
         clientName: event.clientName || existing?.clientName || '',
         total: Number(event.total ?? existing?.total ?? 0),
         paymentMode: event.paymentMode || existing?.paymentMode || '',
+        attachments: Array.isArray(event.attachments) ? event.attachments : (existing?.attachments || []),
+        inventoryRequest: event.inventoryRequest || existing?.inventoryRequest || null,
       });
       return;
     }
@@ -1166,6 +1237,8 @@ function App() {
         name: currentUser?.name || currentUser?.email || 'Usuario',
         role: normalizeRole(currentUser?.role)
       },
+      module: payload?.module || 'Facturacion',
+      requestCategory: payload?.requestCategory || 'AUTHORIZATION',
       ...payload
     };
 
@@ -1178,12 +1251,16 @@ function App() {
         requestId,
         createdAt: requestRecord.createdAt,
         requestedBy: requestRecord.requestedBy,
+        module: requestRecord.module,
+        requestCategory: requestRecord.requestCategory,
         reasonType: requestRecord.reasonType,
         reasonLabel: requestRecord.reasonLabel,
         note: requestRecord.note || '',
         clientName: requestRecord.clientName || '',
         total: Number(requestRecord.total || 0),
-        paymentMode: requestRecord.paymentMode || ''
+        paymentMode: requestRecord.paymentMode || '',
+        attachments: Array.isArray(requestRecord.attachments) ? requestRecord.attachments : [],
+        inventoryRequest: requestRecord.inventoryRequest || null,
       })}`
     });
 
@@ -1192,11 +1269,48 @@ function App() {
 
   const onResolveRemoteAuthRequest = (requestId, decision) => {
     if (!requestId || !['APPROVED', 'REJECTED'].includes(decision)) return;
+    const targetRequest = (remoteAuthRequests || []).find((req) => req.id === requestId);
     const resolvedBy = {
       id: currentUser?.id || null,
       name: currentUser?.name || currentUser?.email || 'Usuario',
       role: normalizeRole(currentUser?.role)
     };
+
+    if (
+      decision === 'APPROVED' &&
+      targetRequest?.module === 'Inventario' &&
+      targetRequest?.inventoryRequest?.productId
+    ) {
+      const productId = targetRequest.inventoryRequest.productId;
+      const qty = Math.max(0, Number(targetRequest.inventoryRequest.quantity || 0));
+      const available = Number(stock?.bodega?.[productId] || 0);
+      if (qty <= 0 || available < qty) {
+        alert('No se puede aprobar la solicitud: el stock de bodega ya no es suficiente.');
+        return;
+      }
+
+      setStock((prev) => ({
+        ...prev,
+        bodega: {
+          ...prev.bodega,
+          [productId]: Math.max(0, Number(prev?.bodega?.[productId] || 0) - qty),
+        },
+        ventas: {
+          ...prev.ventas,
+          [productId]: Number(prev?.ventas?.[productId] || 0) + qty,
+        }
+      }));
+
+      const nextBodega = Math.max(0, available - qty);
+      const nextVentas = Number(stock?.ventas?.[productId] || 0) + qty;
+      Promise.all([
+        updateStockInDB('bodega', productId, nextBodega),
+        updateStockInDB('ventas', productId, nextVentas)
+      ]).catch((error) => {
+        console.error('Error aprobando solicitud de inventario:', error);
+        alert(`La solicitud se marco, pero no se pudo sincronizar inventario.\n\nDetalle: ${error?.message || 'Error desconocido'}`);
+      });
+    }
 
     setRemoteAuthRequests((prev) => prev.map((req) => {
       if (req.id !== requestId || req.status !== 'PENDING') return req;
@@ -1218,6 +1332,49 @@ function App() {
         resolvedAt: new Date().toISOString(),
         resolvedBy
       })}`
+    });
+  };
+
+  const onCreateInventoryRequest = async (product, quantity) => {
+    const qty = Math.max(0, Number(quantity) || 0);
+    if (!product?.id || qty <= 0) throw new Error('Solicitud invalida.');
+    const available = Number(stock?.bodega?.[product.id] || 0);
+    if (qty > available) throw new Error('Stock insuficiente en bodega.');
+
+    const existingPending = (remoteAuthRequests || []).find((request) => (
+      request?.status === 'PENDING' &&
+      request?.module === 'Inventario' &&
+      String(request?.requestedBy?.id || '') === String(currentUser?.id || '') &&
+      String(request?.inventoryRequest?.productId || '') === String(product.id)
+    ));
+    if (existingPending) throw new Error('Ya existe una solicitud pendiente para este producto.');
+
+    const attachments = buildApprovalPreviewAttachments({
+      title: 'Solicitud inventario',
+      requester: currentUser?.name || currentUser?.email || 'Usuario',
+      reasonLabel: `Pedido de ${product.name}`,
+      items: [{ name: product.name, quantity: qty }],
+      extraLines: [
+        `Bodega disponible: ${available}`,
+        `Cantidad solicitada: ${qty}`,
+      ],
+    });
+
+    return onCreateRemoteAuthRequest({
+      module: 'Inventario',
+      requestCategory: 'INVENTORY_TRANSFER',
+      reasonType: 'SOLICITUD_INVENTARIO',
+      reasonLabel: 'Solicitud de inventario',
+      note: `Solicitud de ${qty} unidades de ${product.name}`,
+      total: 0,
+      paymentMode: '',
+      attachments,
+      inventoryRequest: {
+        productId: product.id,
+        productName: product.name,
+        quantity: qty,
+        availableInBodega: available,
+      }
     });
   };
 
@@ -1379,7 +1536,8 @@ function App() {
         list.push({
           id: `auth-pending-${req.id}`,
           at: createdAt || Date.now(),
-          text: `Solicitud pendiente: ${req.reasonLabel || req.reasonType || 'Autorizacion'} (${req.requestedBy?.name || 'N/A'})`,
+          text: `Solicitud pendiente: ${req.module || 'General'} - ${req.reasonLabel || req.reasonType || 'Autorizacion'} (${req.requestedBy?.name || 'N/A'})`,
+          attachments: Array.isArray(req?.attachments) ? req.attachments : [],
         });
       }
       if (String(req?.requestedBy?.id || '') === String(ownUserId || '') && (req?.status === 'APPROVED' || req?.status === 'REJECTED')) {
@@ -1387,6 +1545,7 @@ function App() {
           id: `auth-resolved-${req.id}-${req.status}`,
           at: resolvedAt || createdAt || Date.now(),
           text: `Tu solicitud ${req.id} fue ${req.status === 'APPROVED' ? 'APROBADA' : 'RECHAZADA'}.`,
+          attachments: Array.isArray(req?.attachments) ? req.attachments : [],
         });
       }
     });
@@ -2620,6 +2779,17 @@ function App() {
                     <div key={n.id} style={{ border: '1px solid #e2e8f0', borderRadius: '8px', padding: '8px', marginBottom: '6px' }}>
                       <div style={{ fontSize: '0.88rem', color: '#0f172a' }}>{n.text}</div>
                       <div style={{ fontSize: '0.75rem', color: '#64748b' }}>{new Date(n.at).toLocaleString('es-CO')}</div>
+                      {Array.isArray(n.attachments) && n.attachments.length > 0 && (
+                        <div style={{ display: 'flex', gap: '6px', marginTop: '8px', flexWrap: 'wrap' }}>
+                          {n.attachments.slice(0, 2).map((file) => (
+                            String(file?.type || '').startsWith('image/') ? (
+                              <img key={file.id} src={file.dataUrl} alt={file.name} style={{ width: '100%', maxWidth: '180px', borderRadius: '8px', border: '1px solid #e2e8f0' }} />
+                            ) : (
+                              <a key={file.id} href={file.dataUrl} download={file.name} className="btn">{file.name}</a>
+                            )
+                          ))}
+                        </div>
+                      )}
                     </div>
                   ))}
 
@@ -2629,8 +2799,24 @@ function App() {
                       {pendingAuthRequestsForManager.map((req) => (
                         <div key={req.id} style={{ border: '1px solid #fed7aa', background: '#fff7ed', borderRadius: '8px', padding: '8px', marginBottom: '6px' }}>
                           <div style={{ fontSize: '0.84rem', marginBottom: '4px' }}>
-                            {req.reasonLabel || req.reasonType || 'Solicitud'} - {req.requestedBy?.name || 'N/A'} - ${Number(req.total || 0).toLocaleString()}
+                            {req.module || 'General'} - {req.reasonLabel || req.reasonType || 'Solicitud'} - {req.requestedBy?.name || 'N/A'} {Number(req.total || 0) > 0 ? `- $${Number(req.total || 0).toLocaleString()}` : ''}
                           </div>
+                          {req.inventoryRequest && (
+                            <div style={{ fontSize: '0.8rem', color: '#9a3412', marginBottom: '6px' }}>
+                              Producto: {req.inventoryRequest.productName} | Cantidad: {Number(req.inventoryRequest.quantity || 0)} | Bodega: {Number(req.inventoryRequest.availableInBodega || 0)}
+                            </div>
+                          )}
+                          {Array.isArray(req.attachments) && req.attachments.length > 0 && (
+                            <div style={{ display: 'flex', gap: '6px', marginBottom: '8px', flexWrap: 'wrap' }}>
+                              {req.attachments.slice(0, 2).map((file) => (
+                                String(file?.type || '').startsWith('image/') ? (
+                                  <img key={file.id} src={file.dataUrl} alt={file.name} style={{ width: '100%', maxWidth: '220px', borderRadius: '8px', border: '1px solid #fdba74' }} />
+                                ) : (
+                                  <a key={file.id} href={file.dataUrl} download={file.name} className="btn">{file.name}</a>
+                                )
+                              ))}
+                            </div>
+                          )}
                           <div style={{ display: 'flex', gap: '6px' }}>
                             <button className="btn btn-primary" onClick={() => onResolveRemoteAuthRequest(req.id, 'APPROVED')}>Aprobar</button>
                             <button className="btn" onClick={() => onResolveRemoteAuthRequest(req.id, 'REJECTED')}>Rechazar</button>
@@ -2772,6 +2958,7 @@ function App() {
                   onCreateRemoteAuthRequest={onCreateRemoteAuthRequest}
                   remoteAuthDecisionByRequestId={remoteAuthDecisionByRequestId}
                   remoteAuthRequestById={remoteAuthRequestById}
+                  buildApprovalAttachments={(payload) => buildApprovalPreviewAttachments(payload)}
                   onSaveDraft={onSaveInvoiceDraft}
                   onFacturarCero={onFacturarCero}
                 />
@@ -3049,30 +3236,8 @@ function App() {
                   pendingProductsSyncRef.current = false;
                 }
               }}
-              onAcceptFromBodega={async (productId, quantity) => {
-                const qty = Math.max(0, Number(quantity) || 0);
-                if (!qty) return;
-
-                const available = Number(stock.bodega?.[productId] || 0);
-                if (available < qty) {
-                  throw new Error('Stock insuficiente en bodega');
-                }
-
-                const nextBodega = Math.max(0, available - qty);
-                const currentVentas = Number(stock.ventas?.[productId] || 0);
-                const nextVentas = currentVentas + qty;
-
-                setStock((prev) => ({
-                  ...prev,
-                  bodega: { ...prev.bodega, [productId]: nextBodega },
-                  ventas: { ...prev.ventas, [productId]: nextVentas }
-                }));
-
-                await Promise.all([
-                  updateStockInDB('bodega', productId, nextBodega),
-                  updateStockInDB('ventas', productId, nextVentas)
-                ]);
-              }}
+              onCreateInventoryRequest={onCreateInventoryRequest}
+              pendingInventoryRequests={remoteAuthRequests}
               onAdjustStock={async (product, target, delta, reason) => {
                 const productId = product?.id;
                 if (!productId) throw new Error('Producto invalido.');
@@ -3179,17 +3344,22 @@ function App() {
               expenses={expenses}
               setExpenses={async (newExpenses) => {
                 setExpenses(newExpenses);
-                // If it's a new expense (length increased), save the last one
-                if (newExpenses.length > expenses.length) {
-                  try {
-                    await dataService.saveExpense({
-                      ...newExpenses[0],
-                      user_id: currentUser?.id,
-                      user_name: currentUser?.name || currentUser?.email || 'Sistema'
-                    });
-                  } catch (err) {
-                    console.error("Error persistiendo gasto en Supabase:", err);
-                  }
+              }}
+              currentUser={currentUser}
+              userCashBalance={getUserCashBalance(currentUser)}
+              onRegisterExpense={async (expense) => {
+                const amount = Number(expense?.amount || 0);
+                adjustUserCashBalance(currentUser, -amount);
+                try {
+                  await dataService.saveExpense({
+                    ...expense,
+                    user_id: currentUser?.id,
+                    user_name: currentUser?.name || currentUser?.email || 'Sistema'
+                  });
+                } catch (err) {
+                  adjustUserCashBalance(currentUser, amount);
+                  console.error("Error persistiendo gasto en Supabase:", err);
+                  throw err;
                 }
               }}
               onLog={addLog}
