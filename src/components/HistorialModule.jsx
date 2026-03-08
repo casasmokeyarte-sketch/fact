@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { printInvoiceDocument } from '../lib/printInvoice.js';
 
+const AUTH_REQUEST_LOG_PREFIX = 'AUTH_REQUEST_EVENT::';
+
 export function HistorialModule({
   sales,
   products = [],
@@ -50,6 +52,16 @@ export function HistorialModule({
   const getInvoiceKey = (invoice) => String(invoice?.db_id || invoice?.id || '');
   const normalizeName = (value) => String(value || '').trim().toLowerCase();
   const getItemProductId = (item) => item?.productId ?? item?.product_id ?? item?.id ?? null;
+  const parseAuthRequestEvent = (details) => {
+    const raw = String(details || '');
+    if (!raw.startsWith(AUTH_REQUEST_LOG_PREFIX)) return null;
+    try {
+      const parsed = JSON.parse(raw.slice(AUTH_REQUEST_LOG_PREFIX.length));
+      return parsed && typeof parsed === 'object' ? parsed : null;
+    } catch {
+      return null;
+    }
+  };
   const isOwnedByCurrentUser = (record) => {
     const ownId = String(currentUser?.id || '').trim();
     const recordId = String(record?.user_id || record?.userId || '').trim();
@@ -219,6 +231,24 @@ export function HistorialModule({
           item.type = 'Entrada desde bodega';
           item.quantity = Number.isFinite(qty) ? qty : null;
           item.direction = 'in';
+        } else if (actionLower.includes('entrada aprobada desde bodega')) {
+          const m = details.match(/autorizo\s+(\d+(?:\.\d+)?)\s+unidades/i);
+          const qty = Number(m?.[1]);
+          item.type = 'Entrada aprobada';
+          item.quantity = Number.isFinite(qty) ? qty : null;
+          item.direction = 'in';
+        } else if (actionLower.includes('entrada rechazada desde bodega')) {
+          const m = details.match(/entrada de\s+(\d+(?:\.\d+)?)\s+unidades/i);
+          const qty = Number(m?.[1]);
+          item.type = 'Entrada rechazada';
+          item.quantity = Number.isFinite(qty) ? qty : null;
+          item.direction = 'neutral';
+        } else if (actionLower.includes('solicitud inventario')) {
+          const m = details.match(/solicito\s+(\d+(?:\.\d+)?)\s+unidades/i);
+          const qty = Number(m?.[1]);
+          item.type = 'Solicitud de entrada';
+          item.quantity = Number.isFinite(qty) ? qty : null;
+          item.direction = 'neutral';
         } else if (actionLower.includes('salida forzada')) {
           item.type = 'Salida forzada';
           item.direction = 'out';
@@ -229,6 +259,49 @@ export function HistorialModule({
 
         bucket.push(item);
       });
+    });
+
+    (logs || []).forEach((log) => {
+      if (String(log?.module || '') !== 'Autorizaciones') return;
+      const event = parseAuthRequestEvent(log?.details);
+      if (!event?.requestId) return;
+      if (String(event?.module || '') !== 'Inventario') return;
+
+      const inventoryRequest = event?.inventoryRequest || null;
+      const productId = String(inventoryRequest?.productId || '').trim();
+      const bucket = ensureBucket(productId);
+      if (!bucket) return;
+
+      const quantity = Number(inventoryRequest?.quantity || 0);
+      const productName = inventoryRequest?.productName || products.find((p) => String(p?.id) === productId)?.name || 'Producto';
+
+      if (event.type === 'CREATED') {
+        bucket.push({
+          type: 'Solicitud de entrada',
+          direction: 'neutral',
+          invoiceCode: null,
+          quantity: Number.isFinite(quantity) ? quantity : null,
+          timestamp: event?.createdAt || log?.timestamp || new Date().toISOString(),
+          user: event?.requestedBy?.name || log?.user_name || 'Sistema',
+          details: `Solicitud de ${Number(quantity || 0).toLocaleString()} unidades de ${productName} desde bodega.`
+        });
+        return;
+      }
+
+      if (event.type === 'RESOLVED') {
+        const approved = event?.decision === 'APPROVED';
+        bucket.push({
+          type: approved ? 'Entrada aprobada' : 'Entrada rechazada',
+          direction: approved ? 'in' : 'neutral',
+          invoiceCode: null,
+          quantity: Number.isFinite(quantity) ? quantity : null,
+          timestamp: event?.resolvedAt || log?.timestamp || new Date().toISOString(),
+          user: event?.resolvedBy?.name || log?.user_name || 'Sistema',
+          details: approved
+            ? `Autorizacion aprobada para sumar ${Number(quantity || 0).toLocaleString()} unidades de ${productName} al inventario de ventas.`
+            : `Autorizacion rechazada para mover ${Number(quantity || 0).toLocaleString()} unidades de ${productName}.`
+        });
+      }
     });
 
     Object.keys(movementMap).forEach((productId) => {
@@ -343,6 +416,17 @@ export function HistorialModule({
     }
     return null;
   };
+
+  const productMovementSummary = useMemo(() => {
+    const movements = productMovementView?.movements || [];
+    return movements.reduce((acc, movement) => {
+      const qty = Number(movement?.quantity);
+      if (!Number.isFinite(qty)) return acc;
+      if (movement?.direction === 'in') acc.entries += qty;
+      if (movement?.direction === 'out') acc.exits += Math.abs(qty);
+      return acc;
+    }, { entries: 0, exits: 0 });
+  }, [productMovementView]);
 
   const renderInvoiceStatusBadge = (invoice) => {
     const statusMeta = getInvoiceStatusMeta(invoice);
@@ -555,6 +639,11 @@ export function HistorialModule({
                 <h3 style={{ margin: 0 }}>Movimientos del producto</h3>
                 <div style={{ fontSize: '0.9rem', color: '#64748b' }}>
                   {productMovementView.productName} ({productMovementView.productId || 'sin id'}) - Desde factura #{productMovementView.invoiceCode}
+                </div>
+                <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginTop: '0.5rem', fontSize: '0.88rem' }}>
+                  <span><strong>Entradas:</strong> {productMovementSummary.entries.toLocaleString()}</span>
+                  <span><strong>Salidas:</strong> {productMovementSummary.exits.toLocaleString()}</span>
+                  <span><strong>Balance:</strong> {(productMovementSummary.entries - productMovementSummary.exits).toLocaleString()}</span>
                 </div>
               </div>
               <button className="btn" onClick={() => setProductMovementView(null)}>Cerrar</button>

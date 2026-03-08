@@ -1403,6 +1403,7 @@ function App() {
       targetRequest?.inventoryRequest?.productId
     ) {
       const productId = targetRequest.inventoryRequest.productId;
+      const productName = targetRequest?.inventoryRequest?.productName || products.find((p) => String(p?.id) === String(productId))?.name || 'Producto';
       const qty = Math.max(0, Number(targetRequest.inventoryRequest.quantity || 0));
       const available = Number(stock?.bodega?.[productId] || 0);
       if (qty <= 0 || available < qty) {
@@ -1410,26 +1411,45 @@ function App() {
         return;
       }
 
+      const currentVentas = Number(stock?.ventas?.[productId] || 0);
+      const nextBodega = Math.max(0, available - qty);
+      const nextVentas = currentVentas + qty;
+
       setStock((prev) => ({
         ...prev,
         bodega: {
           ...prev.bodega,
-          [productId]: Math.max(0, Number(prev?.bodega?.[productId] || 0) - qty),
+          [productId]: nextBodega,
         },
         ventas: {
           ...prev.ventas,
-          [productId]: Number(prev?.ventas?.[productId] || 0) + qty,
+          [productId]: nextVentas,
         }
       }));
-
-      const nextBodega = Math.max(0, available - qty);
-      const nextVentas = Number(stock?.ventas?.[productId] || 0) + qty;
       Promise.all([
         updateStockInDB('bodega', productId, nextBodega),
         updateStockInDB('ventas', productId, nextVentas)
       ]).catch((error) => {
         console.error('Error aprobando solicitud de inventario:', error);
         alert(`La solicitud se marco, pero no se pudo sincronizar inventario.\n\nDetalle: ${error?.message || 'Error desconocido'}`);
+      });
+
+      addLog({
+        module: 'Inventario',
+        action: 'Entrada aprobada desde bodega',
+        details: `${resolvedBy.name || 'Administrador'} autorizo ${qty} unidades de ${productName} para ventas. Bodega: ${available} -> ${nextBodega}. Ventas: ${currentVentas} -> ${nextVentas}. Solicitud: ${requestId}. Pedido por: ${targetRequest?.requestedBy?.name || 'Usuario'}.`
+      });
+    } else if (
+      decision === 'REJECTED' &&
+      targetRequest?.module === 'Inventario' &&
+      targetRequest?.inventoryRequest?.productId
+    ) {
+      const productName = targetRequest?.inventoryRequest?.productName || 'Producto';
+      const qty = Math.max(0, Number(targetRequest.inventoryRequest.quantity || 0));
+      addLog({
+        module: 'Inventario',
+        action: 'Entrada rechazada desde bodega',
+        details: `${resolvedBy.name || 'Administrador'} rechazo la entrada de ${qty} unidades de ${productName}. Solicitud: ${requestId}. Pedido por: ${targetRequest?.requestedBy?.name || 'Usuario'}.`
       });
     }
 

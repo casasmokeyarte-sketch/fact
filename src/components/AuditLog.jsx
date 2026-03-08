@@ -1,5 +1,63 @@
 import React from 'react';
 
+const AUTH_REQUEST_LOG_PREFIX = 'AUTH_REQUEST_EVENT::';
+
+const parseAuthRequestEvent = (details) => {
+    const raw = String(details || '');
+    if (!raw.startsWith(AUTH_REQUEST_LOG_PREFIX)) return null;
+    try {
+        const parsed = JSON.parse(raw.slice(AUTH_REQUEST_LOG_PREFIX.length));
+        return parsed && typeof parsed === 'object' ? parsed : null;
+    } catch {
+        return null;
+    }
+};
+
+const formatAuthLog = (log) => {
+    const event = parseAuthRequestEvent(log?.details);
+    if (!event?.requestId) return { action: log?.action, details: log?.details };
+
+    const requester = event?.requestedBy?.name || 'Usuario';
+    const resolver = event?.resolvedBy?.name || 'Administracion';
+    const moduleName = event?.module || 'General';
+    const reason = event?.reasonLabel || event?.reasonType || 'Autorizacion';
+    const inventory = event?.inventoryRequest || null;
+
+    if (event.type === 'CREATED') {
+        if (moduleName === 'Inventario' && inventory?.productName) {
+            return {
+                action: 'Solicitud de inventario creada',
+                details: `${requester} solicito ${Number(inventory?.quantity || 0).toLocaleString()} unidades de ${inventory.productName} desde bodega. Solicitud: ${event.requestId}.`
+            };
+        }
+
+        return {
+            action: 'Solicitud de autorizacion creada',
+            details: `${requester} envio una solicitud para ${moduleName}: ${reason}. Solicitud: ${event.requestId}.`
+        };
+    }
+
+    if (event.type === 'RESOLVED') {
+        if (event.decision === 'APPROVED') {
+            return {
+                action: moduleName === 'Inventario' ? 'Solicitud de inventario aprobada' : 'Solicitud aprobada',
+                details: moduleName === 'Inventario' && inventory?.productName
+                    ? `${resolver} aprobo ${Number(inventory?.quantity || 0).toLocaleString()} unidades de ${inventory.productName}. Solicitud: ${event.requestId}.`
+                    : `${resolver} aprobo la solicitud ${event.requestId} de ${moduleName}.`
+            };
+        }
+
+        return {
+            action: moduleName === 'Inventario' ? 'Solicitud de inventario rechazada' : 'Solicitud rechazada',
+            details: moduleName === 'Inventario' && inventory?.productName
+                ? `${resolver} rechazo ${Number(inventory?.quantity || 0).toLocaleString()} unidades de ${inventory.productName}. Solicitud: ${event.requestId}.`
+                : `${resolver} rechazo la solicitud ${event.requestId} de ${moduleName}.`
+        };
+    }
+
+    return { action: log?.action, details: log?.details };
+};
+
 export function AuditLog({ logs }) {
     return (
         <div className="audit-log">
@@ -19,15 +77,20 @@ export function AuditLog({ logs }) {
                             </tr>
                         </thead>
                         <tbody>
-                            {[...logs].reverse().map((log, index) => (
-                                <tr key={index} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                                    <td style={{ padding: '0.75rem', fontSize: '0.9em' }}>{new Date(log.timestamp).toLocaleString()}</td>
-                                    <td style={{ padding: '0.75rem', fontWeight: '600' }}>{log.user_name || log.user || 'Sistema'}</td>
-                                    <td style={{ padding: '0.75rem' }}><span className="badge" style={{ backgroundColor: '#e2e8f0', padding: '2px 6px', borderRadius: '4px' }}>{log.module}</span></td>
-                                    <td style={{ padding: '0.75rem', fontWeight: 'bold' }}>{log.action}</td>
-                                    <td style={{ padding: '0.75rem', fontSize: '0.9em' }}>{log.details}</td>
-                                </tr>
-                            ))}
+                            {[...logs].reverse().map((log, index) => {
+                                const formatted = log?.module === 'Autorizaciones'
+                                    ? formatAuthLog(log)
+                                    : { action: log?.action, details: log?.details };
+                                return (
+                                    <tr key={index} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                        <td style={{ padding: '0.75rem', fontSize: '0.9em' }}>{new Date(log.timestamp).toLocaleString()}</td>
+                                        <td style={{ padding: '0.75rem', fontWeight: '600' }}>{log.user_name || log.user || 'Sistema'}</td>
+                                        <td style={{ padding: '0.75rem' }}><span className="badge" style={{ backgroundColor: '#e2e8f0', padding: '2px 6px', borderRadius: '4px' }}>{log.module}</span></td>
+                                        <td style={{ padding: '0.75rem', fontWeight: 'bold' }}>{formatted.action}</td>
+                                        <td style={{ padding: '0.75rem', fontSize: '0.9em' }}>{formatted.details}</td>
+                                    </tr>
+                                );
+                            })}
                         </tbody>
                     </table>
                 )}
