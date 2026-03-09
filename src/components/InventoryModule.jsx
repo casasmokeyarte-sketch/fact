@@ -1,11 +1,15 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
+import { PaginationControls } from './PaginationControls';
+import { usePagination } from '../lib/usePagination';
 
 export function InventoryModule({ currentUser, products, setProducts, onDeleteProduct, onCreateInventoryRequest, pendingInventoryRequests = [], onAdjustStock, stock, categories, onLog, setActiveTab, setPreselectedProductId }) {
     const [view, setView] = useState('list'); // 'list', 'edit', 'count'
     const [editingProduct, setEditingProduct] = useState(null);
     const [physicalCounts, setPhysicalCounts] = useState({});
     const [searchTerm, setSearchTerm] = useState('');
+    const [categoryFilter, setCategoryFilter] = useState('');
+    const [statusFilter, setStatusFilter] = useState('');
     const [acceptQuantities, setAcceptQuantities] = useState({});
     const [openActionMenuId, setOpenActionMenuId] = useState(null);
     const filterStorageKey = `fact_filter_inventory_${currentUser?.id || 'anon'}`;
@@ -121,6 +125,23 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
         if (!currentUser?.id) return;
         localStorage.setItem(filterStorageKey, searchTerm);
     }, [searchTerm, currentUser?.id]);
+
+    const filteredProducts = useMemo(() => (
+        (products || []).filter((p) => {
+            const matchesSearch =
+                String(p?.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+                String(p?.category || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+                String(p?.barcode || '').toLowerCase().includes(searchTerm.toLowerCase());
+            const matchesCategory = !categoryFilter || String(p?.category || '') === categoryFilter;
+            const stockVentas = Number(stock?.ventas?.[p?.id] || 0);
+            const reorderLevel = Number(p?.reorder_level ?? 10);
+            const computedStatus = stockVentas <= 0 ? 'agotado' : (stockVentas <= reorderLevel ? 'pocos' : 'disponible');
+            const matchesStatus = !statusFilter || computedStatus === statusFilter;
+            return matchesSearch && matchesCategory && matchesStatus;
+        })
+    ), [products, searchTerm, categoryFilter, statusFilter, stock]);
+
+    const productsPagination = usePagination(filteredProducts, 15);
 
     useEffect(() => {
         const handleOutsideClick = (event) => {
@@ -508,7 +529,7 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
 
             {view === 'list' && (
                 <div className="card">
-                    <div style={{ marginBottom: '1rem' }}>
+                    <div style={{ marginBottom: '1rem', display: 'grid', gridTemplateColumns: 'minmax(220px, 1.6fr) repeat(2, minmax(160px, 1fr))', gap: '0.75rem' }}>
                         <input
                             type="text"
                             placeholder={'\uD83D\uDD0D Buscar por nombre o categoria...'}
@@ -516,6 +537,18 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
                         />
+                        <select className="input-field" value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}>
+                            <option value="">Todas las categorias</option>
+                            {(categories || []).map((cat, idx) => (
+                                <option key={`${cat}-${idx}`} value={cat}>{cat}</option>
+                            ))}
+                        </select>
+                        <select className="input-field" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+                            <option value="">Todos los estados</option>
+                            <option value="disponible">Disponible</option>
+                            <option value="pocos">Quedan pocos</option>
+                            <option value="agotado">Agotado</option>
+                        </select>
                     </div>
                     <table>
                         <thead>
@@ -530,10 +563,7 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
                             </tr>
                         </thead>
                         <tbody>
-                            {products.filter(p =>
-                                p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                                (p.category && p.category.toLowerCase().includes(searchTerm.toLowerCase()))
-                            ).map((p, idx) => (
+                            {productsPagination.pageItems.map((p, idx) => (
                                 (() => {
                                     const stockVentas = Number(stock.ventas[p.id] || 0);
                                     const reorderLevel = Number(p.reorder_level ?? 10);
@@ -542,7 +572,7 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
                                     const isFew = String(p.status || '').toLowerCase() === 'pocos' || hasFewByStock;
                                     const isVisible = p.is_visible !== false;
                                     return (
-                                <tr key={`${p.id}-${idx}`}>
+                                <tr key={`${p.id}-${productsPagination.startItem}-${idx}`}>
                                     <td>{p.name}</td>
                                     <td>{(p.price || 0).toLocaleString()}</td>
                                     <td>{stock.bodega[p.id] || 0}</td>
@@ -677,6 +707,13 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
                             ))}
                         </tbody>
                     </table>
+                    <PaginationControls
+                        page={productsPagination.page}
+                        totalPages={productsPagination.totalPages}
+                        totalItems={productsPagination.totalItems}
+                        pageSize={productsPagination.pageSize}
+                        onPageChange={productsPagination.setPage}
+                    />
                 </div>
             )}
         </div>

@@ -1,6 +1,18 @@
 import React, { useState } from 'react';
+import { PaginationControls } from './PaginationControls';
+import { usePagination } from '../lib/usePagination';
 
-export function PurchasingModule({ warehouseStock, setWarehouseStock, purchases, setPurchases, onLog, products }) {
+export function PurchasingModule({
+    warehouseStock,
+    setWarehouseStock,
+    purchases,
+    setPurchases,
+    onLog,
+    products,
+    currentUser,
+    userCashBalance = 0,
+    onRegisterPurchase,
+}) {
     const [purchase, setPurchase] = useState({
         invoiceNumber: '',
         supplier: '',
@@ -8,8 +20,9 @@ export function PurchasingModule({ warehouseStock, setWarehouseStock, purchases,
         quantity: 0,
         unitCost: 0
     });
+    const purchasesPagination = usePagination(purchases, 15);
 
-    const handleSave = (e) => {
+    const handleSave = async (e) => {
         e.preventDefault();
         if (!purchase.invoiceNumber || !purchase.productId || purchase.quantity <= 0) {
             return alert("Complete todos los campos correctamente");
@@ -17,6 +30,30 @@ export function PurchasingModule({ warehouseStock, setWarehouseStock, purchases,
 
         const product = products.find(p => String(p.id) === String(purchase.productId));
         const qty = Number(purchase.quantity);
+        const unitCost = Number(purchase.unitCost) || 0;
+        const totalCost = qty * unitCost;
+        if (!Number.isFinite(totalCost) || totalCost <= 0) {
+            return alert("El total de la inversion debe ser mayor a 0");
+        }
+        if (totalCost > Number(userCashBalance || 0)) {
+            return alert(`Saldo insuficiente en caja para registrar la inversion. Disponible: $${Number(userCashBalance || 0).toLocaleString()}`);
+        }
+
+        const newPurchase = {
+            ...purchase,
+            productName: product?.name || 'Producto Desconocido',
+            unitCost,
+            date: new Date().toISOString(),
+            user_id: currentUser?.id || null,
+            user_name: currentUser?.name || currentUser?.email || 'Sistema',
+        };
+
+        try {
+            await onRegisterPurchase?.(newPurchase);
+        } catch (error) {
+            const message = error?.message || 'Error desconocido';
+            return alert(`No se pudo registrar la compra.\n\nDetalle: ${message}`);
+        }
 
         // Update Warehouse Stock
         setWarehouseStock(prev => ({
@@ -25,17 +62,12 @@ export function PurchasingModule({ warehouseStock, setWarehouseStock, purchases,
         }));
 
         // Add to history logs (Purchases)
-        setPurchases([{
-            ...purchase,
-            productName: product?.name || 'Producto Desconocido',
-            unitCost: Number(purchase.unitCost) || 0,
-            date: new Date().toISOString()
-        }, ...purchases]);
+        setPurchases([newPurchase, ...purchases]);
 
         onLog?.({
             module: 'Compras',
             action: 'Registrar Compra',
-            details: `Compra #${purchase.invoiceNumber} proveedor ${purchase.supplier} - ${qty} x ${product?.name || purchase.productId}`
+            details: `Compra #${purchase.invoiceNumber} proveedor ${purchase.supplier} - ${qty} x ${product?.name || purchase.productId} | Total: $${totalCost.toLocaleString()} | Caja usuario: ${currentUser?.name || currentUser?.email || 'Sistema'}`
         });
 
         // Reset form
@@ -66,6 +98,9 @@ export function PurchasingModule({ warehouseStock, setWarehouseStock, purchases,
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem' }}>
                 <div className="card">
                     <h3 style={{ marginTop: 0 }}>Registrar Factura de Compra</h3>
+                    <p style={{ marginTop: 0, color: '#64748b' }}>
+                        Caja disponible: ${Number(userCashBalance || 0).toLocaleString()}
+                    </p>
                     <form onSubmit={handleSave}>
                         <div className="input-group">
                             <label className="input-label">Numero de Factura</label>
@@ -148,15 +183,22 @@ export function PurchasingModule({ warehouseStock, setWarehouseStock, purchases,
 
             <div className="card" style={{ marginTop: '2rem' }}>
                 <h3 style={{ marginTop: 0 }}>Historial de Compras</h3>
-                {purchases.length === 0 ? <p>No hay registros aAn.</p> : (
+                {purchasesPagination.totalItems === 0 ? <p>No hay registros aAn.</p> : (
                     <ul style={{ listStyle: 'none', padding: 0 }}>
-                        {purchases.map((log, i) => (
+                        {purchasesPagination.pageItems.map((log, i) => (
                             <li key={i} style={{ padding: '0.5rem 0', borderBottom: '1px solid #f1f5f9' }}>
                                 {new Date(log.date).toLocaleDateString()}: Factura <strong>#{log.invoiceNumber}</strong> de <strong>{log.supplier}</strong> - Ingresaron {log.quantity} de {log.productName} (Costo: ${Number(log.unitCost).toLocaleString()} | Total: ${(log.quantity * log.unitCost).toLocaleString()})
                             </li>
                         ))}
                     </ul>
                 )}
+                <PaginationControls
+                    page={purchasesPagination.page}
+                    totalPages={purchasesPagination.totalPages}
+                    totalItems={purchasesPagination.totalItems}
+                    pageSize={purchasesPagination.pageSize}
+                    onPageChange={purchasesPagination.setPage}
+                />
             </div>
         </div>
     );

@@ -63,6 +63,7 @@ export function PaymentSummary({
   const [extraDiscount, setExtraDiscount] = useState(0);
   const [authNote, setAuthNote] = useState('');
   const [activeRemoteRequestId, setActiveRemoteRequestId] = useState('');
+  const [resolvedRemoteApproval, setResolvedRemoteApproval] = useState(null);
   const [isRequestingRemoteAuth, setIsRequestingRemoteAuth] = useState(false);
   const [cashReceived, setCashReceived] = useState(0);
   const [isMixed, setIsMixed] = useState(false);
@@ -115,12 +116,25 @@ export function PaymentSummary({
     activeRemoteRequestId ? remoteAuthDecisionByRequestId?.[activeRemoteRequestId] : null
   );
 
+  const buildResolvedRemoteApproval = () => {
+    if (currentRemoteDecision !== 'APPROVED') return null;
+    return {
+      requestId: activeRemoteRequestId || currentRemoteRequest?.id || '',
+      approvedAt: currentRemoteRequest?.resolvedAt || new Date().toISOString(),
+      approvedBy: currentRemoteRequest?.resolvedBy || null,
+      reasonType,
+      reasonLabel,
+      note: String(authNote || '').trim(),
+    };
+  };
+
   useEffect(() => {
     if (!loadedDraftState?.draftId) return;
 
     setExtraDiscount(Number(loadedDraftState.extraDiscount || 0));
     setAuthNote(String(loadedDraftState.authNote || ''));
     setActiveRemoteRequestId(String(loadedDraftState.activeRemoteRequestId || ''));
+    setResolvedRemoteApproval(null);
     setIsMixed(!!loadedDraftState.isMixed);
     setOtherPaymentDetail(String(loadedDraftState.otherPaymentDetail || ''));
 
@@ -164,20 +178,29 @@ export function PaymentSummary({
     if (!needsApproval) return null;
 
     if (shouldUseRemoteAuth) {
-      const approved = currentRemoteRequest && currentRemoteRequest.status === 'APPROVED'
-        ? currentRemoteRequest
-        : null;
+      const approved = resolvedRemoteApproval || (
+        currentRemoteRequest && currentRemoteRequest.status === 'APPROVED'
+          ? {
+              requestId: currentRemoteRequest.id,
+              approvedAt: currentRemoteRequest.resolvedAt || null,
+              approvedBy: currentRemoteRequest.resolvedBy || null,
+              reasonType,
+              reasonLabel,
+              note: String(authNote || '').trim(),
+            }
+          : null
+      );
 
       return {
         required: true,
         mode: 'REMOTE',
         status: approved ? 'APPROVED' : 'PENDING',
-        requestId: activeRemoteRequestId || '',
+        requestId: approved?.requestId || activeRemoteRequestId || '',
         reasonType,
         reasonLabel,
-        note: String(authNote || '').trim(),
-        approvedAt: approved?.resolvedAt || null,
-        approvedBy: approved?.resolvedBy || null
+        note: approved?.note || String(authNote || '').trim(),
+        approvedAt: approved?.approvedAt || null,
+        approvedBy: approved?.approvedBy || null
       };
     }
 
@@ -201,8 +224,13 @@ export function PaymentSummary({
   const handleAuthAction = async (action) => {
     if (needsApproval) {
       if (shouldUseRemoteAuth) {
+        if (resolvedRemoteApproval) {
+          action();
+          return;
+        }
         if (activeRemoteRequestId) {
           if (currentRemoteDecision === 'APPROVED') {
+            setResolvedRemoteApproval(buildResolvedRemoteApproval());
             setActiveRemoteRequestId('');
             setAuthNote('');
             playSound('success');
@@ -222,6 +250,7 @@ export function PaymentSummary({
 
         try {
           setIsRequestingRemoteAuth(true);
+          setResolvedRemoteApproval(null);
           const requestId = await onCreateRemoteAuthRequest({
             module: 'Facturacion',
             requestCategory: 'AUTHORIZATION',
@@ -352,12 +381,15 @@ export function PaymentSummary({
   React.useEffect(() => {
     if (!activeRemoteRequestId) return;
     if (currentRemoteDecision === 'REJECTED') {
+      setResolvedRemoteApproval(null);
       playSound('error');
       alert('Administracion rechazo la solicitud de autorizacion.');
       setActiveRemoteRequestId('');
       return;
     }
     if (currentRemoteDecision === 'APPROVED') {
+      setResolvedRemoteApproval(buildResolvedRemoteApproval());
+      setActiveRemoteRequestId('');
       playSound('success');
       alert('Autorizacion aprobada. Ya puede facturar.');
     }

@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import { INITIAL_REGISTERED_CLIENT, CREDIT_LEVELS, COMPANY_INFO } from '../constants';
+import { PaginationControls } from './PaginationControls';
+import { usePagination } from '../lib/usePagination';
 
 export function ClientModule({ currentUser, clients, setClients, cartera, salesHistory, onLog }) {
     const [newClient, setNewClient] = useState(INITIAL_REGISTERED_CLIENT);
@@ -8,6 +10,8 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
     const [editingDocument, setEditingDocument] = useState('');
     const [selectedClientReport, setSelectedClientReport] = useState(null);
     const [searchTerm, setSearchTerm] = useState('');
+    const [statusFilter, setStatusFilter] = useState('');
+    const [creditLevelFilter, setCreditLevelFilter] = useState('');
     const filterStorageKey = `fact_filter_clients_${currentUser?.id || 'anon'}`;
     
     // Check if user is Cajero
@@ -18,6 +22,15 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
     const canImport = !isCajero && (currentUser?.permissions?.clientes?.importar !== false);
     const onlyStandard = isCajero || currentUser?.permissions?.clientes?.solo_estandar;
     const canBlockClient = isAdmin;
+    const filteredClients = clients.filter(c =>
+        (
+            c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            c.document.toLowerCase().includes(searchTerm.toLowerCase())
+        ) &&
+        (!statusFilter || (statusFilter === 'blocked' ? !!c.blocked : !c.blocked)) &&
+        (!creditLevelFilter || resolveCreditLevel(c.creditLevel || c.credit_level) === creditLevelFilter)
+    );
+    const clientsPagination = usePagination(filteredClients, 15);
 
     const normalizeCreditLevelKey = (value) => String(value || '')
         .normalize('NFD')
@@ -378,7 +391,7 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
                         )}
                     </div>
 
-                    <div style={{ marginBottom: '1rem' }}>
+                    <div style={{ marginBottom: '1rem', display: 'grid', gridTemplateColumns: 'minmax(240px, 1.8fr) repeat(2, minmax(180px, 1fr))', gap: '0.75rem' }}>
                         <input
                             type="text"
                             placeholder={'\uD83D\uDD0D Buscar cliente por nombre o NIT...'}
@@ -386,6 +399,17 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
                         />
+                        <select className="input-field" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+                            <option value="">Todos los estados</option>
+                            <option value="active">Activos</option>
+                            <option value="blocked">Bloqueados</option>
+                        </select>
+                        <select className="input-field" value={creditLevelFilter} onChange={(e) => setCreditLevelFilter(e.target.value)}>
+                            <option value="">Todos los niveles</option>
+                            {Object.entries(CREDIT_LEVELS).map(([key, data]) => (
+                                <option key={key} value={key}>{data.label}</option>
+                            ))}
+                        </select>
                     </div>
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
@@ -399,10 +423,7 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
                             </tr>
                         </thead>
                         <tbody>
-                            {clients.filter(c =>
-                                c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                                c.document.toLowerCase().includes(searchTerm.toLowerCase())
-                            ).map(c => (
+                            {clientsPagination.pageItems.map(c => (
                                 <tr key={c.document} style={{ borderBottom: '1px solid #f1f5f9' }}>
                                     <td style={{ padding: '0.5rem' }}>{c.name}</td>
                                     <td style={{ padding: '0.5rem' }}>{c.document}</td>
@@ -456,6 +477,13 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
                             ))}
                         </tbody>
                     </table>
+                    <PaginationControls
+                        page={clientsPagination.page}
+                        totalPages={clientsPagination.totalPages}
+                        totalItems={clientsPagination.totalItems}
+                        pageSize={clientsPagination.pageSize}
+                        onPageChange={clientsPagination.setPage}
+                    />
                 </div>
             </div>
         </div>

@@ -1830,16 +1830,45 @@ function App() {
     return date >= start && date <= end;
   };
 
+  const normalizeIdentityValue = (value) => String(value || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
   const isRecordOwnedByUser = (record, user) => {
-    const recordUserId = String(record?.user_id || record?.userId || '').trim();
+    const recordUserId = String(
+      record?.user_id ||
+      record?.userId ||
+      record?.mixedDetails?.user_id ||
+      record?.mixed_details?.user_id ||
+      ''
+    ).trim();
     const currentUserId = String(user?.id || '').trim();
     if (recordUserId && currentUserId) return recordUserId === currentUserId;
 
-    const recordUserName = String(record?.user_name || record?.user || '').trim().toLowerCase();
-    const currentUserName = String(user?.name || user?.email || '').trim().toLowerCase();
-    if (recordUserName && currentUserName) return recordUserName === currentUserName;
+    const recordCandidates = [
+      record?.user_name,
+      record?.user,
+      record?.username,
+      record?.email,
+      record?.mixedDetails?.user_name,
+      record?.mixedDetails?.user,
+      record?.mixed_details?.user_name,
+      record?.mixed_details?.user,
+    ]
+      .map(normalizeIdentityValue)
+      .filter(Boolean);
 
-    return false;
+    const currentUserCandidates = [
+      user?.name,
+      user?.email,
+      user?.username,
+    ]
+      .map(normalizeIdentityValue)
+      .filter(Boolean);
+
+    return recordCandidates.some((candidate) => currentUserCandidates.includes(candidate));
   };
 
   const parseMoneyFromText = (text) => {
@@ -2041,6 +2070,25 @@ function App() {
     };
   };
 
+  const buildShiftSystemAccounts = (summary) => ({
+    efectivo:
+      Number(shift?.initialCash || 0) +
+      Number(summary?.salesBreakdown?.cash || 0) +
+      Number(summary?.abonosBreakdown?.cash || 0) +
+      Number(summary?.cashMovements?.receivedFromVault || 0) +
+      Number(summary?.cashMovements?.majorToMinor || 0) -
+      Number(summary?.cashMovements?.returnedToVault || 0) -
+      Number(summary?.cashMovements?.minorToMajor || 0) -
+      Number(summary?.expensesTotal || 0) -
+      Number(summary?.purchasesTotal || 0),
+    transferencia: Number(summary?.salesBreakdown?.transfer || 0) + Number(summary?.abonosBreakdown?.transfer || 0),
+    tarjeta: Number(summary?.salesBreakdown?.card || 0) + Number(summary?.abonosBreakdown?.card || 0),
+    credito: Number(summary?.salesBreakdown?.credit || 0) + Number(summary?.abonosBreakdown?.credit || 0),
+    otros: Number(summary?.salesBreakdown?.other || 0) + Number(summary?.abonosBreakdown?.other || 0),
+    gastos: Number(summary?.expensesTotal || 0),
+    inversion: Number(summary?.purchasesTotal || 0),
+  });
+
   const onEndShift = (data) => {
     if (!shift?.startTime) return;
     const shiftStartMsReal = new Date(shift.startTime).getTime();
@@ -2106,22 +2154,11 @@ function App() {
       inversion: Number(reconciliation.inversion || 0),
     };
 
-    const systemAccounts = {
-      efectivo: Number(summary.salesBreakdown.cash || 0) + Number(summary.abonosBreakdown.cash || 0) + Number(summary.cashMovements.receivedFromVault || 0) + Number(summary.cashMovements.majorToMinor || 0) - Number(summary.cashMovements.returnedToVault || 0) - Number(summary.cashMovements.minorToMajor || 0),
-      transferencia: Number(summary.salesBreakdown.transfer || 0) + Number(summary.abonosBreakdown.transfer || 0),
-      tarjeta: Number(summary.salesBreakdown.card || 0) + Number(summary.abonosBreakdown.card || 0),
-      credito: Number(summary.salesBreakdown.credit || 0) + Number(summary.abonosBreakdown.credit || 0),
-      otros: Number(summary.salesBreakdown.other || 0) + Number(summary.abonosBreakdown.other || 0),
-      gastos: Number(summary.expensesTotal || 0),
-      inversion: Number(summary.purchasesTotal || 0),
-    };
+    const systemAccounts = buildShiftSystemAccounts(summary);
 
     const positiveAccountKeys = ['efectivo', 'transferencia', 'tarjeta', 'credito', 'otros'];
-    const negativeAccountKeys = ['gastos', 'inversion'];
-    const totalDeclarado = positiveAccountKeys.reduce((sum, key) => sum + Number(enteredAccounts[key] || 0), 0)
-      - negativeAccountKeys.reduce((sum, key) => sum + Number(enteredAccounts[key] || 0), 0);
-    const totalSistema = positiveAccountKeys.reduce((sum, key) => sum + Number(systemAccounts[key] || 0), 0)
-      - negativeAccountKeys.reduce((sum, key) => sum + Number(systemAccounts[key] || 0), 0);
+    const totalDeclarado = positiveAccountKeys.reduce((sum, key) => sum + Number(enteredAccounts[key] || 0), 0);
+    const totalSistema = positiveAccountKeys.reduce((sum, key) => sum + Number(systemAccounts[key] || 0), 0);
     const discrepancy = totalDeclarado - totalSistema;
     const accountDiffs = requiredAccountKeys.map((key) => ({
       key,
@@ -2164,10 +2201,10 @@ function App() {
       `Cuenta TARJETA: Sistema ${Number(systemAccounts.tarjeta || 0).toLocaleString()} | Declarado ${Number(enteredAccounts.tarjeta || 0).toLocaleString()}`,
       `Cuenta CREDITO: Sistema ${Number(systemAccounts.credito || 0).toLocaleString()} | Declarado ${Number(enteredAccounts.credito || 0).toLocaleString()}`,
       `Cuenta OTROS: Sistema ${Number(systemAccounts.otros || 0).toLocaleString()} | Declarado ${Number(enteredAccounts.otros || 0).toLocaleString()}`,
-      `Cuenta GASTOS/EGRESOS: Sistema ${Number(systemAccounts.gastos || 0).toLocaleString()} | Declarado ${Number(enteredAccounts.gastos || 0).toLocaleString()}`,
-      `Cuenta COMPRAS/INVERSION: Sistema ${Number(systemAccounts.inversion || 0).toLocaleString()} | Declarado ${Number(enteredAccounts.inversion || 0).toLocaleString()}`,
-      `TOTAL SISTEMA NETO (cuentas): ${Number(totalSistema || 0).toLocaleString()}`,
-      `TOTAL DECLARADO NETO (cuentas): ${Number(totalDeclarado || 0).toLocaleString()}`,
+      `Cuenta GASTOS/EGRESOS: Sistema ${formatSignedAccountAmount('gastos', systemAccounts.gastos)} | Declarado ${formatSignedAccountAmount('gastos', enteredAccounts.gastos)}`,
+      `Cuenta COMPRAS/INVERSION: Sistema ${formatSignedAccountAmount('inversion', systemAccounts.inversion)} | Declarado ${formatSignedAccountAmount('inversion', enteredAccounts.inversion)}`,
+      `TOTAL SISTEMA CUADRE: ${Number(totalSistema || 0).toLocaleString()}`,
+      `TOTAL DECLARADO CUADRE: ${Number(totalDeclarado || 0).toLocaleString()}`,
       `Diferencia Total: ${Number(discrepancy || 0).toLocaleString()}`,
       `Cierre con autorizacion admin: ${authorizedMismatch ? 'SI' : 'NO'}`,
       `Cierre sin movimientos: ${hasAnyUserMovement ? 'NO' : 'SI'}`,
@@ -2335,6 +2372,17 @@ function App() {
     return `SSOT-${String(next).padStart(4, '0')}`;
   };
 
+  const getSaleItemProductId = (item) => (
+    item?.productId ?? item?.product_id ?? item?.id ?? null
+  );
+
+  const formatSignedAccountAmount = (key, amount) => {
+    const numericAmount = Number(amount || 0);
+    const isNegativeAccount = ['gastos', 'inversion'].includes(String(key || '').trim().toLowerCase());
+    const prefix = isNegativeAccount && numericAmount > 0 ? '-' : '';
+    return `${prefix}${Math.abs(numericAmount).toLocaleString()}`;
+  };
+
   const handleFacturar = async (mixedData = null, extraDiscount = 0, invoiceMeta = {}) => {
     if (items.length === 0) return alert("Agregue productos primero");
     if (selectedClient?.blocked) {
@@ -2344,14 +2392,22 @@ function App() {
 
     // Stock Validation
     for (const item of items) {
-      if ((stock.ventas[item.id] || 0) < item.quantity) {
-        return alert(`Inventario insuficiente para ${item.name}. Solo hay ${stock.ventas[item.id] || 0} en punto de venta.`);
+      const productId = getSaleItemProductId(item);
+      const availableStock = Number(stock.ventas[productId] || 0);
+      if (!productId) {
+        return alert(`El item ${item?.name || 'sin nombre'} no tiene identificador de producto valido.`);
+      }
+      if (availableStock < Number(item.quantity || 0)) {
+        return alert(`Inventario insuficiente para ${item.name}. Solo hay ${availableStock} en punto de venta.`);
       }
     }
 
-    // Reference validation for non-Cash/Credit
-    const needsRef = ![PAYMENT_MODES.CONTADO, PAYMENT_MODES.CREDITO].includes(paymentMode);
-    if (!isInternalZero && needsRef && !paymentRef) return alert("Debe ingresar el numero de referencia de la transferencia");
+    // Single-payment methods that are not cash/credit require a global reference.
+    // Mixed payments validate their references per part in PaymentSummary.
+    const needsRef = !mixedData && ![PAYMENT_MODES.CONTADO, PAYMENT_MODES.CREDITO].includes(paymentMode);
+    if (!isInternalZero && needsRef && !String(paymentRef || '').trim()) {
+      return alert("Debe ingresar el numero de referencia para este metodo de pago");
+    }
 
     // Credit Limit check (Individual Invoice Max)
     const isCreditPortion = paymentMode === PAYMENT_MODES.CREDITO || mixedData?.credit > 0;
@@ -2427,23 +2483,37 @@ function App() {
       ...newInvoice,
       status: newInvoice.status,
       user_name: currentUser?.name || 'Sistema',
-      user_id: currentUser?.id
+      user_id: currentUser?.id,
+      items: items.map((item) => ({
+        ...item,
+        productId: getSaleItemProductId(item),
+        product_id: getSaleItemProductId(item),
+      }))
     };
 
     // Reduce stock locally
     const newStockVentas = { ...stock.ventas };
-    items.forEach(item => {
-      newStockVentas[item.id] = (newStockVentas[item.id] || 0) - item.quantity;
+    const stockUpdates = [];
+    finalInvoice.items.forEach((item) => {
+      const productId = getSaleItemProductId(item);
+      if (!productId) return;
+      newStockVentas[productId] = (Number(newStockVentas[productId]) || 0) - Number(item.quantity || 0);
 
-      // PERSIST stock reduction to Supabase product table
-      const prod = products.find(p => p.id === item.id);
+      const prod = products.find((p) => String(p.id) === String(productId));
       if (prod) {
-        dataService
-          .updateProductStockById(prod.id, { stock: Number(newStockVentas[item.id]) || 0 }, currentUser?.id)
-          .catch(e => console.error("Error updating stock on SALE:", e));
+        stockUpdates.push(
+          dataService.updateProductStockById(prod.id, { stock: Number(newStockVentas[productId]) || 0 }, currentUser?.id)
+        );
       }
     });
-    setStock({ ...stock, ventas: newStockVentas });
+    setStock((prev) => ({ ...prev, ventas: newStockVentas }));
+
+    try {
+      await Promise.all(stockUpdates);
+    } catch (e) {
+      console.error('Error updating stock on SALE:', e);
+      alert(`La factura se genero, pero no se pudo sincronizar el inventario de ventas.\n\nDetalle: ${e?.message || 'Error desconocido'}`);
+    }
 
     if (!isInternalZero && (paymentMode === PAYMENT_MODES.CREDITO || mixedData?.credit > 0)) {
       const debtAmount = mixedData ? mixedData.credit : finalTotal;
@@ -2953,23 +3023,13 @@ function App() {
     if (!shift?.startTime) return null;
 
     const summary = getShiftFinancialSnapshot(shift.startTime, getOperationalNowIso(), currentUser);
-    const systemAccounts = {
-      efectivo: Number(summary.salesBreakdown.cash || 0) + Number(summary.abonosBreakdown.cash || 0) + Number(summary.cashMovements.receivedFromVault || 0) + Number(summary.cashMovements.majorToMinor || 0) - Number(summary.cashMovements.returnedToVault || 0) - Number(summary.cashMovements.minorToMajor || 0),
-      transferencia: Number(summary.salesBreakdown.transfer || 0) + Number(summary.abonosBreakdown.transfer || 0),
-      tarjeta: Number(summary.salesBreakdown.card || 0) + Number(summary.abonosBreakdown.card || 0),
-      credito: Number(summary.salesBreakdown.credit || 0) + Number(summary.abonosBreakdown.credit || 0),
-      otros: Number(summary.salesBreakdown.other || 0) + Number(summary.abonosBreakdown.other || 0),
-      gastos: Number(summary.expensesTotal || 0),
-      inversion: Number(summary.purchasesTotal || 0),
-    };
+    const systemAccounts = buildShiftSystemAccounts(summary);
     const netSystemTotal =
       Number(systemAccounts.efectivo || 0) +
       Number(systemAccounts.transferencia || 0) +
       Number(systemAccounts.tarjeta || 0) +
       Number(systemAccounts.credito || 0) +
-      Number(systemAccounts.otros || 0) -
-      Number(systemAccounts.gastos || 0) -
-      Number(systemAccounts.inversion || 0);
+      Number(systemAccounts.otros || 0);
 
     return { systemAccounts, netSystemTotal };
   }, [shift, currentUser, salesHistory, expenses, purchases, auditLogs, getOperationalNowIso]);
@@ -2983,7 +3043,11 @@ function App() {
       + Number(summary.salesBreakdown.cash || 0)
       + Number(summary.abonosBreakdown.cash || 0)
       + Number(summary.cashMovements.receivedFromVault || 0)
-      - Number(summary.cashMovements.returnedToVault || 0);
+      + Number(summary.cashMovements.majorToMinor || 0)
+      - Number(summary.cashMovements.returnedToVault || 0)
+      - Number(summary.cashMovements.minorToMajor || 0)
+      - Number(summary.expensesTotal || 0)
+      - Number(summary.purchasesTotal || 0);
   }, [shift, currentUser, salesHistory, expenses, purchases, auditLogs, getOperationalNowIso, userCashBalances]);
 
   const selectedClientPendingBalance = selectedClient
@@ -3410,6 +3474,8 @@ function App() {
           {activeTab === 'compras' && currentUser?.role !== 'Cajero' && (
             <PurchasingModule
               warehouseStock={stock.bodega}
+              currentUser={currentUser}
+              userCashBalance={getUserCashBalance(currentUser)}
               setWarehouseStock={async (update) => {
                 const newBodega = typeof update === 'function' ? update(stock.bodega) : update;
                 setStock({ ...stock, bodega: newBodega });
@@ -3432,18 +3498,22 @@ function App() {
               purchases={purchases}
               setPurchases={async (newPurchases) => {
                 setPurchases(newPurchases);
-                if (newPurchases.length > purchases.length) {
-                  try {
-                    await dataService.savePurchase({
-                      ...newPurchases[0],
-                      user_id: currentUser?.id,
-                      user_name: currentUser?.name || currentUser?.email || 'Sistema'
-                    });
-                  } catch (e) {
-                    console.error("Error guardando compra en Supabase:", e);
-                    const message = e?.message || 'Error desconocido';
-                    alert(`La compra se guardo localmente pero no en la nube.\n\nDetalle: ${message}`);
-                  }
+              }}
+              onRegisterPurchase={async (purchase) => {
+                const qty = Number(purchase?.quantity) || 0;
+                const unitCost = Number(purchase?.unitCost) || 0;
+                const totalAmount = qty * unitCost;
+                adjustUserCashBalance(currentUser, -totalAmount);
+                try {
+                  await dataService.savePurchase({
+                    ...purchase,
+                    user_id: currentUser?.id,
+                    user_name: currentUser?.name || currentUser?.email || 'Sistema'
+                  });
+                } catch (e) {
+                  adjustUserCashBalance(currentUser, totalAmount);
+                  console.error("Error guardando compra en Supabase:", e);
+                  throw e;
                 }
               }}
               products={products}

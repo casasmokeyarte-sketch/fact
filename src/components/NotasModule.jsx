@@ -1,8 +1,11 @@
 import React, { useState } from 'react';
+import { PaginationControls } from './PaginationControls';
+import { usePagination } from '../lib/usePagination';
 
 export function NotasModule({ clients, sales, onLog }) {
     const [notes, setNotes] = useState([]);
     const [form, setForm] = useState({ clientId: '', invoiceId: '', type: 'Credito', amount: '', reason: '' });
+    const notesPagination = usePagination(notes, 15);
 
     const handleAddNote = (e) => {
         e.preventDefault();
@@ -92,10 +95,10 @@ export function NotasModule({ clients, sales, onLog }) {
                                 </tr>
                             </thead>
                             <tbody>
-                                {notes.length === 0 ? (
+                                {notesPagination.totalItems === 0 ? (
                                     <tr><td colSpan="4" style={{ textAlign: 'center', padding: '2rem' }}>No hay notas registradas</td></tr>
                                 ) : (
-                                    notes.map(n => (
+                                    notesPagination.pageItems.map(n => (
                                         <tr key={n.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
                                             <td style={{ padding: '0.75rem', fontSize: '0.7rem' }}>{n.id}</td>
                                             <td style={{ padding: '0.75rem' }}>{n.clientName}</td>
@@ -117,6 +120,13 @@ export function NotasModule({ clients, sales, onLog }) {
                             </tbody>
                         </table>
                     </div>
+                    <PaginationControls
+                        page={notesPagination.page}
+                        totalPages={notesPagination.totalPages}
+                        totalItems={notesPagination.totalItems}
+                        pageSize={notesPagination.pageSize}
+                        onPageChange={notesPagination.setPage}
+                    />
                 </div>
             </div>
         </div>

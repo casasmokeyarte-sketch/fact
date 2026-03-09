@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { COMPANY_INFO } from '../constants';
 import { printReportHtml } from '../lib/printReports';
+import { PaginationControls } from './PaginationControls';
 
 export function ReportsModule({
     currentUser,
@@ -19,6 +20,14 @@ export function ReportsModule({
 }) {
     const [reportType, setReportType] = useState('ventas');
     const [filter, setFilter] = useState('');
+    const [dateFrom, setDateFrom] = useState('');
+    const [dateTo, setDateTo] = useState('');
+    const [userFilter, setUserFilter] = useState('');
+    const [statusFilter, setStatusFilter] = useState('');
+    const [paymentFilter, setPaymentFilter] = useState('');
+    const [categoryFilter, setCategoryFilter] = useState('');
+    const [supplierFilter, setSupplierFilter] = useState('');
+    const [reportPage, setReportPage] = useState(1);
     const reportCanvasRef = useRef(null);
 
     const filterStorageKey = `fact_filter_reports_${currentUser?.id || 'anon'}`;
@@ -44,6 +53,10 @@ export function ReportsModule({
         localStorage.setItem(reportTypeStorageKey, reportType);
     }, [reportType, currentUser?.id]);
 
+    useEffect(() => {
+        setReportPage(1);
+    }, [reportType, filter, dateFrom, dateTo, userFilter, statusFilter, paymentFilter, categoryFilter, supplierFilter]);
+
     const userNameByKey = useMemo(() => {
         const map = {};
         (users || []).forEach((u) => {
@@ -57,9 +70,61 @@ export function ReportsModule({
     const resolveUserLabel = (row) => (
         row?.user_name ||
         row?.user ||
+        row?.username ||
+        row?.mixedDetails?.user_name ||
+        row?.mixedDetails?.user ||
+        row?.mixed_details?.user_name ||
+        row?.mixed_details?.user ||
         userNameByKey[String(row?.user_id || '')] ||
         'Sin usuario'
     );
+
+    const normalizeDateKey = (value) => {
+        if (!value) return '';
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return '';
+        return date.toISOString().slice(0, 10);
+    };
+
+    const isDateWithinRange = (value) => {
+        if (!dateFrom && !dateTo) return true;
+        const key = normalizeDateKey(value);
+        if (!key) return false;
+        if (dateFrom && key < dateFrom) return false;
+        if (dateTo && key > dateTo) return false;
+        return true;
+    };
+
+    const matchesUserFilter = (row) => (
+        !userFilter || resolveUserLabel(row).toLowerCase().includes(userFilter.toLowerCase())
+    );
+
+    const paginateRows = (rows) => {
+        const totalItems = Array.isArray(rows) ? rows.length : 0;
+        const pageSize = 15;
+        const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+        const safePage = Math.min(reportPage, totalPages);
+        const start = (safePage - 1) * pageSize;
+        return {
+            page: safePage,
+            totalItems,
+            totalPages,
+            pageSize,
+            pageItems: (rows || []).slice(start, start + pageSize),
+        };
+    };
+
+    const shouldShowDateFilters = ['ventas', 'gastos', 'compras', 'bitacora', 'cartera'].includes(reportType);
+    const shouldShowUserFilter = ['ventas', 'gastos', 'compras', 'bitacora'].includes(reportType);
+    const salesPaymentOptions = useMemo(() => (
+        Array.from(new Set((sales || []).map((row) => String(row?.paymentMode || '').trim()).filter(Boolean))).sort()
+    ), [sales]);
+    const expenseTypeOptions = useMemo(() => (
+        Array.from(new Set((expenses || []).map((row) => String(row?.type || row?.category || '').trim()).filter(Boolean))).sort()
+    ), [expenses]);
+    const purchaseSupplierOptions = useMemo(() => (
+        Array.from(new Set((purchases || []).map((row) => String(row?.supplier || '').trim()).filter(Boolean))).sort()
+    ), [purchases]);
 
     const isFinanciallyClosedInvoice = (invoice) => {
         const status = String(invoice?.status || '').trim().toLowerCase();
@@ -83,22 +148,39 @@ export function ReportsModule({
         const f = filter.toLowerCase();
 
         switch (reportType) {
-            case 'bitacora':
+            case 'bitacora': {
+                const filteredLogs = (logs || [])
+                    .filter((l) => String(l?.details || '').toLowerCase().includes(f))
+                    .filter((l) => isDateWithinRange(l?.timestamp))
+                    .filter((l) => matchesUserFilter(l));
+                const pagination = paginateRows(filteredLogs);
                 return (
-                    <table>
-                        <thead><tr><th>Fecha</th><th>Usuario</th><th>Accion</th><th>Detalle</th></tr></thead>
-                        <tbody>
-                            {(logs || []).filter((l) => String(l?.details || '').toLowerCase().includes(f)).map((l, i) => (
-                                <tr key={i}><td>{new Date(l.timestamp).toLocaleString()}</td><td>{l.user_name || l.user || 'Sistema'}</td><td>{l.action}</td><td>{l.details}</td></tr>
-                            ))}
-                        </tbody>
-                    </table>
+                    <>
+                        <table>
+                            <thead><tr><th>Fecha</th><th>Usuario</th><th>Accion</th><th>Detalle</th></tr></thead>
+                            <tbody>
+                                {pagination.pageItems.map((l, i) => (
+                                    <tr key={i}><td>{new Date(l.timestamp).toLocaleString()}</td><td>{l.user_name || l.user || 'Sistema'}</td><td>{l.action}</td><td>{l.details}</td></tr>
+                                ))}
+                            </tbody>
+                        </table>
+                        <PaginationControls page={pagination.page} totalPages={pagination.totalPages} totalItems={pagination.totalItems} pageSize={pagination.pageSize} onPageChange={setReportPage} />
+                    </>
                 );
+            }
 
             case 'ventas': {
                 const filteredSales = (sales || [])
                     .filter((s) => !isFinanciallyClosedInvoice(s))
-                    .filter((s) => String(s?.clientName || '').toLowerCase().includes(f));
+                    .filter((s) =>
+                        String(s?.clientName || '').toLowerCase().includes(f) ||
+                        String(s?.id || '').toLowerCase().includes(f)
+                    )
+                    .filter((s) => isDateWithinRange(s?.date))
+                    .filter((s) => matchesUserFilter(s))
+                    .filter((s) => !statusFilter || String(s?.status || 'pagado').toLowerCase() === statusFilter)
+                    .filter((s) => !paymentFilter || String(s?.paymentMode || '').trim() === paymentFilter);
+                const pagination = paginateRows(filteredSales);
                 const totalSales = filteredSales.reduce((sum, s) => sum + Number(s.total || 0), 0);
                 return (
                     <>
@@ -106,59 +188,81 @@ export function ReportsModule({
                         <table>
                             <thead><tr><th>Factura</th><th>Usuario</th><th>Cliente</th><th>Total</th><th>Pago</th></tr></thead>
                             <tbody>
-                                {filteredSales.map((s, i) => (
+                                {pagination.pageItems.map((s, i) => (
                                     <tr key={i}><td>{s.id}</td><td>{resolveUserLabel(s)}</td><td>{s.clientName}</td><td>${Number(s.total || 0).toLocaleString()}</td><td>{s.paymentMode}</td></tr>
                                 ))}
                             </tbody>
                         </table>
+                        <PaginationControls page={pagination.page} totalPages={pagination.totalPages} totalItems={pagination.totalItems} pageSize={pagination.pageSize} onPageChange={setReportPage} />
                     </>
                 );
             }
 
-            case 'inventario':
+            case 'inventario': {
+                const filteredProducts = (products || []).filter((p) => String(p?.name || '').toLowerCase().includes(f));
+                const pagination = paginateRows(filteredProducts);
                 return (
-                    <table>
-                        <thead><tr><th>Producto</th><th>Bodega</th><th>Punto Venta</th><th>Total Stock</th></tr></thead>
-                        <tbody>
-                            {(products || []).filter((p) => String(p?.name || '').toLowerCase().includes(f)).map((p, idx) => {
-                                const bodega = inventory?.bodega?.[p.id] || 0;
-                                const ventas = inventory?.ventas?.[p.id] || 0;
-                                return (
-                                    <tr key={`${p.id}-${idx}`}>
-                                        <td>{p.name}</td>
-                                        <td>{bodega}</td>
-                                        <td>{ventas}</td>
-                                        <td><strong>{bodega + ventas}</strong></td>
-                                    </tr>
-                                );
-                            })}
-                        </tbody>
-                    </table>
+                    <>
+                        <table>
+                            <thead><tr><th>Producto</th><th>Bodega</th><th>Punto Venta</th><th>Total Stock</th></tr></thead>
+                            <tbody>
+                                {pagination.pageItems.map((p, idx) => {
+                                    const bodega = inventory?.bodega?.[p.id] || 0;
+                                    const ventas = inventory?.ventas?.[p.id] || 0;
+                                    return (
+                                        <tr key={`${p.id}-${idx}`}>
+                                            <td>{p.name}</td>
+                                            <td>{bodega}</td>
+                                            <td>{ventas}</td>
+                                            <td><strong>{bodega + ventas}</strong></td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                        <PaginationControls page={pagination.page} totalPages={pagination.totalPages} totalItems={pagination.totalItems} pageSize={pagination.pageSize} onPageChange={setReportPage} />
+                    </>
                 );
+            }
 
-            case 'clientes':
-                return (
-                    <table>
-                        <thead><tr><th>Nombre</th><th>Documento</th><th>Tipo</th><th>Credito</th></tr></thead>
-                        <tbody>
-                            {(clients || []).filter((c) => String(c?.name || '').toLowerCase().includes(f)).map((c, i) => (
-                                <tr key={i}>
-                                    <td>{c.name}</td>
-                                    <td>{c.document}</td>
-                                    <td>{c.type}</td>
-                                    <td>${Number(c.creditLimit || 0).toLocaleString()}</td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
+            case 'clientes': {
+                const filteredClients = (clients || []).filter((c) =>
+                    String(c?.name || '').toLowerCase().includes(f) ||
+                    String(c?.document || '').toLowerCase().includes(f)
                 );
+                const pagination = paginateRows(filteredClients);
+                return (
+                    <>
+                        <table>
+                            <thead><tr><th>Nombre</th><th>Documento</th><th>Tipo</th><th>Credito</th></tr></thead>
+                            <tbody>
+                                {pagination.pageItems.map((c, i) => (
+                                    <tr key={i}>
+                                        <td>{c.name}</td>
+                                        <td>{c.document}</td>
+                                        <td>{c.type}</td>
+                                        <td>${Number(c.creditLimit || 0).toLocaleString()}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                        <PaginationControls page={pagination.page} totalPages={pagination.totalPages} totalItems={pagination.totalItems} pageSize={pagination.pageSize} onPageChange={setReportPage} />
+                    </>
+                );
+            }
 
             case 'gastos': {
                 const filteredExpenses = (expenses || []).filter((g) =>
-                    String(g?.description || '').toLowerCase().includes(f) ||
-                    String(g?.type || '').toLowerCase().includes(f) ||
-                    String(g?.beneficiary || '').toLowerCase().includes(f)
+                    (
+                        String(g?.description || '').toLowerCase().includes(f) ||
+                        String(g?.type || '').toLowerCase().includes(f) ||
+                        String(g?.beneficiary || '').toLowerCase().includes(f)
+                    ) &&
+                    isDateWithinRange(g?.date) &&
+                    matchesUserFilter(g) &&
+                    (!categoryFilter || String(g?.type || g?.category || '').trim() === categoryFilter)
                 );
+                const pagination = paginateRows(filteredExpenses);
                 const totalExp = filteredExpenses.reduce((sum, g) => sum + Number(g.amount || 0), 0);
                 return (
                     <>
@@ -166,7 +270,7 @@ export function ReportsModule({
                         <table>
                             <thead><tr><th>Fecha</th><th>Usuario</th><th>Tipo</th><th>Beneficiario</th><th>Descripcion</th><th>Monto</th></tr></thead>
                             <tbody>
-                                {filteredExpenses.map((g, i) => (
+                                {pagination.pageItems.map((g, i) => (
                                     <tr key={i}>
                                         <td>{new Date(g.date).toLocaleDateString()}</td>
                                         <td>{resolveUserLabel(g)}</td>
@@ -178,15 +282,22 @@ export function ReportsModule({
                                 ))}
                             </tbody>
                         </table>
+                        <PaginationControls page={pagination.page} totalPages={pagination.totalPages} totalItems={pagination.totalItems} pageSize={pagination.pageSize} onPageChange={setReportPage} />
                     </>
                 );
             }
 
             case 'compras': {
                 const filteredPurchases = (purchases || []).filter((p) =>
-                    String(p?.supplier || '').toLowerCase().includes(f) ||
-                    String(p?.productName || '').toLowerCase().includes(f)
+                    (
+                        String(p?.supplier || '').toLowerCase().includes(f) ||
+                        String(p?.productName || '').toLowerCase().includes(f)
+                    ) &&
+                    isDateWithinRange(p?.date) &&
+                    matchesUserFilter(p) &&
+                    (!supplierFilter || String(p?.supplier || '').trim() === supplierFilter)
                 );
+                const pagination = paginateRows(filteredPurchases);
                 const totalUnits = filteredPurchases.reduce((sum, p) => sum + Number(p.quantity || 0), 0);
                 return (
                     <>
@@ -194,18 +305,24 @@ export function ReportsModule({
                         <table>
                             <thead><tr><th>Fecha</th><th>Usuario</th><th>Proveedor</th><th>Producto</th><th>Cant.</th></tr></thead>
                             <tbody>
-                                {filteredPurchases.map((p, i) => (
+                                {pagination.pageItems.map((p, i) => (
                                     <tr key={i}><td>{new Date(p.date).toLocaleDateString()}</td><td>{resolveUserLabel(p)}</td><td>{p.supplier}</td><td>{p.productName}</td><td>{p.quantity}</td></tr>
                                 ))}
                             </tbody>
                         </table>
+                        <PaginationControls page={pagination.page} totalPages={pagination.totalPages} totalItems={pagination.totalItems} pageSize={pagination.pageSize} onPageChange={setReportPage} />
                     </>
                 );
             }
 
             case 'cartera': {
-                const filteredCartera = (cartera || []).filter((c) => String(c?.clientName || '').toLowerCase().includes(f));
+                const filteredCartera = (cartera || []).filter((c) =>
+                    String(c?.clientName || '').toLowerCase().includes(f) &&
+                    isDateWithinRange(c?.date) &&
+                    (!statusFilter || String(c?.status || '').toLowerCase() === statusFilter)
+                );
                 const totalCartera = filteredCartera.reduce((sum, c) => sum + Number(c.balance || 0), 0);
+                const pagination = paginateRows(filteredCartera);
                 const carteraHistory = (sales || [])
                     .filter((s) => {
                         const hasCredit = String(s?.paymentMode || '').toLowerCase().includes('credito') || Number(s?.balance || 0) > 0;
@@ -220,11 +337,12 @@ export function ReportsModule({
                         <table>
                             <thead><tr><th>Fecha</th><th>Usuario</th><th>Cliente</th><th>Factura #</th><th>Saldo</th></tr></thead>
                             <tbody>
-                                {filteredCartera.map((c, i) => (
+                                {pagination.pageItems.map((c, i) => (
                                     <tr key={i}><td>{new Date(c.date).toLocaleDateString()}</td><td>{resolveUserLabel(c)}</td><td>{c.clientName}</td><td>{c.id}</td><td>${Number(c.balance || 0).toLocaleString()}</td></tr>
                                 ))}
                             </tbody>
                         </table>
+                        <PaginationControls page={pagination.page} totalPages={pagination.totalPages} totalItems={pagination.totalItems} pageSize={pagination.pageSize} onPageChange={setReportPage} />
                         <h4 style={{ margin: '1.2rem 0 0.6rem' }}>Historial de Cartera (incluye facturas pagadas y abonos)</h4>
                         <table>
                             <thead><tr><th>Fecha</th><th>Factura</th><th>Cliente</th><th>Estado</th><th>Saldo</th><th>Abonos</th></tr></thead>
@@ -341,22 +459,33 @@ export function ReportsModule({
                     .filter((s) => !isFinanciallyClosedInvoice(s))
                     .reduce((sum, s) => sum + Number(s.total || 0), 0);
                 const totalGastosBal = (expenses || []).reduce((sum, g) => sum + Number(g.amount || 0), 0);
-                const net = totalSalesBal - totalGastosBal;
+                const totalInversionBal = (purchases || []).reduce((sum, p) => (
+                    sum + ((Number(p.quantity) || 0) * (Number(p.unitCost) || 0))
+                ), 0);
+                const totalEgresosBal = totalGastosBal + totalInversionBal;
+                const net = totalSalesBal - totalEgresosBal;
                 return (
                     <div className="card" style={{ padding: '2rem', textAlign: 'center' }}>
                         <h3>BALANCE GENERAL SISTEMA</h3>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem', marginTop: '2rem' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '2rem', marginTop: '2rem' }}>
                             <div className="card" style={{ backgroundColor: '#f0fdf4' }}>
                                 <h4 style={{ color: '#166534' }}>Ingresos Totales</h4>
                                 <p style={{ fontSize: '2rem', fontWeight: 'bold', color: '#166534' }}>${totalSalesBal.toLocaleString()}</p>
                             </div>
                             <div className="card" style={{ backgroundColor: '#fef2f2' }}>
-                                <h4 style={{ color: '#991b1b' }}>Egresos Totales (Gastos)</h4>
+                                <h4 style={{ color: '#991b1b' }}>Gastos Totales</h4>
                                 <p style={{ fontSize: '2rem', fontWeight: 'bold', color: '#991b1b' }}>${totalGastosBal.toLocaleString()}</p>
+                            </div>
+                            <div className="card" style={{ backgroundColor: '#fff7ed' }}>
+                                <h4 style={{ color: '#9a3412' }}>Inversion Total</h4>
+                                <p style={{ fontSize: '2rem', fontWeight: 'bold', color: '#9a3412' }}>${totalInversionBal.toLocaleString()}</p>
                             </div>
                         </div>
                         <div className="card" style={{ marginTop: '2rem', backgroundColor: net >= 0 ? '#f0fdf4' : '#fef2f2' }}>
                             <h4>Utilidad Operativa Bruta</h4>
+                            <p style={{ margin: '0 0 0.6rem', color: '#64748b' }}>
+                                Ingresos - Gastos - Inversion = ${totalSalesBal.toLocaleString()} - ${totalGastosBal.toLocaleString()} - ${totalInversionBal.toLocaleString()}
+                            </p>
                             <p style={{ fontSize: '2.5rem', fontWeight: 'bold', color: net >= 0 ? '#15803d' : '#b91c1c' }}>
                                 ${net.toLocaleString()}
                             </p>
@@ -573,6 +702,64 @@ export function ReportsModule({
                         value={filter}
                         onChange={(e) => setFilter(e.target.value)}
                     />
+                </div>
+                <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1rem', alignItems: 'center', flexWrap: 'wrap' }} className="no-print">
+                    {shouldShowDateFilters && (
+                        <>
+                            <input type="date" className="input-field" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+                            <input type="date" className="input-field" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+                        </>
+                    )}
+                    {shouldShowUserFilter && (
+                        <input
+                            type="text"
+                            className="input-field"
+                            placeholder="Asesor / usuario"
+                            value={userFilter}
+                            onChange={(e) => setUserFilter(e.target.value)}
+                        />
+                    )}
+                    {reportType === 'ventas' && (
+                        <>
+                            <select className="input-field" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+                                <option value="">Todos los estados</option>
+                                <option value="pagado">Pagado</option>
+                                <option value="pendiente">Pendiente</option>
+                                <option value="anulada">Anulada</option>
+                                <option value="devuelta">Devuelta</option>
+                                <option value="interna_cero">Interna $0</option>
+                            </select>
+                            <select className="input-field" value={paymentFilter} onChange={(e) => setPaymentFilter(e.target.value)}>
+                                <option value="">Todos los pagos</option>
+                                {salesPaymentOptions.map((payment) => (
+                                    <option key={payment} value={payment}>{payment}</option>
+                                ))}
+                            </select>
+                        </>
+                    )}
+                    {reportType === 'gastos' && (
+                        <select className="input-field" value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}>
+                            <option value="">Todos los tipos</option>
+                            {expenseTypeOptions.map((type) => (
+                                <option key={type} value={type}>{type}</option>
+                            ))}
+                        </select>
+                    )}
+                    {reportType === 'compras' && (
+                        <select className="input-field" value={supplierFilter} onChange={(e) => setSupplierFilter(e.target.value)}>
+                            <option value="">Todos los proveedores</option>
+                            {purchaseSupplierOptions.map((supplier) => (
+                                <option key={supplier} value={supplier}>{supplier}</option>
+                            ))}
+                        </select>
+                    )}
+                    {reportType === 'cartera' && (
+                        <select className="input-field" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+                            <option value="">Todos los estados</option>
+                            <option value="pendiente">Pendiente</option>
+                            <option value="pagado">Pagado</option>
+                        </select>
+                    )}
                 </div>
                 <div ref={reportCanvasRef} className="report-canvas printable-area" style={{ maxHeight: '600px', overflow: 'auto' }}>
                     <CompanyHeader />

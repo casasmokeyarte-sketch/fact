@@ -13,6 +13,11 @@ const ACCOUNT_FIELDS = [
 const parseMoneyInput = (value) => Number(String(value || '').replace(/[^\d]/g, '')) || 0;
 const POSITIVE_ACCOUNT_KEYS = ['efectivo', 'transferencia', 'tarjeta', 'credito', 'otros'];
 const NEGATIVE_ACCOUNT_KEYS = ['gastos', 'inversion'];
+const formatSignedMoney = (key, amount) => {
+  const numericAmount = Number(amount || 0);
+  const prefix = NEGATIVE_ACCOUNT_KEYS.includes(key) && numericAmount > 0 ? '-' : '';
+  return `${prefix}$${Math.abs(numericAmount).toLocaleString()}`;
+};
 
 export function ShiftManager({ shift, onStartShift, onEndShift, reconciliationPreview = null }) {
   const [showReconciliation, setShowReconciliation] = useState(false);
@@ -28,8 +33,7 @@ export function ShiftManager({ shift, onStartShift, onEndShift, reconciliationPr
   ), [accounts]);
 
   const totalDeclared = useMemo(() => (
-    POSITIVE_ACCOUNT_KEYS.reduce((sum, key) => sum + Number(parsedAccounts[key] || 0), 0) -
-    NEGATIVE_ACCOUNT_KEYS.reduce((sum, key) => sum + Number(parsedAccounts[key] || 0), 0)
+    POSITIVE_ACCOUNT_KEYS.reduce((sum, key) => sum + Number(parsedAccounts[key] || 0), 0)
   ), [parsedAccounts]);
 
   const differenceAmount = useMemo(() => {
@@ -109,6 +113,27 @@ export function ShiftManager({ shift, onStartShift, onEndShift, reconciliationPr
             <p style={{ marginTop: 0, color: '#64748b' }}>
               Registre todas las cuentas. Si no hubo movimiento, escriba <strong>0</strong>.
             </p>
+            <div style={{ marginBottom: '0.9rem', padding: '10px', borderRadius: '6px', backgroundColor: '#fff7ed', color: '#9a3412', fontSize: '0.9rem' }}>
+              El <strong>efectivo</strong> debe ser el dinero que realmente quedo en caja al final.
+              Si ya registro un <strong>gasto</strong> o una <strong>inversion</strong>, ese valor normalmente ya salio del efectivo y no debe sumarse otra vez.
+            </div>
+            {reconciliationPreview?.systemAccounts && (
+              <div style={{ marginBottom: '0.9rem', padding: '10px', borderRadius: '6px', backgroundColor: '#f8fafc' }}>
+                <div style={{ fontWeight: 700, marginBottom: '0.45rem' }}>Desglose sistema</div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '0.35rem 0.75rem', fontSize: '0.92rem' }}>
+                  {ACCOUNT_FIELDS.map((field) => (
+                    <React.Fragment key={field.key}>
+                      <span>{field.label}</span>
+                      <strong>{formatSignedMoney(field.key, reconciliationPreview.systemAccounts[field.key])}</strong>
+                    </React.Fragment>
+                  ))}
+                </div>
+                <p style={{ margin: '0.55rem 0 0', color: '#64748b', fontSize: '0.84rem' }}>
+                  <strong>Gastos</strong> e <strong>inversion</strong> se reportan aparte y no descuentan de nuevo el total,
+                  porque ya impactan el efectivo real del cierre.
+                </p>
+              </div>
+            )}
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
               {ACCOUNT_FIELDS.map((f) => (

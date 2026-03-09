@@ -1,8 +1,11 @@
 import React, { useState } from 'react';
 import { printShiftClosure } from '../lib/printReports';
+import { PaginationControls } from './PaginationControls';
+import { usePagination } from '../lib/usePagination';
 
 export function ShiftHistoryModule({ shiftHistory, onLog }) {
     const [selectedShift, setSelectedShift] = useState(null);
+    const historyPagination = usePagination(shiftHistory.slice().reverse(), 15);
 
     const handlePrint = (shift, mode = '58mm') => {
         printShiftClosure(shift, mode);
@@ -25,10 +28,10 @@ export function ShiftHistoryModule({ shiftHistory, onLog }) {
                         </tr>
                     </thead>
                     <tbody>
-                        {shiftHistory.length === 0 ? (
+                        {historyPagination.totalItems === 0 ? (
                             <tr><td colSpan="5" style={{ textAlign: 'center', padding: '2rem' }}>No hay cierres registrados</td></tr>
                         ) : (
-                            shiftHistory.slice().reverse().map(shift => (
+                            historyPagination.pageItems.map(shift => (
                                 <tr key={shift.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
                                     <td style={{ padding: '0.5rem' }}>{new Date(shift.endTime).toLocaleString()}</td>
                                     <td style={{ padding: '0.5rem' }}>{shift.user}</td>
@@ -46,6 +49,13 @@ export function ShiftHistoryModule({ shiftHistory, onLog }) {
                         )}
                     </tbody>
                 </table>
+                <PaginationControls
+                    page={historyPagination.page}
+                    totalPages={historyPagination.totalPages}
+                    totalItems={historyPagination.totalItems}
+                    pageSize={historyPagination.pageSize}
+                    onPageChange={historyPagination.setPage}
+                />
             </div>
 
             {selectedShift && (

@@ -1,4 +1,6 @@
 import React from 'react';
+import { PaginationControls } from './PaginationControls';
+import { usePagination } from '../lib/usePagination';
 
 const AUTH_REQUEST_LOG_PREFIX = 'AUTH_REQUEST_EVENT::';
 
@@ -59,40 +61,50 @@ const formatAuthLog = (log) => {
 };
 
 export function AuditLog({ logs }) {
+    const auditPagination = usePagination([...logs].reverse(), 15);
     return (
         <div className="audit-log">
             <h2>BitAcora de Movimientos</h2>
             <div className="card">
-                {logs.length === 0 ? (
+                {auditPagination.totalItems === 0 ? (
                     <p style={{ textAlign: 'center', padding: '2rem' }}>No hay movimientos registrados.</p>
                 ) : (
-                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                        <thead>
-                            <tr style={{ borderBottom: '2px solid var(--border-color)' }}>
-                                <th style={{ padding: '0.75rem', textAlign: 'left' }}>Fecha/Hora</th>
-                                <th style={{ padding: '0.75rem', textAlign: 'left' }}>Usuario</th>
-                                <th style={{ padding: '0.75rem', textAlign: 'left' }}>Modulo</th>
-                                <th style={{ padding: '0.75rem', textAlign: 'left' }}>AcciAn</th>
-                                <th style={{ padding: '0.75rem', textAlign: 'left' }}>Detalles</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {[...logs].reverse().map((log, index) => {
-                                const formatted = log?.module === 'Autorizaciones'
-                                    ? formatAuthLog(log)
-                                    : { action: log?.action, details: log?.details };
-                                return (
-                                    <tr key={index} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                                        <td style={{ padding: '0.75rem', fontSize: '0.9em' }}>{new Date(log.timestamp).toLocaleString()}</td>
-                                        <td style={{ padding: '0.75rem', fontWeight: '600' }}>{log.user_name || log.user || 'Sistema'}</td>
-                                        <td style={{ padding: '0.75rem' }}><span className="badge" style={{ backgroundColor: '#e2e8f0', padding: '2px 6px', borderRadius: '4px' }}>{log.module}</span></td>
-                                        <td style={{ padding: '0.75rem', fontWeight: 'bold' }}>{formatted.action}</td>
-                                        <td style={{ padding: '0.75rem', fontSize: '0.9em' }}>{formatted.details}</td>
-                                    </tr>
-                                );
-                            })}
-                        </tbody>
-                    </table>
+                    <>
+                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                            <thead>
+                                <tr style={{ borderBottom: '2px solid var(--border-color)' }}>
+                                    <th style={{ padding: '0.75rem', textAlign: 'left' }}>Fecha/Hora</th>
+                                    <th style={{ padding: '0.75rem', textAlign: 'left' }}>Usuario</th>
+                                    <th style={{ padding: '0.75rem', textAlign: 'left' }}>Modulo</th>
+                                    <th style={{ padding: '0.75rem', textAlign: 'left' }}>AcciAn</th>
+                                    <th style={{ padding: '0.75rem', textAlign: 'left' }}>Detalles</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {auditPagination.pageItems.map((log, index) => {
+                                    const formatted = log?.module === 'Autorizaciones'
+                                        ? formatAuthLog(log)
+                                        : { action: log?.action, details: log?.details };
+                                    return (
+                                        <tr key={index} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                            <td style={{ padding: '0.75rem', fontSize: '0.9em' }}>{new Date(log.timestamp).toLocaleString()}</td>
+                                            <td style={{ padding: '0.75rem', fontWeight: '600' }}>{log.user_name || log.user || 'Sistema'}</td>
+                                            <td style={{ padding: '0.75rem' }}><span className="badge" style={{ backgroundColor: '#e2e8f0', padding: '2px 6px', borderRadius: '4px' }}>{log.module}</span></td>
+                                            <td style={{ padding: '0.75rem', fontWeight: 'bold' }}>{formatted.action}</td>
+                                            <td style={{ padding: '0.75rem', fontSize: '0.9em' }}>{formatted.details}</td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                        <PaginationControls
+                            page={auditPagination.page}
+                            totalPages={auditPagination.totalPages}
+                            totalItems={auditPagination.totalItems}
+                            pageSize={auditPagination.pageSize}
+                            onPageChange={auditPagination.setPage}
+                        />
+                    </>
                 )}
             </div>
         </div>

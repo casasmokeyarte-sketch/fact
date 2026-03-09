@@ -1,10 +1,15 @@
 import React, { useState } from 'react';
 import { COMPANY_INFO } from '../constants';
+import { PaginationControls } from './PaginationControls';
+import { usePagination } from '../lib/usePagination';
 
 export function CarteraModule({ currentUser, clients = [], paymentMethods = [], cartera, setCartera }) {
     const [abonoAmounts, setAbonoAmounts] = useState({});
     const [abonoPaymentMethods, setAbonoPaymentMethods] = useState({});
     const [abonoReferences, setAbonoReferences] = useState({});
+    const [searchTerm, setSearchTerm] = useState('');
+    const [statusFilter, setStatusFilter] = useState('');
+    const [dueFilter, setDueFilter] = useState('');
     
     // Check if user is Cajero
     const isCajero = currentUser?.role === 'Cajero';
@@ -14,6 +19,28 @@ export function CarteraModule({ currentUser, clients = [], paymentMethods = [], 
     const availablePaymentMethods = Array.isArray(paymentMethods) && paymentMethods.length > 0
         ? paymentMethods
         : ['Efectivo', 'Transferencia', 'Tarjeta'];
+    const normalizeDateKey = (value) => {
+        if (!value) return '';
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return '';
+        return date.toISOString().slice(0, 10);
+    };
+    const todayKey = new Date().toISOString().slice(0, 10);
+    const filteredCartera = (cartera || []).filter((inv) => {
+        const matchesSearch =
+            String(inv?.clientName || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+            String(inv?.id || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+            String(inv?.clientDoc || '').toLowerCase().includes(searchTerm.toLowerCase());
+        const matchesStatus = !statusFilter || String(inv?.status || '').toLowerCase() === statusFilter;
+        const dueDateKey = normalizeDateKey(inv?.dueDate);
+        const matchesDue =
+            !dueFilter ||
+            (dueFilter === 'vencidas' && dueDateKey && dueDateKey < todayKey && String(inv?.status || '').toLowerCase() !== 'pagado') ||
+            (dueFilter === 'hoy' && dueDateKey === todayKey) ||
+            (dueFilter === 'vigentes' && dueDateKey && dueDateKey >= todayKey);
+        return matchesSearch && matchesStatus && matchesDue;
+    });
+    const carteraPagination = usePagination(filteredCartera, 15);
 
     const handleAbonoChange = (id, amount) => {
         setAbonoAmounts({ ...abonoAmounts, [id]: amount });
@@ -183,12 +210,34 @@ export function CarteraModule({ currentUser, clients = [], paymentMethods = [], 
     return (
         <div className="cartera-container">
             <h2>Modulo de Cartera (Cuentas por Cobrar)</h2>
+            <div className="card" style={{ marginBottom: '1rem' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 1.8fr) repeat(2, minmax(180px, 1fr))', gap: '0.75rem' }}>
+                    <input
+                        type="text"
+                        className="input-field"
+                        placeholder="Buscar por cliente, factura o documento..."
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                    />
+                    <select className="input-field" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+                        <option value="">Todos los estados</option>
+                        <option value="pendiente">Pendientes</option>
+                        <option value="pagado">Pagadas</option>
+                    </select>
+                    <select className="input-field" value={dueFilter} onChange={(e) => setDueFilter(e.target.value)}>
+                        <option value="">Todos los vencimientos</option>
+                        <option value="vencidas">Vencidas</option>
+                        <option value="hoy">Vencen hoy</option>
+                        <option value="vigentes">Vigentes</option>
+                    </select>
+                </div>
+            </div>
 
-            {cartera.length === 0 ? (
+            {filteredCartera.length === 0 ? (
                 <div className="card" style={{ textAlign: 'center', padding: '3rem' }}>No hay facturas a Credito registradas.</div>
             ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                    {cartera.map(inv => {
+                    {carteraPagination.pageItems.map(inv => {
                         const isAlert = checkAlert(inv.dueDate);
                         const blockedClient = isClientBlocked(inv);
                         return (
@@ -285,6 +334,13 @@ export function CarteraModule({ currentUser, clients = [], paymentMethods = [], 
                             </div>
                         );
                     })}
+                    <PaginationControls
+                        page={carteraPagination.page}
+                        totalPages={carteraPagination.totalPages}
+                        totalItems={carteraPagination.totalItems}
+                        pageSize={carteraPagination.pageSize}
+                        onPageChange={carteraPagination.setPage}
+                    />
                 </div>
             )}
         </div>

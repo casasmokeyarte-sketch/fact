@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { printInvoiceDocument } from '../lib/printInvoice.js';
+import { PaginationControls } from './PaginationControls';
+import { usePagination } from '../lib/usePagination';
 
 const AUTH_REQUEST_LOG_PREFIX = 'AUTH_REQUEST_EVENT::';
 
@@ -17,6 +19,11 @@ export function HistorialModule({
   setPreselectedProductId
 }) {
   const [searchTerm, setSearchTerm] = useState('');
+  const [advisorFilter, setAdvisorFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [paymentFilter, setPaymentFilter] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [previewInvoice, setPreviewInvoice] = useState(null);
   const [movementScope, setMovementScope] = useState('mine');
   const [invoiceScope, setInvoiceScope] = useState(isAdmin ? 'all' : 'mine');
@@ -51,6 +58,19 @@ export function HistorialModule({
 
   const getInvoiceKey = (invoice) => String(invoice?.db_id || invoice?.id || '');
   const normalizeName = (value) => String(value || '').trim().toLowerCase();
+  const normalizeDateKey = (value) => {
+    if (!value) return '';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    return date.toISOString().slice(0, 10);
+  };
+  const isDateInSelectedRange = (value) => {
+    const dateKey = normalizeDateKey(value);
+    if (!dateKey) return false;
+    if (dateFrom && dateKey < dateFrom) return false;
+    if (dateTo && dateKey > dateTo) return false;
+    return true;
+  };
   const getItemProductId = (item) => item?.productId ?? item?.product_id ?? item?.id ?? null;
   const parseAuthRequestEvent = (details) => {
     const raw = String(details || '');
@@ -81,12 +101,22 @@ export function HistorialModule({
   };
 
   const normalizedSearch = searchTerm.toLowerCase();
+  const advisorOptions = useMemo(() => (
+    Array.from(new Set((sales || []).map((sale) => getInvoiceUser(sale)).filter(Boolean))).sort()
+  ), [sales]);
+  const paymentOptions = useMemo(() => (
+    Array.from(new Set((sales || []).map((sale) => String(sale?.paymentMode || '').trim()).filter(Boolean))).sort()
+  ), [sales]);
   const salesByScope = (sales || []).filter((s) => (
     invoiceScope === 'all' ? true : isOwnedByCurrentUser(s)
   ));
   const filteredSales = salesByScope.filter((s) =>
-    String(getInvoiceCode(s)).toLowerCase().includes(normalizedSearch) ||
-    String(s?.clientName ?? '').toLowerCase().includes(normalizedSearch)
+    (String(getInvoiceCode(s)).toLowerCase().includes(normalizedSearch) ||
+    String(s?.clientName ?? '').toLowerCase().includes(normalizedSearch)) &&
+    (!advisorFilter || getInvoiceUser(s) === advisorFilter) &&
+    (!statusFilter || String(s?.status || 'pagado').toLowerCase() === statusFilter) &&
+    (!paymentFilter || String(s?.paymentMode || '').trim() === paymentFilter) &&
+    isDateInSelectedRange(s?.date)
   ).sort((a, b) => new Date(b.date) - new Date(a.date));
 
   const facturationMovements = useMemo(() => {
@@ -95,14 +125,23 @@ export function HistorialModule({
     const scoped = movementScope === 'all'
       ? source
       : source.filter((log) => String(log?.user_id || '').trim() === ownId);
-    return scoped.sort((a, b) => new Date(b?.timestamp || 0) - new Date(a?.timestamp || 0)).slice(0, 120);
-  }, [logs, movementScope, currentUser?.id]);
+    return scoped
+      .filter((log) => isDateInSelectedRange(log?.timestamp))
+      .sort((a, b) => new Date(b?.timestamp || 0) - new Date(a?.timestamp || 0));
+  }, [logs, movementScope, currentUser?.id, dateFrom, dateTo]);
+
+  const salesPagination = usePagination(filteredSales, 15);
+  const movementPagination = usePagination(facturationMovements, 15);
+  const productMovementPagination = usePagination(productMovementView?.movements || [], 15);
 
   const getInvoiceUser = (invoice) => (
     invoice?.user_name ||
     invoice?.user ||
+    invoice?.username ||
     invoice?.mixedDetails?.user_name ||
     invoice?.mixedDetails?.user ||
+    invoice?.mixed_details?.user_name ||
+    invoice?.mixed_details?.user ||
     'Sin usuario'
   );
 
@@ -466,6 +505,10 @@ export function HistorialModule({
             )}
           </div>
         </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(180px, 1fr) minmax(180px, 1fr)', gap: '0.75rem', marginTop: '0.75rem' }}>
+          <input type="date" className="input-field" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+          <input type="date" className="input-field" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+        </div>
         <div className="table-container" style={{ marginTop: '0.75rem' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
@@ -477,10 +520,10 @@ export function HistorialModule({
               </tr>
             </thead>
             <tbody>
-              {facturationMovements.length === 0 ? (
+              {movementPagination.totalItems === 0 ? (
                 <tr><td colSpan="4" style={{ padding: '0.75rem', textAlign: 'center' }}>Sin movimientos para el filtro actual.</td></tr>
               ) : (
-                facturationMovements.map((log, index) => (
+                movementPagination.pageItems.map((log, index) => (
                   <tr key={`${log?.timestamp || index}-${index}`} style={{ borderBottom: '1px solid #f1f5f9' }}>
                     <td style={{ padding: '0.5rem' }}>{log?.timestamp ? new Date(log.timestamp).toLocaleString() : 'N/A'}</td>
                     <td style={{ padding: '0.5rem' }}>{log?.user_name || log?.user || 'Sistema'}</td>
@@ -492,6 +535,13 @@ export function HistorialModule({
             </tbody>
           </table>
         </div>
+        <PaginationControls
+          page={movementPagination.page}
+          totalPages={movementPagination.totalPages}
+          totalItems={movementPagination.totalItems}
+          pageSize={movementPagination.pageSize}
+          onPageChange={movementPagination.setPage}
+        />
       </div>
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
@@ -508,11 +558,37 @@ export function HistorialModule({
           <input
             type="text"
             className="input-field"
-            placeholder="Buscar por ID o Cliente..."
+            placeholder="Buscar por factura o cliente..."
             style={{ maxWidth: '300px' }}
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
+        </div>
+      </div>
+      <div className="card" style={{ marginBottom: '1rem' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(160px, 1fr))', gap: '0.75rem' }}>
+          <select className="input-field" value={advisorFilter} onChange={(e) => setAdvisorFilter(e.target.value)}>
+            <option value="">Todos los asesores</option>
+            {advisorOptions.map((advisor) => (
+              <option key={advisor} value={advisor}>{advisor}</option>
+            ))}
+          </select>
+          <select className="input-field" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+            <option value="">Todos los estados</option>
+            <option value="pagado">Pagado</option>
+            <option value="pendiente">Pendiente</option>
+            <option value="anulada">Anulada</option>
+            <option value="devuelta">Devuelta</option>
+            <option value="interna_cero">Interna $0</option>
+          </select>
+          <select className="input-field" value={paymentFilter} onChange={(e) => setPaymentFilter(e.target.value)}>
+            <option value="">Todos los pagos</option>
+            {paymentOptions.map((payment) => (
+              <option key={payment} value={payment}>{payment}</option>
+            ))}
+          </select>
+          <input type="date" className="input-field" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+          <input type="date" className="input-field" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
         </div>
       </div>
 
@@ -532,10 +608,10 @@ export function HistorialModule({
               </tr>
             </thead>
             <tbody>
-              {filteredSales.length === 0 ? (
+              {salesPagination.totalItems === 0 ? (
                 <tr><td colSpan="8" style={{ textAlign: 'center', padding: '3rem' }}>No se encontraron ventas</td></tr>
               ) : (
-                filteredSales.map((s) => {
+                salesPagination.pageItems.map((s) => {
                   const invoiceKey = getInvoiceKey(s);
                   const invoiceMenuOpen = openInvoiceMenuId === invoiceKey;
                   return (
@@ -620,6 +696,13 @@ export function HistorialModule({
             </tbody>
           </table>
         </div>
+        <PaginationControls
+          page={salesPagination.page}
+          totalPages={salesPagination.totalPages}
+          totalItems={salesPagination.totalItems}
+          pageSize={salesPagination.pageSize}
+          onPageChange={salesPagination.setPage}
+        />
       </div>
 
       {productMovementView && (
@@ -662,10 +745,10 @@ export function HistorialModule({
                   </tr>
                 </thead>
                 <tbody>
-                  {productMovementView.movements.length === 0 ? (
+                  {productMovementPagination.totalItems === 0 ? (
                     <tr><td colSpan="6" style={{ padding: '0.75rem', textAlign: 'center' }}>Sin movimientos detectados para este producto.</td></tr>
                   ) : (
-                    productMovementView.movements.map((mv, idx) => {
+                    productMovementPagination.pageItems.map((mv, idx) => {
                       const qty = Number(mv?.quantity);
                       const qtyLabel = Number.isFinite(qty)
                         ? `${qty > 0 ? '+' : ''}${qty.toLocaleString()}`
@@ -686,6 +769,13 @@ export function HistorialModule({
                 </tbody>
               </table>
             </div>
+            <PaginationControls
+              page={productMovementPagination.page}
+              totalPages={productMovementPagination.totalPages}
+              totalItems={productMovementPagination.totalItems}
+              pageSize={productMovementPagination.pageSize}
+              onPageChange={productMovementPagination.setPage}
+            />
           </div>
         </div>
       )}

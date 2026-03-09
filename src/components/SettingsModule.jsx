@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { playSound } from '../lib/soundService';
+import { PaginationControls } from './PaginationControls';
+import { usePagination } from '../lib/usePagination';
 
 export function SettingsModule({
     users, setUsers,
@@ -24,6 +26,7 @@ export function SettingsModule({
     const [newCategory, setNewCategory] = useState('');
     const [dayOffsetInput, setDayOffsetInput] = useState(() => Number(operationalDateSettings?.daysOffset || 0));
     const [dayOffsetReason, setDayOffsetReason] = useState('');
+    const usersPagination = usePagination(users, 15);
 
     React.useEffect(() => {
         setDayOffsetInput(Number(operationalDateSettings?.daysOffset || 0));
@@ -142,7 +145,7 @@ export function SettingsModule({
                                 </tr>
                             </thead>
                             <tbody>
-                                {users.map(u => (
+                                {usersPagination.pageItems.map(u => (
                                     <React.Fragment key={u.id}>
                                         <tr style={{ borderBottom: '1px solid #eee' }}>
                                             <td style={{ padding: '0.5rem' }}>{u.name}</td>
@@ -194,6 +197,13 @@ export function SettingsModule({
                                 ))}
                             </tbody>
                         </table>
+                        <PaginationControls
+                            page={usersPagination.page}
+                            totalPages={usersPagination.totalPages}
+                            totalItems={usersPagination.totalItems}
+                            pageSize={usersPagination.pageSize}
+                            onPageChange={usersPagination.setPage}
+                        />
                     </div>
                 </div>
             )}

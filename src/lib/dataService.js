@@ -507,6 +507,8 @@ export const dataService = {
         id: inv?.mixed_details?.invoiceCode || inv?.mixed_details?.invoice_code || inv.id,
         db_id: inv.id,
         user_id: inv.user_id,
+        user_name: inv?.mixed_details?.user_name || inv?.mixed_details?.user || null,
+        user: inv?.mixed_details?.user || inv?.mixed_details?.user_name || null,
         clientId: inv.client_id ?? null,
         clientName: inv.client_name ?? 'Cliente Ocasional',
         clientDoc: inv.client_doc ?? 'N/A',

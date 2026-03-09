@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { COMPANY_INFO } from '../constants';
+import { PaginationControls } from './PaginationControls';
+import { usePagination } from '../lib/usePagination';
 
 export function GastosModule({
     expenses,
@@ -54,6 +56,7 @@ export function GastosModule({
     };
 
     const totalExpenses = expenses.reduce((sum, item) => sum + Number(item.amount || 0), 0);
+    const expensesPagination = usePagination(expenses, 15);
 
     if (selectedReceipt) {
         return (
@@ -183,10 +186,10 @@ export function GastosModule({
                                 </tr>
                             </thead>
                             <tbody>
-                                {expenses.length === 0 ? (
+                                {expensesPagination.totalItems === 0 ? (
                                     <tr><td colSpan="4" style={{ textAlign: 'center', padding: '2rem', color: '#64748b' }}>No hay gastos registrados</td></tr>
                                 ) : (
-                                    expenses.map((expense) => (
+                                    expensesPagination.pageItems.map((expense) => (
                                         <tr key={expense.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
                                             <td style={{ padding: '0.75rem', fontSize: '0.85rem' }}>
                                                 {new Date(expense.date).toLocaleDateString()}
@@ -206,6 +209,13 @@ export function GastosModule({
                             </tbody>
                         </table>
                     </div>
+                    <PaginationControls
+                        page={expensesPagination.page}
+                        totalPages={expensesPagination.totalPages}
+                        totalItems={expensesPagination.totalItems}
+                        pageSize={expensesPagination.pageSize}
+                        onPageChange={expensesPagination.setPage}
+                    />
                 </div>
             </div>
         </div>
