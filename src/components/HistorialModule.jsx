@@ -100,6 +100,17 @@ export function HistorialModule({
     return false;
   };
 
+  const getInvoiceUser = (invoice) => (
+    invoice?.user_name ||
+    invoice?.user ||
+    invoice?.username ||
+    invoice?.mixedDetails?.user_name ||
+    invoice?.mixedDetails?.user ||
+    invoice?.mixed_details?.user_name ||
+    invoice?.mixed_details?.user ||
+    'Sin usuario'
+  );
+
   const normalizedSearch = searchTerm.toLowerCase();
   const advisorOptions = useMemo(() => (
     Array.from(new Set((sales || []).map((sale) => getInvoiceUser(sale)).filter(Boolean))).sort()
@@ -133,17 +144,6 @@ export function HistorialModule({
   const salesPagination = usePagination(filteredSales, 15);
   const movementPagination = usePagination(facturationMovements, 15);
   const productMovementPagination = usePagination(productMovementView?.movements || [], 15);
-
-  const getInvoiceUser = (invoice) => (
-    invoice?.user_name ||
-    invoice?.user ||
-    invoice?.username ||
-    invoice?.mixedDetails?.user_name ||
-    invoice?.mixedDetails?.user ||
-    invoice?.mixed_details?.user_name ||
-    invoice?.mixed_details?.user ||
-    'Sin usuario'
-  );
 
   const productMovementsById = useMemo(() => {
     const movementMap = {};
