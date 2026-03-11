@@ -179,8 +179,40 @@ const BOARD_NOTES_SEEN_AT_STORAGE_KEY = 'fact_board_notes_seen_at';
 const OPERATIONAL_DATE_SETTINGS_STORAGE_KEY = 'fact_operational_date_settings';
 const LAST_SHIFT_CLOSE_BY_USER_STORAGE_KEY = 'fact_last_shift_close_by_user';
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const MAX_OPEN_SHIFT_HOURS = 24;
+const MAX_OPEN_SHIFT_MS = MAX_OPEN_SHIFT_HOURS * 60 * 60 * 1000;
 
 const isUuid = (value) => typeof value === 'string' && UUID_REGEX.test(value);
+
+const normalizeStoredOpenShift = (rawShift) => {
+  if (!rawShift) return null;
+
+  return {
+    ...rawShift,
+    db_id: rawShift?.db_id || rawShift?.id || null,
+    startTime: rawShift?.startTime || rawShift?.start_time || null,
+    initialCash: Number(rawShift?.initialCash ?? rawShift?.initial_cash ?? 0),
+    user_id: rawShift?.user_id || null,
+    user_name: rawShift?.user_name || rawShift?.user || null,
+  };
+};
+
+const readBootstrappedOpenShift = () => {
+  try {
+    const raw = localStorage.getItem(OPEN_SHIFT_STORAGE_KEY);
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw);
+    const shift = normalizeStoredOpenShift(parsed?.shift);
+    const startMs = new Date(shift?.startTime).getTime();
+    const isValidStart = Number.isFinite(startMs) && !Number.isNaN(startMs);
+    if (!isValidStart) return null;
+    if (Date.now() - startMs > MAX_OPEN_SHIFT_MS) return null;
+    return shift;
+  } catch {
+    return null;
+  }
+};
 
 const normalizeBarcodeKey = (value) => {
   const raw = String(value ?? '').trim();
@@ -432,12 +464,13 @@ function App() {
 
   const [loading, setLoading] = useState(true);
   const [profileLoaded, setProfileLoaded] = useState(false);
+  const [shiftRestored, setShiftRestored] = useState(false);
 
   // Products Catalog
   const [products, setProducts] = useState([]);
 
   // Shift State
-  const [shift, setShift] = useState(null); // { startTime, initialCash }
+  const [shift, setShift] = useState(() => readBootstrappedOpenShift()); // { startTime, initialCash }
 
   // Shared State
   const [clientName, setClientName] = useState(CLIENT_OCASIONAL);
@@ -559,8 +592,6 @@ function App() {
   const getOpenShiftStorageKey = (userId) => `${OPEN_SHIFT_STORAGE_KEY}_${userId || 'anon'}`;
   const getProductsCacheStorageKey = (userId) => `${PRODUCTS_CACHE_STORAGE_KEY}_${userId || 'anon'}`;
   const getClientsCacheStorageKey = (userId) => `${CLIENTS_CACHE_STORAGE_KEY}_${userId || 'anon'}`;
-  const MAX_OPEN_SHIFT_HOURS = 24;
-  const MAX_OPEN_SHIFT_MS = MAX_OPEN_SHIFT_HOURS * 60 * 60 * 1000;
 
   const saveOpenShift = (userId, openShift) => {
     if (!userId || !openShift) return;
@@ -581,18 +612,7 @@ function App() {
     localStorage.removeItem(OPEN_SHIFT_STORAGE_KEY);
   };
 
-  const hydrateOpenShift = (rawShift) => {
-    if (!rawShift) return null;
-
-    return {
-      ...rawShift,
-      db_id: rawShift?.db_id || rawShift?.id || null,
-      startTime: rawShift?.startTime || rawShift?.start_time || null,
-      initialCash: Number(rawShift?.initialCash ?? rawShift?.initial_cash ?? 0),
-      user_id: rawShift?.user_id || null,
-      user_name: rawShift?.user_name || rawShift?.user || null,
-    };
-  };
+  const hydrateOpenShift = (rawShift) => normalizeStoredOpenShift(rawShift);
 
   const isValidOpenShift = (candidateShift) => {
     const startMs = new Date(candidateShift?.startTime).getTime();
@@ -640,13 +660,19 @@ function App() {
       }
 
       const cloudShift = hydrateOpenShift(await dataService.getOpenShiftForUser(userId));
-      if (!cloudShift) return;
+      if (!cloudShift) {
+        setShift(null);
+        clearOpenShift(userId);
+        return;
+      }
 
       const { isValidStart, isStaleOpenShift } = isValidOpenShift(cloudShift);
       if (!isValidStart || isStaleOpenShift) {
         if (isStaleOpenShift) {
           console.warn(`Jornada abierta en nube descartada por antiguedad (${MAX_OPEN_SHIFT_HOURS}h max).`);
         }
+        setShift(null);
+        clearOpenShift(userId);
         return;
       }
 
@@ -764,6 +790,7 @@ function App() {
   }
 
   const applyUserWithProfile = async (user) => {
+    setShiftRestored(false);
     try {
       const { data: profile, error: profileError } = await getProfile(user.id);
       if (profileError) throw new Error(profileError);
@@ -803,6 +830,8 @@ function App() {
       restoreFloatingPanelPosition(user.id, 'quick');
       restoreFloatingPanelPosition(user.id, 'promo');
       restoreCloudCache(user.id);
+    } finally {
+      setShiftRestored(true);
     }
   };
 
@@ -857,6 +886,7 @@ function App() {
         setCurrentUser(null);
         setIsAdminAuth(false);
         setProfileLoaded(false);
+        setShiftRestored(false);
       }
     });
 
@@ -872,6 +902,7 @@ function App() {
       setIsLoggedIn(false);
       setCurrentUser(null);
       setActiveTab('home');
+      setShiftRestored(false);
     }
   }
 
@@ -1864,11 +1895,38 @@ function App() {
       user?.name,
       user?.email,
       user?.username,
+      user?.user_name,
+      user?.user,
+      user?.cashKey,
+      ...(Array.isArray(user?.aliases) ? user.aliases : []),
     ]
       .map(normalizeIdentityValue)
       .filter(Boolean);
 
     return recordCandidates.some((candidate) => currentUserCandidates.includes(candidate));
+  };
+
+  const buildShiftOwnerReference = (activeShift, fallbackUser = currentUser) => {
+    const aliases = [
+      activeShift?.user_name,
+      activeShift?.user,
+      fallbackUser?.name,
+      fallbackUser?.email,
+      fallbackUser?.username,
+    ]
+      .map((value) => String(value || '').trim())
+      .filter(Boolean);
+
+    return {
+      id: activeShift?.user_id || fallbackUser?.id || null,
+      name: activeShift?.user_name || fallbackUser?.name || null,
+      email: fallbackUser?.email || null,
+      username: fallbackUser?.username || null,
+      user_name: activeShift?.user_name || fallbackUser?.name || null,
+      user: activeShift?.user_name || fallbackUser?.name || null,
+      cashKey: getCashUserKey(activeShift?.user_id ? { id: activeShift.user_id } : fallbackUser),
+      aliases,
+    };
   };
 
   const parseMoneyFromText = (text) => {
@@ -2105,12 +2163,14 @@ function App() {
       return;
     }
     const shiftEndIso = getOperationalNowIso();
-    const summary = getShiftFinancialSnapshot(shift.startTime, shiftEndIso, currentUser);
+    const shiftOwnerRef = buildShiftOwnerReference(shift, currentUser);
+    const summary = getShiftFinancialSnapshot(shift.startTime, shiftEndIso, shiftOwnerRef);
     const hasAnyUserMovement =
       summary.shiftSales.length > 0 ||
       summary.shiftExpenses.length > 0 ||
       summary.shiftPurchases.length > 0 ||
-      summary.shiftCashLogs.length > 0;
+      summary.shiftCashLogs.length > 0 ||
+      summary.shiftCarteraAbonos.length > 0;
     const isAdminUser = normalizeRole(currentUser?.role) === 'Administrador';
     let emptyCloseReason = '';
 
@@ -3016,13 +3076,18 @@ function App() {
     );
   };
 
+  const activeShiftOwnerRef = useMemo(
+    () => (shift?.startTime ? buildShiftOwnerReference(shift, currentUser) : currentUser),
+    [shift, currentUser]
+  );
+
   const activeShiftSalesTotal = shift?.startTime
-    ? getShiftFinancialSnapshot(shift.startTime, getOperationalNowIso(), currentUser).salesBreakdown.gross
+    ? getShiftFinancialSnapshot(shift.startTime, getOperationalNowIso(), activeShiftOwnerRef).salesBreakdown.gross
     : 0;
   const activeShiftReconciliationPreview = useMemo(() => {
     if (!shift?.startTime) return null;
 
-    const summary = getShiftFinancialSnapshot(shift.startTime, getOperationalNowIso(), currentUser);
+    const summary = getShiftFinancialSnapshot(shift.startTime, getOperationalNowIso(), activeShiftOwnerRef);
     const systemAccounts = buildShiftSystemAccounts(summary);
     const netSystemTotal =
       Number(systemAccounts.efectivo || 0) +
@@ -3032,12 +3097,12 @@ function App() {
       Number(systemAccounts.otros || 0);
 
     return { systemAccounts, netSystemTotal };
-  }, [shift, currentUser, salesHistory, expenses, purchases, auditLogs, getOperationalNowIso]);
+  }, [shift, activeShiftOwnerRef, salesHistory, expenses, purchases, auditLogs, getOperationalNowIso]);
 
   const activeShiftCashBalance = useMemo(() => {
     if (!shift?.startTime) return getUserCashBalance(currentUser);
 
-    const summary = getShiftFinancialSnapshot(shift.startTime, getOperationalNowIso(), currentUser);
+    const summary = getShiftFinancialSnapshot(shift.startTime, getOperationalNowIso(), activeShiftOwnerRef);
     const initialCash = Number(shift?.initialCash || 0);
     return initialCash
       + Number(summary.salesBreakdown.cash || 0)
@@ -3048,7 +3113,7 @@ function App() {
       - Number(summary.cashMovements.minorToMajor || 0)
       - Number(summary.expensesTotal || 0)
       - Number(summary.purchasesTotal || 0);
-  }, [shift, currentUser, salesHistory, expenses, purchases, auditLogs, getOperationalNowIso, userCashBalances]);
+  }, [shift, currentUser, activeShiftOwnerRef, salesHistory, expenses, purchases, auditLogs, getOperationalNowIso, userCashBalances]);
 
   const selectedClientPendingBalance = selectedClient
     ? (cartera || [])
@@ -3080,6 +3145,16 @@ function App() {
           applyUserWithProfile(user);
         }}
       />
+    );
+  }
+
+  if (!shiftRestored) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', gap: '1rem' }}>
+        <div className="spinner" style={{ width: '50px', height: '50px', border: '5px solid #f3f3f3', borderTop: '5px solid #3498db', borderRadius: '50%', animation: 'spin 1s linear infinite' }}></div>
+        <p>Restaurando jornada...</p>
+        <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
+      </div>
     );
   }
 
