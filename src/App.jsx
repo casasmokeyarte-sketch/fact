@@ -1861,6 +1861,17 @@ function App() {
     return date >= start && date <= end;
   };
 
+  const getDateKey = (dateValue) => {
+    if (!dateValue) return '';
+    const parsed = new Date(dateValue);
+    if (Number.isNaN(parsed.getTime())) return '';
+    return [
+      parsed.getFullYear(),
+      String(parsed.getMonth() + 1).padStart(2, '0'),
+      String(parsed.getDate()).padStart(2, '0'),
+    ].join('-');
+  };
+
   const normalizeIdentityValue = (value) => String(value || '')
     .trim()
     .toLowerCase()
@@ -2128,6 +2139,59 @@ function App() {
     };
   };
 
+  const getOperationalDayMovementSnapshot = (dateIso, userRef = currentUser) => {
+    const targetDateKey = getDateKey(dateIso);
+    if (!targetDateKey) {
+      return {
+        sales: [],
+        expenses: [],
+        purchases: [],
+        cashLogs: [],
+        carteraAbonos: [],
+      };
+    }
+
+    const hasSameOperationalDay = (value) => getDateKey(value) === targetDateKey;
+
+    const sales = salesHistory.filter((sale) =>
+      hasSameOperationalDay(sale?.date) &&
+      isRecordOwnedByUser(sale, userRef) &&
+      !isInvoiceFinanciallyClosed(sale)
+    );
+    const expensesForDay = expenses.filter((expense) =>
+      hasSameOperationalDay(expense?.date) &&
+      isRecordOwnedByUser(expense, userRef)
+    );
+    const purchasesForDay = purchases.filter((purchase) =>
+      hasSameOperationalDay(purchase?.date) &&
+      isRecordOwnedByUser(purchase, userRef)
+    );
+    const cashLogs = auditLogs.filter((log) =>
+      log?.module === 'Caja Principal' &&
+      hasSameOperationalDay(log?.timestamp) &&
+      isRecordOwnedByUser(log, userRef) &&
+      ['Movimiento Efectivo', 'Recibir Dinero', 'Devolver Dinero'].includes(log.action)
+    );
+    const carteraAbonos = (salesHistory || [])
+      .flatMap((sale) => {
+        const abonos = Array.isArray(sale?.abonos)
+          ? sale.abonos
+          : (Array.isArray(sale?.mixedDetails?.cartera?.abonos) ? sale.mixedDetails.cartera.abonos : []);
+        return abonos.map((abono) => ({
+          ...abono,
+          user_id: abono?.user_id || sale?.user_id || null,
+          user_name: abono?.user_name || sale?.user_name || sale?.user || null,
+          invoiceId: sale?.id || sale?.db_id || 'N/A'
+        }));
+      })
+      .filter((abono) =>
+        hasSameOperationalDay(abono?.date) &&
+        isRecordOwnedByUser(abono, userRef)
+      );
+
+    return { sales, expenses: expensesForDay, purchases: purchasesForDay, cashLogs, carteraAbonos };
+  };
+
   const buildShiftSystemAccounts = (summary) => ({
     efectivo:
       Number(shift?.initialCash || 0) +
@@ -2165,12 +2229,18 @@ function App() {
     const shiftEndIso = getOperationalNowIso();
     const shiftOwnerRef = buildShiftOwnerReference(shift, currentUser);
     const summary = getShiftFinancialSnapshot(shift.startTime, shiftEndIso, shiftOwnerRef);
+    const sameDayFallback = getOperationalDayMovementSnapshot(shiftEndIso, shiftOwnerRef);
     const hasAnyUserMovement =
       summary.shiftSales.length > 0 ||
       summary.shiftExpenses.length > 0 ||
       summary.shiftPurchases.length > 0 ||
       summary.shiftCashLogs.length > 0 ||
-      summary.shiftCarteraAbonos.length > 0;
+      summary.shiftCarteraAbonos.length > 0 ||
+      sameDayFallback.sales.length > 0 ||
+      sameDayFallback.expenses.length > 0 ||
+      sameDayFallback.purchases.length > 0 ||
+      sameDayFallback.cashLogs.length > 0 ||
+      sameDayFallback.carteraAbonos.length > 0;
     const isAdminUser = normalizeRole(currentUser?.role) === 'Administrador';
     let emptyCloseReason = '';
 
