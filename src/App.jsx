@@ -3959,6 +3959,15 @@ function App() {
                     user_id: currentUser?.id,
                     user_name: currentUser?.name || currentUser?.email || 'Sistema'
                   });
+                  await syncFactMovement('expense.created', {
+                    expenseId: expense.id || 'expense-' + Date.now(),
+                    date: expense.date,
+                    expenseType: expense.type || expense.category || 'Gasto',
+                    beneficiary: expense.beneficiary || null,
+                    description: expense.description || null,
+                    total: amount,
+                    userName: currentUser?.name || currentUser?.email || 'Sistema',
+                  });
                 } catch (err) {
                   adjustUserCashBalance(currentUser, amount);
                   console.error("Error persistiendo gasto en Supabase:", err);
@@ -4026,5 +4035,7 @@ function App() {
 }
 
 export default App
+
+
 
 
