@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { PaginationControls } from './PaginationControls';
 import { usePagination } from '../lib/usePagination';
 
-export function NotasModule({ clients, sales, onLog }) {
+export function NotasModule({ clients, sales, onLog, onCreateNote }) {
     const [notes, setNotes] = useState([]);
     const [form, setForm] = useState({ clientId: '', invoiceId: '', type: 'Credito', amount: '', reason: '' });
     const notesPagination = usePagination(notes, 15);
@@ -16,6 +16,7 @@ export function NotasModule({ clients, sales, onLog }) {
             id: `N-${Date.now()}`,
             ...form,
             clientName: client?.name || 'Otro',
+            clientDocument: client?.document || '',
             amount: Number(form.amount),
             date: new Date().toISOString()
         };
@@ -25,6 +26,10 @@ export function NotasModule({ clients, sales, onLog }) {
             module: 'Notas',
             action: `Nota de ${form.type}`,
             details: `Cliente: ${client?.name}. Monto: $${form.amount}. Motivo: ${form.reason}`
+        });
+
+        Promise.resolve(onCreateNote?.(newNote)).catch((error) => {
+            console.error('No se pudo sincronizar la nota con CRM:', error);
         });
 
         alert(`Nota de ${form.type} generada correctamente.`);

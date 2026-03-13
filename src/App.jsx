@@ -34,6 +34,7 @@ import { initEmailJS } from './lib/emailService'
 import { playSound } from './lib/soundService'
 import { supabase } from './lib/supabaseClient'
 import { useProfile } from './lib/useSupabase'
+import { syncFactMovement } from './lib/crmSyncService'
 import modulesBg from './assets/modules-bg.png'
 
 const DEFAULT_PERMISSIONS = {
@@ -2663,6 +2664,21 @@ function App() {
     const persistInvoice = async () => {
       try {
         await dataService.saveInvoice(finalInvoice, items);
+        await syncFactMovement('invoice.created', {
+          invoiceId: finalInvoice.id,
+          date: finalInvoice.date,
+          customerName: finalInvoice.clientName,
+          customerDoc: finalInvoice.clientDoc,
+          total: finalInvoice.total,
+          paymentMode: finalInvoice.paymentMode,
+          userName: finalInvoice.user_name,
+          notes: finalInvoice.mixedDetails?.internalZeroReason || '',
+          items: (finalInvoice.items || []).map((item) => ({
+            productId: item.productId || item.product_id || item.id || null,
+            quantity: Number(item.quantity || 0),
+            unitPrice: Number(item.price || 0),
+          })),
+        });
         // Also update stock in DB if needed (future Phase)
       } catch (err) {
         console.error("Error persistiendo factura en Supabase:", err);
@@ -2745,6 +2761,10 @@ function App() {
 
     try {
       await dataService.saveInvoice(updatedInvoice, invoice.items || []);
+      await syncFactMovement('invoice.cancelled', {
+        invoiceId: invoice.id,
+        reason,
+      });
     } catch (e) {
       console.error('Error actualizando factura anulada en nube:', e);
     }
@@ -2809,6 +2829,10 @@ function App() {
 
     try {
       await dataService.saveInvoice(updatedInvoice, invoice.items || []);
+      await syncFactMovement('invoice.returned', {
+        invoiceId: invoice.id,
+        reason: `${mode || 'devolucion'}: ${reason || ''}`.trim(),
+      });
     } catch (e) {
       console.error('Error actualizando factura devuelta en nube:', e);
     }
@@ -3655,6 +3679,19 @@ function App() {
                     user_id: currentUser?.id,
                     user_name: currentUser?.name || currentUser?.email || 'Sistema'
                   });
+                  await syncFactMovement('purchase.created', {
+                    purchaseId: purchase.id || `purchase-${Date.now()}`,
+                    date: purchase.date,
+                    supplierName: purchase.supplier,
+                    total: totalAmount,
+                    invoiceNumber: purchase.invoiceNumber,
+                    userName: currentUser?.name || currentUser?.email || 'Sistema',
+                    items: [{
+                      productId: purchase.productId || null,
+                      quantity: qty,
+                      unitPrice: unitCost,
+                    }],
+                  });
                 } catch (e) {
                   adjustUserCashBalance(currentUser, totalAmount);
                   console.error("Error guardando compra en Supabase:", e);
@@ -3917,7 +3954,26 @@ function App() {
               setActiveTab={setActiveTab}
             />
           )}
-          {activeTab === 'notas' && <NotasModule clients={registeredClients} sales={salesHistory} onLog={addLog} />}
+          {activeTab === 'notas' && (
+            <NotasModule
+              clients={registeredClients}
+              sales={salesHistory}
+              onLog={addLog}
+              onCreateNote={async (note) => {
+                await syncFactMovement('note.created', {
+                  noteId: note.id,
+                  date: note.date,
+                  noteType: note.type,
+                  invoiceId: note.invoiceId || null,
+                  customerName: note.clientName,
+                  customerDoc: note.clientDocument || null,
+                  total: note.amount,
+                  reason: note.reason,
+                  userName: currentUser?.name || currentUser?.email || 'Sistema',
+                });
+              }}
+            />
+          )}
           {activeTab === 'historial' && (
             <HistorialModule
               sales={salesHistory}
