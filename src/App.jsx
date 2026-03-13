@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+﻿import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import './design-system.css'
 import { CLIENT_OCASIONAL, PAYMENT_MODES, COMPANY_INFO } from './constants'
 import { AuthPage } from './components/AuthPage'
@@ -2412,6 +2412,21 @@ function App() {
     const persistShift = async () => {
       try {
         await dataService.saveShift(shiftData);
+        await syncFactMovement('shift.closed', {
+          shiftId: String(shiftData.db_id || shiftData.id || ''),
+          shiftDate: getRealDateKey(),
+          startTime: shiftData.startTime,
+          endTime: shiftData.endTime,
+          userId: shiftData.user_id || null,
+          userName: shiftData.user_name || shiftData.user || 'Sistema',
+          salesTotal: Number(shiftData.salesTotal || 0),
+          theoreticalBalance: Number(shiftData.theoreticalBalance || 0),
+          physicalCash: Number(shiftData.physicalCash || 0),
+          discrepancy: Number(shiftData.discrepancy || 0),
+          authorized: !!shiftData.authorized,
+          reportText: shiftData.reportText || '',
+          reconciliation: shiftData.reconciliation || null,
+        });
       } catch (err) {
         console.error("Error persistiendo cierre en Supabase:", err);
       }
@@ -3304,7 +3319,7 @@ function App() {
                 style={{ position: 'relative', minWidth: '44px', backgroundColor: '#f8fafc' }}
                 title="Notificaciones"
               >
-                🔔
+                ðŸ””
                 {unreadNotificationsCount > 0 && (
                   <span
                     style={{
@@ -4011,3 +4026,5 @@ function App() {
 }
 
 export default App
+
+
