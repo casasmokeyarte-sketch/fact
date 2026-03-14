@@ -729,7 +729,7 @@ export const dataService = {
     const { data, error } = await supabase
       .from('shift_history')
       .select('*')
-      .order('created_at', { ascending: false });
+      .order('end_time', { ascending: false, nullsFirst: false });
     if (error) throw error;
 
     return (data || [])

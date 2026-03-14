@@ -170,6 +170,7 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
             reorder_level: Number(formData.get('reorder_level')) || 10,
             status: String(formData.get('status') || 'activo'),
             is_visible: formData.get('is_visible') === 'on',
+            full_price_only: formData.get('full_price_only') === 'on',
         };
 
         if (editingProduct) {
@@ -482,6 +483,16 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
                                     defaultChecked={editingProduct?.is_visible !== false}
                                 />
                                 Visible en pagina/publicacion
+                            </label>
+                        </div>
+                        <div className="input-group" style={{ marginTop: '0.25rem' }}>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                                <input
+                                    name="full_price_only"
+                                    type="checkbox"
+                                    defaultChecked={editingProduct?.full_price_only === true}
+                                />
+                                Precio Full / Sin Descuento
                             </label>
                         </div>
                         <div style={{ display: 'flex', gap: '0.5rem' }}>

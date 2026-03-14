@@ -5,7 +5,7 @@ import { usePagination } from '../lib/usePagination';
 
 export function ShiftHistoryModule({ shiftHistory, onLog }) {
     const [selectedShift, setSelectedShift] = useState(null);
-    const historyPagination = usePagination(shiftHistory.slice().reverse(), 15);
+    const historyPagination = usePagination(shiftHistory, 15);
 
     const handlePrint = (shift, mode = '58mm') => {
         printShiftClosure(shift, mode);
