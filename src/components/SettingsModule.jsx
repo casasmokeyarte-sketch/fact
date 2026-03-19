@@ -10,6 +10,7 @@ export function SettingsModule({
     onResetSystem, onSaveSystem,
     soundEnabled, setSoundEnabled,
     soundVolume, setSoundVolume,
+    soundPreset, setSoundPreset,
     operationalDateSettings,
     onApplyOperationalDateOffset
 }) {
@@ -317,6 +318,20 @@ export function SettingsModule({
                                 />
                                 Activar sonidos de acciones y alertas
                             </label>
+                            <div>
+                                <label className="input-label">Tono de notificaciones</label>
+                                <select
+                                    className="input-field"
+                                    value={String(soundPreset || 'beep')}
+                                    onChange={(e) => setSoundPreset?.(e.target.value)}
+                                >
+                                    <option value="beep">Beep (Simple)</option>
+                                    <option value="double">Doble</option>
+                                    <option value="chime">Campanita</option>
+                                    <option value="neon">Neon</option>
+                                    <option value="soft">Suave</option>
+                                </select>
+                            </div>
                             <div>
                                 <label className="input-label">Volumen ({Math.round(Number(soundVolume || 0) * 100)}%)</label>
                                 <input

@@ -10,6 +10,8 @@ const SCOPE_KEYWORDS = [
   'cartera', 'caja', 'reportes', 'bitacora', 'notas', 'historial', 'cierres', 'permiso', 'permisos',
   'rol', 'usuario', 'jornada', 'consulta rapida', 'codigo', 'barra', 'empresa', 'casa smoke',
   'nit', 'direccion', 'telefono', 'correo', 'supabase', 'fact pro',
+  'cuadre', 'cierre de caja', 'cerrar caja', 'abrir jornada', 'cerrar jornada', 'descuadre', 'diferencia',
+  'notificacion', 'notificaciones', 'campana', 'sonido', 'sonidos', 'volumen', 'configuracion', 'tema', 'colores',
 ];
 
 function readEnvFileValue(key) {
@@ -52,12 +54,13 @@ function isScopeAllowed(question) {
 function buildSystemPrompt() {
   return [
     'Eres el asistente interno de CASA SMOKE Y ARTE OT SSOT SAS.',
-    'Reglas estrictas:',
-    '1) Solo responde temas del sistema de facturacion y de la empresa.',
-    '2) Si la pregunta no es de ese alcance, responde de forma amable: "Con gusto te ayudo, pero solo con temas del sistema y de la empresa."',
-    '3) Responde en espanol, tono amable, breve y accionable.',
-    '4) Puedes saludar cuando corresponda.',
-    '5) No inventes datos; si falta informacion del sistema, dilo.',
+    'Objetivo: ayudar a operar el sistema (facturacion, inventario, caja, cierres, permisos, notificaciones/sonidos) y resolver dudas de la empresa.',
+    'Reglas:',
+    '1) Responde en espanol (es-CO), tono amable, claro y flexible.',
+    '2) Si el usuario hace varias preguntas en un solo mensaje, responde todas en una sola respuesta, separando por secciones o bullets.',
+    '3) Da pasos concretos (donde hacer clic, que llenar) y explica el por que solo cuando ayude.',
+    '4) No inventes datos: si falta informacion del sistema o de la empresa, dilo y pregunta 1-2 cosas para aclarar.',
+    '5) Si alguna parte esta fuera de alcance, responde lo que si sea del sistema/empresa y luego redirige amablemente lo demas con ejemplos de preguntas validas.',
   ].join('\n');
 }
 
@@ -159,7 +162,14 @@ ipcMain.handle(ASK_CHANNEL, async (_event, payload) => {
     }
 
     if (!isScopeAllowed(question)) {
-      return { ok: true, answer: 'Con gusto te ayudo, pero solo con temas del sistema y de la empresa.' };
+      return {
+        ok: true,
+        answer: [
+          'Te puedo ayudar mejor con dudas del sistema y de la empresa.',
+          'Dime en que pantalla estas (Inicio, Facturacion, Caja, Cierres o Configuracion) y que necesitas hacer.',
+          'Ejemplos: "Como cierro jornada y que pongo en efectivo/gastos?", "No me sale la campana", "Como ajusto volumen/sonidos?".'
+        ].join('\n')
+      };
     }
 
     const apiKey = process.env.OPENAI_API_KEY || readEnvFileValue('OPENAI_API_KEY');

@@ -3,6 +3,7 @@ const isBrowser = typeof window !== 'undefined';
 let ctx = null;
 let enabled = true;
 let masterVolume = 0.08;
+let notifyPreset = 'beep';
 
 function getContext() {
   if (!isBrowser) return null;
@@ -47,6 +48,12 @@ export function setSoundVolume(next) {
   masterVolume = Math.min(0.3, Math.max(0.01, safe));
 }
 
+export function setNotifyPreset(next) {
+  const preset = String(next || '').trim().toLowerCase();
+  if (!preset) return;
+  notifyPreset = preset;
+}
+
 export function playSound(kind) {
   if (!enabled) return;
 
@@ -68,7 +75,30 @@ export function playSound(kind) {
       tone({ freq: 180, type: 'sawtooth', duration: 0.15, gain: 0.08, at: 0.14 });
       break;
     case 'notify':
-      tone({ freq: 880, type: 'sine', duration: 0.08, gain: 0.08, at: 0 });
+      switch (notifyPreset) {
+        case 'double':
+          tone({ freq: 880, type: 'sine', duration: 0.07, gain: 0.08, at: 0 });
+          tone({ freq: 1040, type: 'sine', duration: 0.08, gain: 0.09, at: 0.08 });
+          break;
+        case 'chime':
+          tone({ freq: 740, type: 'triangle', duration: 0.08, gain: 0.07, at: 0 });
+          tone({ freq: 990, type: 'triangle', duration: 0.1, gain: 0.08, at: 0.07 });
+          tone({ freq: 1320, type: 'sine', duration: 0.12, gain: 0.09, at: 0.14 });
+          break;
+        case 'neon':
+          tone({ freq: 660, type: 'sawtooth', duration: 0.06, gain: 0.06, at: 0 });
+          tone({ freq: 1320, type: 'sine', duration: 0.08, gain: 0.08, at: 0.06 });
+          tone({ freq: 880, type: 'triangle', duration: 0.1, gain: 0.07, at: 0.13 });
+          break;
+        case 'soft':
+          tone({ freq: 520, type: 'sine', duration: 0.11, gain: 0.06, at: 0 });
+          tone({ freq: 620, type: 'sine', duration: 0.12, gain: 0.05, at: 0.1 });
+          break;
+        case 'beep':
+        default:
+          tone({ freq: 880, type: 'sine', duration: 0.08, gain: 0.08, at: 0 });
+          break;
+      }
       break;
     case 'action':
     default:
@@ -76,4 +106,3 @@ export function playSound(kind) {
       break;
   }
 }
-

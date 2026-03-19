@@ -31,7 +31,7 @@ import { printShiftClosure } from './lib/printReports'
 import { dataService } from './lib/dataService'
 import { getProfile } from './lib/databaseService'
 import { initEmailJS } from './lib/emailService'
-import { playSound } from './lib/soundService'
+import { playSound, setSoundEnabled as setAppSoundEnabled, setSoundVolume as setAppSoundVolume, setNotifyPreset as setAppNotifyPreset } from './lib/soundService'
 import { supabase } from './lib/supabaseClient'
 import { useProfile } from './lib/useSupabase'
 import { syncFactMovement } from './lib/crmSyncService'
@@ -217,6 +217,7 @@ const PRODUCTS_CACHE_STORAGE_KEY = 'fact_products_cache';
 const CLIENTS_CACHE_STORAGE_KEY = 'fact_clients_cache';
 const INVOICE_SEQUENCE_STORAGE_KEY = 'fact_invoice_sequence';
 const REMOTE_AUTH_REQUESTS_STORAGE_KEY = 'fact_remote_auth_requests';
+const SOUND_SETTINGS_STORAGE_KEY = 'fact_sound_settings';
 const AUTH_REQUEST_LOG_PREFIX = 'AUTH_REQUEST_EVENT::';
 const BOARD_NOTE_LOG_PREFIX = 'BOARD_NOTE_EVENT::';
 const INVOICE_DRAFTS_STORAGE_KEY = 'fact_invoice_drafts';
@@ -507,6 +508,9 @@ function App() {
   const [categories, setCategories] = useState(['General', 'Alimentos', 'Limpieza', 'Otros']);
   const [expenses, setExpenses] = useState([]);
   const [purchases, setPurchases] = useState([]);
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [soundVolume, setSoundVolume] = useState(0.08);
+  const [soundPreset, setSoundPreset] = useState('beep');
 
   const [loading, setLoading] = useState(true);
   const [profileLoaded, setProfileLoaded] = useState(false);
@@ -638,6 +642,7 @@ function App() {
   const getOpenShiftStorageKey = (userId) => `${OPEN_SHIFT_STORAGE_KEY}_${userId || 'anon'}`;
   const getProductsCacheStorageKey = (userId) => `${PRODUCTS_CACHE_STORAGE_KEY}_${userId || 'anon'}`;
   const getClientsCacheStorageKey = (userId) => `${CLIENTS_CACHE_STORAGE_KEY}_${userId || 'anon'}`;
+  const getSoundSettingsStorageKey = (userId) => `${SOUND_SETTINGS_STORAGE_KEY}_${userId || 'anon'}`;
 
   const saveOpenShift = (userId, openShift) => {
     if (!userId || !openShift) return;
@@ -762,6 +767,21 @@ function App() {
     }
   };
 
+  const restoreSoundSettings = (userId) => {
+    try {
+      const raw = localStorage.getItem(getSoundSettingsStorageKey(userId));
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (typeof parsed?.enabled === 'boolean') setSoundEnabled(parsed.enabled);
+      const vol = Number(parsed?.volume);
+      if (Number.isFinite(vol)) setSoundVolume(vol);
+      const preset = String(parsed?.preset || '').trim();
+      if (preset) setSoundPreset(preset);
+    } catch (e) {
+      console.error('Error restaurando configuracion de sonidos:', e);
+    }
+  };
+
   const restoreFloatingPanelPosition = (userId, type) => {
     const storageKey = type === 'quick'
       ? getQuickPanelPositionStorageKey(userId)
@@ -821,6 +841,18 @@ function App() {
     return () => clearInterval(timer);
   }, []);
 
+  useEffect(() => {
+    setAppSoundEnabled(!!soundEnabled);
+  }, [soundEnabled]);
+
+  useEffect(() => {
+    setAppSoundVolume(soundVolume);
+  }, [soundVolume]);
+
+  useEffect(() => {
+    setAppNotifyPreset(soundPreset);
+  }, [soundPreset]);
+
   // Check authentication status
   const checkAuthStatus = async () => {
     try {
@@ -867,6 +899,7 @@ function App() {
       restoreActiveTab(user.id);
       restoreQuickTrayState(user.id);
       restoreQuickLookupHistory(user.id);
+      restoreSoundSettings(user.id);
       restoreFloatingPanelPosition(user.id, 'quick');
       restoreFloatingPanelPosition(user.id, 'promo');
       restoreCloudCache(user.id);
@@ -885,6 +918,7 @@ function App() {
       restoreActiveTab(user.id);
       restoreQuickTrayState(user.id);
       restoreQuickLookupHistory(user.id);
+      restoreSoundSettings(user.id);
       restoreFloatingPanelPosition(user.id, 'quick');
       restoreFloatingPanelPosition(user.id, 'promo');
       restoreCloudCache(user.id);
@@ -1184,6 +1218,18 @@ function App() {
     if (!currentUser?.id) return;
     localStorage.setItem(getQuickTrayStorageKey(currentUser.id), quickTrayOpen ? '1' : '0');
   }, [quickTrayOpen, currentUser?.id]);
+
+  useEffect(() => {
+    if (!currentUser?.id) return;
+    try {
+      localStorage.setItem(
+        getSoundSettingsStorageKey(currentUser.id),
+        JSON.stringify({ enabled: !!soundEnabled, volume: Number(soundVolume || 0), preset: String(soundPreset || 'beep') })
+      );
+    } catch (e) {
+      console.error('Error guardando configuracion de sonidos:', e);
+    }
+  }, [currentUser?.id, soundEnabled, soundVolume, soundPreset]);
 
   useEffect(() => {
     if (!currentUser?.id) return;
@@ -3306,10 +3352,25 @@ function App() {
               <button
                 className="btn"
                 onClick={() => setNotificationsOpen((prev) => !prev)}
-                style={{ position: 'relative', minWidth: '44px', backgroundColor: 'rgba(0, 0, 0, 0.25)' }}
+                style={{ position: 'relative', minWidth: '44px', backgroundColor: 'rgba(0, 0, 0, 0.25)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
                 title="Notificaciones"
               >
-                ðŸ””
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path
+                    d="M15 17h5l-1.4-1.4A2 2 0 0 1 18 14.2V11a6 6 0 1 0-12 0v3.2c0 .53-.21 1.04-.6 1.4L4 17h5"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                  <path
+                    d="M9 17a3 3 0 0 0 6 0"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
                 {unreadNotificationsCount > 0 && (
                   <span
                     style={{
@@ -3935,6 +3996,9 @@ function App() {
               paymentMethods={paymentMethods} setPaymentMethods={setPaymentMethods}
               categories={categories} setCategories={setCategories}
               onResetSystem={onResetSystem} onSaveSystem={onSaveSystem}
+              soundEnabled={soundEnabled} setSoundEnabled={setSoundEnabled}
+              soundVolume={soundVolume} setSoundVolume={setSoundVolume}
+              soundPreset={soundPreset} setSoundPreset={setSoundPreset}
               operationalDateSettings={operationalDateSettings}
               onApplyOperationalDateOffset={onApplyOperationalDateOffset}
             />
