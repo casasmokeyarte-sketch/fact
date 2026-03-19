@@ -163,6 +163,51 @@ const normalizePermissionsForRole = (role, permissions) => {
   return base;
 };
 
+const MENU_ITEMS = [
+  { id: 'facturacion', label: 'Facturacion', icon: '\uD83E\uDDFE', tab: 'facturacion' },
+  { id: 'inventario', label: 'Inventario', icon: '\uD83D\uDCE6', tab: 'inventario' },
+  { id: 'compras', label: 'Compras', icon: '\uD83D\uDED2', tab: 'compras' },
+  { id: 'clientes', label: 'Clientes', icon: '\uD83D\uDC65', tab: 'clientes' },
+  { id: 'caja', label: 'Caja', icon: '\uD83D\uDCB0', tab: 'caja' },
+  { id: 'cartera', label: 'Cartera', icon: '\uD83D\uDCC1', tab: 'cartera' },
+  { id: 'reportes', label: 'Reportes', icon: '\uD83D\uDCCA', tab: 'reportes' },
+  { id: 'bitacora', label: 'Bitacora', icon: '\uD83D\uDCDD', tab: 'bitacora' },
+  { id: 'codigos', label: 'Codigos', icon: '\uD83C\uDFF7\uFE0F', tab: 'codigos' },
+  { id: 'trueque', label: 'Trueque', icon: '\uD83D\uDD04', tab: 'trueque' },
+  { id: 'gastos', label: 'Gastos', icon: '\uD83D\uDCB8', tab: 'gastos' },
+  { id: 'notas', label: 'Notas', icon: '\uD83D\uDCD2', tab: 'notas' },
+  { id: 'historial', label: 'Historial', icon: '\u23F3', tab: 'historial' },
+  { id: 'cierres', label: 'Cierres', icon: '\uD83D\uDD12', tab: 'cierres' },
+  { id: 'config', label: 'Configuracion', icon: '\u2699\uFE0F', tab: 'config' },
+];
+
+const getAllowedMenuItemsForUser = (user) => {
+  const currentRole = normalizeRole(user?.role);
+  const isCashierRole = currentRole === 'Cajero';
+  const isSupervisorRole = currentRole === 'Supervisor';
+
+  if (currentRole === 'Administrador') return MENU_ITEMS;
+
+  if (isCashierRole) {
+    return MENU_ITEMS.filter((item) => (
+      ['facturacion', 'inventario', 'codigos', 'clientes', 'cartera', 'historial', 'caja', 'trueque', 'gastos', 'notas']
+        .includes(item.tab)
+    ));
+  }
+
+  if (isSupervisorRole) {
+    return MENU_ITEMS.filter((item) => {
+      const permission = user?.permissions?.[item.tab];
+      return permission === true || (typeof permission === 'object' && permission !== null);
+    });
+  }
+
+  return MENU_ITEMS.filter((item) => {
+    const permission = user?.permissions?.[item.tab];
+    return permission === true || (typeof permission === 'object' && permission !== null);
+  });
+};
+
 const OPEN_SHIFT_STORAGE_KEY = 'fact_open_shift';
 const ACTIVE_TAB_STORAGE_KEY = 'fact_active_tab';
 const USER_CASH_BALANCES_STORAGE_KEY = 'fact_user_cash_balances';
@@ -791,6 +836,18 @@ function App() {
   }
 
   const applyUserWithProfile = async (user) => {
+    const sameUserSession =
+      !!user?.id &&
+      !!currentUser?.id &&
+      String(user.id) === String(currentUser.id) &&
+      isLoggedIn &&
+      profileLoaded &&
+      shiftRestored;
+
+    if (sameUserSession) {
+      return;
+    }
+
     setShiftRestored(false);
     try {
       const { data: profile, error: profileError } = await getProfile(user.id);
@@ -2969,43 +3026,7 @@ function App() {
   };
 
   const renderHome = () => {
-    const menuItems = [
-      { id: 'facturacion', label: 'Facturacion', icon: '\uD83E\uDDFE', tab: 'facturacion' },
-      { id: 'inventario', label: 'Inventario', icon: '\uD83D\uDCE6', tab: 'inventario' },
-      { id: 'compras', label: 'Compras', icon: '\uD83D\uDED2', tab: 'compras' },
-      { id: 'clientes', label: 'Clientes', icon: '\uD83D\uDC65', tab: 'clientes' },
-      { id: 'caja', label: 'Caja', icon: '\uD83D\uDCB0', tab: 'caja' },
-      { id: 'cartera', label: 'Cartera', icon: '\uD83D\uDCC1', tab: 'cartera' },
-      { id: 'reportes', label: 'Reportes', icon: '\uD83D\uDCCA', tab: 'reportes' },
-      { id: 'bitacora', label: 'Bitacora', icon: '\uD83D\uDCDD', tab: 'bitacora' },
-      { id: 'codigos', label: 'Codigos', icon: '\uD83C\uDFF7\uFE0F', tab: 'codigos' },
-      { id: 'trueque', label: 'Trueque', icon: '\uD83D\uDD04', tab: 'trueque' },
-      { id: 'gastos', label: 'Gastos', icon: '\uD83D\uDCB8', tab: 'gastos' },
-      { id: 'notas', label: 'Notas', icon: '\uD83D\uDCD2', tab: 'notas' },
-      { id: 'historial', label: 'Historial', icon: '\u23F3', tab: 'historial' },
-      { id: 'cierres', label: 'Cierres', icon: '\uD83D\uDD12', tab: 'cierres' },
-      { id: 'config', label: 'Configuracion', icon: '\u2699\uFE0F', tab: 'config' },
-    ];
-
-    const currentRole = normalizeRole(currentUser?.role);
-    const isCashierRole = currentRole === 'Cajero';
-    const isSupervisorRole = currentRole === 'Supervisor';
-
-    const allowedMenuItems = currentRole === 'Administrador'
-      ? menuItems
-      : isCashierRole
-        ? menuItems.filter((item) => ['facturacion', 'inventario', 'codigos', 'clientes', 'cartera', 'historial', 'caja', 'trueque', 'gastos', 'notas'].includes(item.tab))
-        : isSupervisorRole
-          ? menuItems.filter((item) => {
-              const permission = currentUser?.permissions?.[item.tab];
-              return permission === true || (typeof permission === 'object' && permission !== null);
-            })
-        : menuItems.filter(item => {
-            const permission = currentUser?.permissions?.[item.tab];
-            // Si el permiso es true (boolean) o un objeto (con sub-permisos), mostrar
-            // Si es false o undefined, ocultar
-            return permission === true || (typeof permission === 'object' && permission !== null);
-          });
+    const allowedMenuItems = getAllowedMenuItemsForUser(currentUser);
 
     const cashBalance = activeShiftCashBalance;
 
@@ -3113,44 +3134,6 @@ function App() {
             <span>Saldo de caja: {currentUser?.name || 'Sistema'}</span>
           </div>
         </div>
-
-        <aside
-          data-floating-panel="promo"
-          className={`promo-card promo-lubricante ${homePanelsMovable ? 'movable' : ''}`}
-          style={getFloatingPanelStyle('promo')}
-        >
-          {homePanelsMovable && (
-            <div className="floating-panel-head promo-panel-head">
-              <span className="promo-panel-title">Publicidad</span>
-              <button
-                type="button"
-                className="floating-panel-handle"
-                onMouseDown={(event) => startFloatingPanelDrag('promo', event)}
-                title="Mover publicidad"
-              >
-                Mover
-              </button>
-            </div>
-          )}
-          <div className="promo-content">
-            <div className="promo-text">
-              <div className="promo-badge">Nuevo producto</div>
-              <div className="promo-title">Lubricante de la casa</div>
-              <div className="promo-copy">
-                RecuErdalo en cada atencion y ofrEcelo al cliente como complemento recomendado.
-              </div>
-              <div className="promo-footer">Sugerencia al asesor: menciOnalo antes de cerrar la venta.</div>
-            </div>
-            <video
-              className="promo-media"
-              src="/liubrigif.mp4"
-              autoPlay
-              loop
-              muted
-              playsInline
-            />
-          </div>
-        </aside>
 
         {allowedMenuItems.length === 0 && (
           <div className="card" style={{ maxWidth: '580px', margin: '2rem auto', textAlign: 'center' }}>
@@ -3267,23 +3250,29 @@ function App() {
     );
   }
 
+  const headerNavItems = getAllowedMenuItemsForUser(currentUser);
+
   return (
     <div
       style={{
         minHeight: '100vh',
-        backgroundImage: `linear-gradient(135deg, rgba(255, 255, 255, 0.48) 0%, rgba(255, 255, 255, 0.48) 100%), url('${modulesBg}')`,
+        backgroundImage: `radial-gradient(900px circle at 18% -10%, rgba(255, 0, 214, 0.18), transparent 55%),
+          radial-gradient(900px circle at 85% 0%, rgba(0, 229, 255, 0.14), transparent 50%),
+          linear-gradient(180deg, rgba(0, 0, 0, 0.92), rgba(0, 0, 0, 0.86)),
+          url('${modulesBg}')`,
         backgroundSize: 'cover',
         backgroundPosition: 'center',
         backgroundRepeat: 'no-repeat',
         backgroundAttachment: 'fixed',
+        backgroundBlendMode: 'screen, screen, normal, overlay',
       }}
     >
       <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '2rem' }}>
-      <header style={{ marginBottom: '2rem', borderBottom: '1px solid #e2e8f0', paddingBottom: '1rem' }}>
+      <header style={{ marginBottom: '2rem', borderBottom: '1px solid rgba(255, 0, 214, 0.28)', paddingBottom: '1rem', boxShadow: '0 10px 30px rgba(255, 0, 214, 0.10)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
-            <h1 style={{ margin: 0, fontSize: '2rem', color: '#1e293b' }}>Sistema de Facturacion Pro</h1>
-            <div style={{ color: '#64748b', margin: '0.5rem 0 0', display: 'flex', alignItems: 'center', gap: '1rem' }}>
+            <h1 style={{ margin: 0, fontSize: '2rem', color: 'var(--neon-fuchsia)', textShadow: '0 0 14px rgba(255, 0, 214, 0.45)' }}>Sistema de Facturacion Pro</h1>
+            <div style={{ color: 'var(--text-secondary)', margin: '0.5rem 0 0', display: 'flex', alignItems: 'center', gap: '1rem' }}>
               {currentUser?.role || 'Usuario'}: <strong>{currentUser?.name || 'Sistema'}</strong> |
               <ShiftManager
                 shift={shift}
@@ -3302,11 +3291,12 @@ function App() {
                 justifyContent: 'center',
                 padding: '0.4rem 0.7rem',
                 borderRadius: '8px',
-                backgroundColor: '#fff7ed',
-                border: '1px solid #fdba74',
-                color: '#9a3412',
+                backgroundColor: 'rgba(0, 0, 0, 0.35)',
+                border: '1px solid rgba(255, 0, 214, 0.35)',
+                color: 'var(--text-primary)',
                 fontSize: '0.75rem',
-                lineHeight: 1.2
+                lineHeight: 1.2,
+                boxShadow: '0 0 0 1px rgba(255, 0, 214, 0.16), 0 0 18px rgba(0, 229, 255, 0.12)'
               }}
             >
               <strong>HORA</strong>
@@ -3316,7 +3306,7 @@ function App() {
               <button
                 className="btn"
                 onClick={() => setNotificationsOpen((prev) => !prev)}
-                style={{ position: 'relative', minWidth: '44px', backgroundColor: '#f8fafc' }}
+                style={{ position: 'relative', minWidth: '44px', backgroundColor: 'rgba(0, 0, 0, 0.25)' }}
                 title="Notificaciones"
               >
                 ðŸ””
@@ -3347,25 +3337,25 @@ function App() {
                     width: 'min(420px, 90vw)',
                     maxHeight: '70vh',
                     overflowY: 'auto',
-                    background: '#fff',
-                    border: '1px solid #e2e8f0',
+                    background: 'rgba(12, 12, 24, 0.92)',
+                    border: '1px solid rgba(0, 229, 255, 0.28)',
                     borderRadius: '12px',
-                    boxShadow: '0 14px 34px rgba(15, 23, 42, 0.18)',
+                    boxShadow: '0 0 0 1px rgba(0, 229, 255, 0.18), 0 22px 56px rgba(0, 0, 0, 0.55)',
                     zIndex: 40,
                     padding: '10px'
                   }}
                 >
                   <div style={{ fontWeight: 700, marginBottom: '8px' }}>Notificaciones</div>
-                  {notifications.length === 0 && <p style={{ margin: 0, color: '#64748b' }}>Sin notificaciones.</p>}
+                  {notifications.length === 0 && <p style={{ margin: 0, color: 'var(--text-secondary)' }}>Sin notificaciones.</p>}
                   {notifications.map((n) => (
-                    <div key={n.id} style={{ border: '1px solid #e2e8f0', borderRadius: '8px', padding: '8px', marginBottom: '6px' }}>
-                      <div style={{ fontSize: '0.88rem', color: '#0f172a' }}>{n.text}</div>
-                      <div style={{ fontSize: '0.75rem', color: '#64748b' }}>{new Date(n.at).toLocaleString('es-CO')}</div>
+                    <div key={n.id} style={{ border: '1px solid rgba(0, 229, 255, 0.20)', borderRadius: '8px', padding: '8px', marginBottom: '6px', background: 'rgba(0, 0, 0, 0.22)' }}>
+                      <div style={{ fontSize: '0.88rem', color: 'var(--text-primary)' }}>{n.text}</div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{new Date(n.at).toLocaleString('es-CO')}</div>
                       {Array.isArray(n.attachments) && n.attachments.length > 0 && (
                         <div style={{ display: 'flex', gap: '6px', marginTop: '8px', flexWrap: 'wrap' }}>
                           {n.attachments.slice(0, 2).map((file) => (
                             String(file?.type || '').startsWith('image/') ? (
-                              <img key={file.id} src={file.dataUrl} alt={file.name} style={{ width: '100%', maxWidth: '180px', borderRadius: '8px', border: '1px solid #e2e8f0' }} />
+                              <img key={file.id} src={file.dataUrl} alt={file.name} style={{ width: '100%', maxWidth: '180px', borderRadius: '8px', border: '1px solid rgba(0, 229, 255, 0.22)' }} />
                             ) : (
                               <a key={file.id} href={file.dataUrl} download={file.name} className="btn">{file.name}</a>
                             )
@@ -3424,25 +3414,41 @@ function App() {
                 </div>
               )}
             </div>
-            {activeTab !== 'home' && (
-              <button
-                className="btn btn-primary"
-                onClick={() => setActiveTab('home')}
-                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
-              >
-                Inicio
-              </button>
-            )}
             <button
               className="btn"
               onClick={handleLogout}
-              style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', backgroundColor: '#f1f5f9', color: '#64748b' }}
+              style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', backgroundColor: 'rgba(0, 0, 0, 0.25)', color: 'var(--text-primary)' }}
               title="Cerrar sesion (Cerrar sesion NO termina la jornada)"
             >
               Salir
             </button>
           </div>
         </div>
+
+        {shift && (
+          <>
+            <div className="neon-divider" />
+            <nav className="neon-nav" aria-label="Navegacion">
+              <button
+                type="button"
+                className={`neon-pill ${activeTab === 'home' ? 'active' : ''}`}
+                onClick={() => setActiveTab('home')}
+              >
+                Inicio
+              </button>
+              {headerNavItems.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={`neon-pill ${activeTab === item.tab ? 'active' : ''}`}
+                  onClick={() => setActiveTab(item.tab)}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </nav>
+          </>
+        )}
       </header>
       <br />
       {!shift ? (
