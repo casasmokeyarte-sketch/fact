@@ -1,13 +1,11 @@
 import React, { useEffect, useState } from 'react'
-import { signUp, signIn, resetPassword, updatePassword } from '../lib/authService'
+import { signIn, resetPassword, updatePassword } from '../lib/authService'
 import '../App.css'
-import loginBg from '../assets/login-bg.png..jpeg'
 
 export function AuthPage({ onAuthSuccess }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
-  const [isLogin, setIsLogin] = useState(true)
   const [isRecoveryMode, setIsRecoveryMode] = useState(false)
   const [recoveryPassword, setRecoveryPassword] = useState('')
   const [recoveryPasswordConfirm, setRecoveryPasswordConfirm] = useState('')
@@ -25,7 +23,6 @@ export function AuthPage({ onAuthSuccess }) {
 
     if (isRecovery) {
       setIsRecoveryMode(true)
-      setIsLogin(true)
       setInfo('Ingresa tu nueva contrasena para completar la recuperacion.')
     }
   }, [])
@@ -69,37 +66,19 @@ export function AuthPage({ onAuthSuccess }) {
         return
       }
 
-      let result
-      if (isLogin) {
-        result = await signIn(normalizeLoginEmail(email), password)
-      } else {
-        result = await signUp(normalizeLoginEmail(email), password)
-      }
+      const result = await signIn(normalizeLoginEmail(email), password)
 
       if (result.error) {
         setError(result.error)
       } else {
         const sessionUser = result?.data?.session?.user || null
-        const authUser = result?.data?.user || null
 
-        if (isLogin) {
-          if (!sessionUser) {
-            setError('No se pudo iniciar sesion. Intenta nuevamente.')
-            return
-          }
-          onAuthSuccess(sessionUser)
+        if (!sessionUser) {
+          setError('No se pudo iniciar sesion. Intenta nuevamente.')
           return
         }
 
-        if (sessionUser) {
-          onAuthSuccess(sessionUser)
-        } else if (authUser) {
-          setInfo('Registro exitoso. Revisa tu correo para confirmar la cuenta y luego inicia sesion.')
-          setIsLogin(true)
-        } else {
-          setInfo('Registro completado. Inicia sesion para continuar.')
-          setIsLogin(true)
-        }
+        onAuthSuccess(sessionUser)
       }
     } catch (err) {
       setError(err.message || 'Error desconocido')
@@ -131,7 +110,7 @@ export function AuthPage({ onAuthSuccess }) {
       <div className="auth-card">
         <h1>facturas OT</h1>
         <p className="auth-subtitle">
-          {isRecoveryMode ? 'Recuperacion de contrasena' : isLogin ? 'Inicia sesion' : 'Crea una cuenta'}
+          {isRecoveryMode ? 'Recuperacion de contrasena' : 'Inicia sesion'}
         </p>
 
         {error && <div className="error-message">{error}</div>}
@@ -204,7 +183,7 @@ export function AuthPage({ onAuthSuccess }) {
             </>
           )}
 
-          {isLogin && !isRecoveryMode && (
+          {!isRecoveryMode && (
             <div className="forgot-wrap">
               <button
                 type="button"
@@ -217,56 +196,75 @@ export function AuthPage({ onAuthSuccess }) {
           )}
 
           <button type="submit" disabled={loading} className="auth-button">
-            {loading ? 'Procesando...' : isRecoveryMode ? 'Actualizar contrasena' : isLogin ? 'Iniciar sesion' : 'Registrarse'}
+            {loading ? 'Procesando...' : isRecoveryMode ? 'Actualizar contrasena' : 'Iniciar sesion'}
           </button>
         </form>
 
         {!isRecoveryMode && (
-          <div className="auth-toggle">
-            <p>
-              {isLogin ? 'No tienes cuenta?' : 'Ya tienes cuenta?'}
-              <button
-                type="button"
-                onClick={() => {
-                  setIsLogin(!isLogin)
-                  setError('')
-                  setInfo('')
-                }}
-                className="toggle-button"
-              >
-                {isLogin ? 'Registrate' : 'Inicia sesion'}
-              </button>
-            </p>
-          </div>
+          <p className="auth-hint">
+            Si no tienes usuario, pidelo al Administrador para que te cree uno desde el modulo de Usuarios.
+          </p>
         )}
       </div>
 
       <style>{`
         .auth-container {
+          position: relative;
           display: flex;
           justify-content: center;
           align-items: center;
           height: 100vh;
-          background-image:
-            linear-gradient(135deg, rgba(102, 126, 234, 0.75) 0%, rgba(118, 75, 162, 0.75) 100%),
-            url('${loginBg}');
-          background-size: cover;
-          background-position: center;
-          background-repeat: no-repeat;
+          background: radial-gradient(1200px 600px at 50% 30%, rgba(255, 0, 214, 0.08), transparent 60%), #000;
+          overflow: hidden;
+        }
+
+        .auth-container::before,
+        .auth-container::after {
+          content: '';
+          position: absolute;
+          inset: -20%;
+          pointer-events: none;
+          background:
+            radial-gradient(800px 520px at 18% 32%, rgba(255, 0, 214, 0.22), transparent 55%),
+            radial-gradient(760px 520px at 78% 28%, rgba(0, 229, 255, 0.18), transparent 56%),
+            radial-gradient(820px 620px at 55% 78%, rgba(140, 70, 255, 0.14), transparent 60%);
+          filter: blur(22px);
+          opacity: 0.85;
+          transform: translate3d(0, 0, 0);
+          animation: authNeonShift 8.5s ease-in-out infinite;
+        }
+
+        .auth-container::after {
+          opacity: 0.6;
+          filter: blur(34px);
+          animation-duration: 12.5s;
+          animation-direction: reverse;
+          mix-blend-mode: screen;
+        }
+
+        @keyframes authNeonShift {
+          0% { transform: translate3d(-1.5%, -1.2%, 0) scale(1.02); opacity: 0.62; }
+          35% { transform: translate3d(1.2%, -0.4%, 0) scale(1.04); opacity: 0.86; }
+          70% { transform: translate3d(-0.6%, 1.1%, 0) scale(1.03); opacity: 0.74; }
+          100% { transform: translate3d(-1.5%, -1.2%, 0) scale(1.02); opacity: 0.62; }
         }
 
         .auth-card {
-          background: white;
+          position: relative;
+          background: rgba(0, 0, 0, 0.62);
           padding: 40px;
           border-radius: 10px;
-          box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+          box-shadow: 0 14px 60px rgba(0, 0, 0, 0.65);
+          border: 1px solid rgba(0, 229, 255, 0.22);
+          backdrop-filter: blur(10px);
           width: 100%;
           max-width: 400px;
+          z-index: 1;
         }
 
         .auth-card h1 {
           text-align: center;
-          color: #333;
+          color: rgba(243, 247, 255, 0.96);
           margin: 0 0 10px 0;
           font-size: 32px;
           text-transform: uppercase;
@@ -274,26 +272,26 @@ export function AuthPage({ onAuthSuccess }) {
 
         .auth-subtitle {
           text-align: center;
-          color: #666;
+          color: rgba(243, 247, 255, 0.72);
           margin-bottom: 30px;
         }
 
         .error-message {
-          background-color: #fee;
-          color: #c33;
+          background-color: rgba(255, 45, 85, 0.14);
+          color: rgba(255, 225, 230, 0.95);
           padding: 12px;
           border-radius: 5px;
           margin-bottom: 20px;
-          border-left: 4px solid #c33;
+          border-left: 4px solid rgba(255, 45, 85, 0.85);
         }
 
         .info-message {
-          background-color: #effaf3;
-          color: #166534;
+          background-color: rgba(0, 229, 255, 0.12);
+          color: rgba(214, 251, 255, 0.95);
           padding: 12px;
           border-radius: 5px;
           margin-bottom: 20px;
-          border-left: 4px solid #16a34a;
+          border-left: 4px solid rgba(0, 229, 255, 0.85);
         }
 
         .form-group {
@@ -303,7 +301,7 @@ export function AuthPage({ onAuthSuccess }) {
         .form-group label {
           display: block;
           margin-bottom: 8px;
-          color: #333;
+          color: rgba(243, 247, 255, 0.78);
           font-weight: 600;
         }
 
@@ -311,16 +309,18 @@ export function AuthPage({ onAuthSuccess }) {
           width: 100%;
           padding: 12px;
           box-sizing: border-box;
-          border: 1px solid #ddd;
+          border: 1px solid rgba(0, 229, 255, 0.18);
           border-radius: 5px;
           font-size: 14px;
           transition: border-color 0.3s;
+          background: rgba(0, 0, 0, 0.35);
+          color: rgba(243, 247, 255, 0.92);
         }
 
         .form-group input:focus {
           outline: none;
-          border-color: #667eea;
-          box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+          border-color: rgba(255, 0, 214, 0.55);
+          box-shadow: 0 0 0 3px rgba(255, 0, 214, 0.18);
         }
 
         .password-field {
@@ -342,12 +342,12 @@ export function AuthPage({ onAuthSuccess }) {
           cursor: pointer;
           font-size: 12px;
           line-height: 1;
-          color: #555;
+          color: rgba(243, 247, 255, 0.75);
           padding: 4px;
         }
 
         .password-toggle:hover {
-          color: #333;
+          color: rgba(255, 0, 214, 0.95);
         }
 
         .forgot-wrap {
@@ -359,7 +359,7 @@ export function AuthPage({ onAuthSuccess }) {
         .forgot-button {
           background: none;
           border: none;
-          color: #667eea;
+          color: rgba(0, 229, 255, 0.92);
           cursor: pointer;
           font-size: 13px;
           padding: 0;
@@ -367,13 +367,13 @@ export function AuthPage({ onAuthSuccess }) {
         }
 
         .forgot-button:hover {
-          color: #764ba2;
+          color: rgba(255, 0, 214, 0.95);
         }
 
         .auth-button {
           width: 100%;
           padding: 12px;
-          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+          background: linear-gradient(135deg, rgba(255, 0, 214, 0.92), rgba(47, 124, 255, 0.88));
           color: white;
           border: none;
           border-radius: 5px;
@@ -384,33 +384,20 @@ export function AuthPage({ onAuthSuccess }) {
 
         .auth-button:hover:not(:disabled) {
           transform: translateY(-2px);
-          box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+          box-shadow: 0 0 0 1px rgba(255, 0, 214, 0.45), 0 10px 28px rgba(255, 0, 214, 0.18), 0 10px 32px rgba(0, 229, 255, 0.16);
         }
 
         .auth-button:disabled {
-          opacity: 0.6;
+          opacity: 0.7;
           cursor: not-allowed;
         }
 
-        .auth-toggle {
+        .auth-hint {
+          margin: 18px 0 0 0;
           text-align: center;
-          margin-top: 20px;
-          color: #666;
-          font-size: 14px;
-        }
-
-        .toggle-button {
-          background: none;
-          border: none;
-          color: #667eea;
-          cursor: pointer;
-          font-weight: 600;
-          margin-left: 5px;
-          text-decoration: underline;
-        }
-
-        .toggle-button:hover {
-          color: #764ba2;
+          color: rgba(243, 247, 255, 0.65);
+          font-size: 13px;
+          line-height: 1.35;
         }
       `}</style>
     </div>
