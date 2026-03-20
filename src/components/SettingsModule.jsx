@@ -3,11 +3,15 @@ import { playSound } from '../lib/soundService';
 import { PaginationControls } from './PaginationControls';
 import { usePagination } from '../lib/usePagination';
 import { supabase } from '../lib/supabaseClient';
+import { useTableSort } from '../lib/useTableSort';
+import { SortButton } from './SortButton';
 
 export function SettingsModule({
     users, setUsers,
     paymentMethods, setPaymentMethods,
+    onSavePaymentMethods,
     categories, setCategories,
+    onSaveCategories,
     onResetSystem, onSaveSystem,
     soundEnabled, setSoundEnabled,
     soundVolume, setSoundVolume,
@@ -28,7 +32,16 @@ export function SettingsModule({
     const [newCategory, setNewCategory] = useState('');
     const [dayOffsetInput, setDayOffsetInput] = useState(() => Number(operationalDateSettings?.daysOffset || 0));
     const [dayOffsetReason, setDayOffsetReason] = useState('');
-    const usersPagination = usePagination(users, 15);
+    const { sortedRows: sortedUsers, sortConfig: usersSort, setSortKey: setUsersSortKey } = useTableSort(
+        users,
+        {
+            name: { getValue: (u) => u?.name || '', type: 'string' },
+            username: { getValue: (u) => u?.username || '', type: 'string' },
+            role: { getValue: (u) => u?.role || '', type: 'string' },
+        },
+        'name'
+    );
+    const usersPagination = usePagination(sortedUsers, 15);
     const [usersLoading, setUsersLoading] = useState(false);
     const [usersError, setUsersError] = useState('');
 
@@ -221,24 +234,32 @@ export function SettingsModule({
 
     const handleAddPayment = () => {
         if (!newMethod) return;
-        setPaymentMethods([...paymentMethods, newMethod]);
+        const next = [...paymentMethods, newMethod];
+        setPaymentMethods(next);
+        onSavePaymentMethods?.(next);
         setNewMethod('');
     };
 
     const handleRemovePayment = (method) => {
-        setPaymentMethods(paymentMethods.filter(m => m !== method));
+        const next = paymentMethods.filter(m => m !== method);
+        setPaymentMethods(next);
+        onSavePaymentMethods?.(next);
     };
 
     const handleAddCategory = () => {
         if (!newCategory) return;
         if (categories.includes(newCategory)) return alert("La Categorias ya existe");
-        setCategories([...categories, newCategory]);
+        const next = [...categories, newCategory];
+        setCategories(next);
+        onSaveCategories?.(next);
         setNewCategory('');
     };
 
     const handleRemoveCategory = (cat) => {
         if (cat === 'General') return alert("No se puede eliminar la Categorias General");
-        setCategories(categories.filter(c => c !== cat));
+        const next = categories.filter(c => c !== cat);
+        setCategories(next);
+        onSaveCategories?.(next);
     };
 
     return (
@@ -292,9 +313,15 @@ export function SettingsModule({
                         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                             <thead>
                                 <tr style={{ borderBottom: '1px solid #ccc' }}>
-                                    <th style={{ textAlign: 'left', padding: '0.5rem' }}>Nombre</th>
-                                    <th style={{ textAlign: 'left', padding: '0.5rem' }}>Usuario</th>
-                                    <th style={{ textAlign: 'left', padding: '0.5rem' }}>Rol</th>
+                                    <th style={{ textAlign: 'left', padding: '0.5rem' }}>
+                                        <SortButton label="Nombre" sortKey="name" sortConfig={usersSort} onChange={setUsersSortKey} />
+                                    </th>
+                                    <th style={{ textAlign: 'left', padding: '0.5rem' }}>
+                                        <SortButton label="Usuario" sortKey="username" sortConfig={usersSort} onChange={setUsersSortKey} />
+                                    </th>
+                                    <th style={{ textAlign: 'left', padding: '0.5rem' }}>
+                                        <SortButton label="Rol" sortKey="role" sortConfig={usersSort} onChange={setUsersSortKey} />
+                                    </th>
                                     <th style={{ textAlign: 'right', padding: '0.5rem' }}>Acciones</th>
                                 </tr>
                             </thead>
@@ -438,8 +465,8 @@ export function SettingsModule({
                             <div style={{ display: 'flex', gap: '0.5rem' }}>
                                 <button
                                     className="btn btn-primary"
-                                    onClick={() => {
-                                        const ok = onApplyOperationalDateOffset?.({
+                                    onClick={async () => {
+                                        const ok = await onApplyOperationalDateOffset?.({
                                             daysOffset: Number(dayOffsetInput || 0),
                                             reason: String(dayOffsetReason || '').trim()
                                         });
@@ -453,8 +480,8 @@ export function SettingsModule({
                                 </button>
                                 <button
                                     className="btn"
-                                    onClick={() => {
-                                        const ok = onApplyOperationalDateOffset?.({ daysOffset: 0, reason: 'Restablecer fecha real' });
+                                    onClick={async () => {
+                                        const ok = await onApplyOperationalDateOffset?.({ daysOffset: 0, reason: 'Restablecer fecha real' });
                                         if (ok) {
                                             setDayOffsetReason('');
                                             setDayOffsetInput(0);

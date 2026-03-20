@@ -223,3 +223,47 @@ body {
     border-color: rgba(255, 0, 214, 0.72);
     box-shadow: var(--glow-fuchsia);
 }
+
+.sort-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    border: none;
+    background: transparent;
+    color: inherit;
+    font-weight: 800;
+    padding: 0;
+    cursor: pointer;
+    text-align: left;
+}
+
+.sort-button .sort-label {
+    line-height: 1.1;
+}
+
+.sort-button .sort-arrows {
+    display: inline-grid;
+    grid-template-rows: 1fr 1fr;
+    line-height: 1;
+    gap: 1px;
+    font-size: 0.6rem;
+    opacity: 0.75;
+}
+
+.sort-button:hover .sort-arrows {
+    opacity: 1;
+}
+
+.sort-button .arrow {
+    color: rgba(243, 247, 255, 0.55);
+}
+
+.ops-board-panel .sort-button .arrow,
+.card .sort-button .arrow {
+    color: rgba(243, 247, 255, 0.55);
+}
+
+.sort-button.active .arrow.on {
+    color: var(--neon-cyan);
+    text-shadow: 0 0 14px rgba(0, 229, 255, 0.45);
+}

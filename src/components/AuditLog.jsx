@@ -1,6 +1,8 @@
 import React from 'react';
 import { PaginationControls } from './PaginationControls';
 import { usePagination } from '../lib/usePagination';
+import { useTableSort } from '../lib/useTableSort';
+import { SortButton } from './SortButton';
 
 const AUTH_REQUEST_LOG_PREFIX = 'AUTH_REQUEST_EVENT::';
 
@@ -61,7 +63,19 @@ const formatAuthLog = (log) => {
 };
 
 export function AuditLog({ logs }) {
-    const auditPagination = usePagination([...logs].reverse(), 15);
+    const { sortedRows: sortedLogs, sortConfig, setSortKey } = useTableSort(
+        logs,
+        {
+            timestamp: { getValue: (l) => l?.timestamp, type: 'date' },
+            user_name: { getValue: (l) => l?.user_name || l?.user || '', type: 'string' },
+            module: { getValue: (l) => l?.module || '', type: 'string' },
+            action: { getValue: (l) => l?.action || '', type: 'string' },
+            details: { getValue: (l) => l?.details || '', type: 'string' },
+        },
+        'timestamp',
+        'desc'
+    );
+    const auditPagination = usePagination(sortedLogs, 15);
     return (
         <div className="audit-log">
             <h2>BitAcora de Movimientos</h2>
@@ -73,11 +87,21 @@ export function AuditLog({ logs }) {
                         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                             <thead>
                                 <tr style={{ borderBottom: '2px solid var(--border-color)' }}>
-                                    <th style={{ padding: '0.75rem', textAlign: 'left' }}>Fecha/Hora</th>
-                                    <th style={{ padding: '0.75rem', textAlign: 'left' }}>Usuario</th>
-                                    <th style={{ padding: '0.75rem', textAlign: 'left' }}>Modulo</th>
-                                    <th style={{ padding: '0.75rem', textAlign: 'left' }}>AcciAn</th>
-                                    <th style={{ padding: '0.75rem', textAlign: 'left' }}>Detalles</th>
+                                    <th style={{ padding: '0.75rem', textAlign: 'left' }}>
+                                        <SortButton label="Fecha/Hora" sortKey="timestamp" sortConfig={sortConfig} onChange={setSortKey} />
+                                    </th>
+                                    <th style={{ padding: '0.75rem', textAlign: 'left' }}>
+                                        <SortButton label="Usuario" sortKey="user_name" sortConfig={sortConfig} onChange={setSortKey} />
+                                    </th>
+                                    <th style={{ padding: '0.75rem', textAlign: 'left' }}>
+                                        <SortButton label="Modulo" sortKey="module" sortConfig={sortConfig} onChange={setSortKey} />
+                                    </th>
+                                    <th style={{ padding: '0.75rem', textAlign: 'left' }}>
+                                        <SortButton label="Accion" sortKey="action" sortConfig={sortConfig} onChange={setSortKey} />
+                                    </th>
+                                    <th style={{ padding: '0.75rem', textAlign: 'left' }}>
+                                        <SortButton label="Detalles" sortKey="details" sortConfig={sortConfig} onChange={setSortKey} />
+                                    </th>
                                 </tr>
                             </thead>
                             <tbody>

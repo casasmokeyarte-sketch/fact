@@ -632,6 +632,8 @@ function App() {
       return { daysOffset: 0, reason: '', appliedBy: '', appliedAt: '' };
     }
   });
+  const [companySettingsLoaded, setCompanySettingsLoaded] = useState(false);
+  const [companySettingsLastSyncAt, setCompanySettingsLastSyncAt] = useState(0);
   const lastBoardNoteSoundAtRef = useRef(0);
 
   const getActiveTabStorageKey = (userId) => `${ACTIVE_TAB_STORAGE_KEY}_${userId}`;
@@ -956,6 +958,153 @@ function App() {
 
     setIsAdminAuth(normalizeRole(liveProfile.role) === 'Administrador');
   }, [currentUser?.id, liveProfile]);
+
+  const companyId = liveProfile?.company_id || null;
+
+  const normalizeStringArray = (value, fallback = []) => {
+    if (!Array.isArray(value)) return fallback;
+    return value.map((v) => String(v || '').trim()).filter(Boolean);
+  };
+
+  const loadCompanySettings = useCallback(async ({ silent = false } = {}) => {
+    if (!companyId || !currentUser?.id) return;
+
+    try {
+      if (isAdminAuth) {
+        await supabase
+          .from('company_settings')
+          .upsert({ company_id: companyId }, { onConflict: 'company_id', ignoreDuplicates: true });
+      }
+
+      const { data, error } = await supabase
+        .from('company_settings')
+        .select('*')
+        .eq('company_id', companyId)
+        .maybeSingle();
+
+      if (error) throw error;
+      if (!data) {
+        setCompanySettingsLoaded(true);
+        return;
+      }
+
+      const nextPaymentMethods = normalizeStringArray(
+        data.payment_methods,
+        ['Efectivo', 'Credito', 'Transferencia', 'Tarjeta']
+      );
+      const nextCategories = normalizeStringArray(
+        data.categories,
+        ['General', 'Alimentos', 'Limpieza', 'Otros']
+      );
+
+      setPaymentMethods(nextPaymentMethods);
+      setCategories(nextCategories);
+
+      const daysOffset = Number(data.operational_days_offset || 0);
+      setOperationalDateSettings({
+        daysOffset: Number.isFinite(daysOffset) ? Math.max(-30, Math.min(30, Math.trunc(daysOffset))) : 0,
+        reason: String(data.operational_reason || ''),
+        appliedBy: String(data.operational_applied_by || ''),
+        appliedAt: String(data.operational_applied_at || ''),
+      });
+
+      setCompanySettingsLoaded(true);
+      setCompanySettingsLastSyncAt(Date.now());
+    } catch (err) {
+      if (!silent) {
+        console.error('No se pudo cargar company_settings:', err);
+      }
+      setCompanySettingsLoaded(true);
+    }
+  }, [companyId, currentUser?.id, isAdminAuth]);
+
+  const saveCompanyPaymentMethods = useCallback(async (nextMethods) => {
+    if (!companyId || !currentUser?.id) return false;
+    if (!isAdminAuth) return false;
+
+    const payload = {
+      company_id: companyId,
+      payment_methods: Array.isArray(nextMethods) ? nextMethods : [],
+      updated_at: new Date().toISOString(),
+    };
+
+    const { error } = await supabase
+      .from('company_settings')
+      .upsert(payload, { onConflict: 'company_id' });
+
+    if (error) {
+      console.error('No se pudo guardar metodos de pago:', error);
+      return false;
+    }
+
+    setCompanySettingsLastSyncAt(Date.now());
+    return true;
+  }, [companyId, currentUser?.id, isAdminAuth]);
+
+  const saveCompanyCategories = useCallback(async (nextCategories) => {
+    if (!companyId || !currentUser?.id) return false;
+    if (!isAdminAuth) return false;
+
+    const payload = {
+      company_id: companyId,
+      categories: Array.isArray(nextCategories) ? nextCategories : [],
+      updated_at: new Date().toISOString(),
+    };
+
+    const { error } = await supabase
+      .from('company_settings')
+      .upsert(payload, { onConflict: 'company_id' });
+
+    if (error) {
+      console.error('No se pudo guardar categorias:', error);
+      return false;
+    }
+
+    setCompanySettingsLastSyncAt(Date.now());
+    return true;
+  }, [companyId, currentUser?.id, isAdminAuth]);
+
+  useEffect(() => {
+    if (!companyId || !currentUser?.id) return;
+    loadCompanySettings({ silent: true });
+  }, [companyId, currentUser?.id, loadCompanySettings]);
+
+  useEffect(() => {
+    if (!companyId || !currentUser?.id) return;
+
+    let channel;
+    const setup = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        await supabase.realtime.setAuth(session?.access_token ?? '');
+
+        channel = supabase
+          .channel(`company_settings:${companyId}`)
+          .on(
+            'postgres_changes',
+            {
+              event: '*',
+              schema: 'public',
+              table: 'company_settings',
+              filter: `company_id=eq.${companyId}`,
+            },
+            () => {
+              loadCompanySettings({ silent: true });
+            }
+          );
+
+        channel.subscribe();
+      } catch (err) {
+        console.error('Realtime company_settings error:', err);
+      }
+    };
+
+    void setup();
+
+    return () => {
+      if (channel) supabase.removeChannel(channel);
+    };
+  }, [companyId, currentUser?.id, loadCompanySettings]);
 
   // Subscribe to auth changes
   useEffect(() => {
@@ -1433,8 +1582,40 @@ function App() {
 
   const getOperationalNowIso = useCallback(() => getOperationalNow().toISOString(), [getOperationalNow]);
 
-  const onResetSystem = () => {
-    if (confirm("ESTA SEGURO? Esta accion borrara todas las ventas, clientes, deudas y bitacora.")) {
+  const adminApiBase = String(import.meta.env?.VITE_ADMIN_API_BASE_URL || '').trim();
+  const adminSystemUrl = `${adminApiBase}/api/admin-system`;
+
+  const runAdminSystemAction = async (action) => {
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token;
+    if (!token) throw new Error('Sesion no valida. Inicia sesion nuevamente.');
+
+    const res = await fetch(adminSystemUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ action }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data?.ok) {
+      throw new Error(data?.error || 'No se pudo ejecutar la accion.');
+    }
+    return data;
+  };
+
+  const onResetSystem = async () => {
+    if (!confirm("ESTA SEGURO?\n\nEsta accion borrara TODO el sistema de la empresa (ventas, clientes, inventario, gastos, compras, cierres, bitacora) para TODOS los usuarios.")) {
+      return;
+    }
+
+    const confirm2 = prompt('Escriba BORRAR para confirmar:');
+    if (String(confirm2 || '').trim().toUpperCase() !== 'BORRAR') return;
+
+    try {
+      await runAdminSystemAction('reset');
       setSalesHistory([]);
       setCartera([]);
       setRegisteredClients([]);
@@ -1442,28 +1623,27 @@ function App() {
       setShiftHistory([]);
       setStock({ bodega: {}, ventas: {} });
       setUserCashBalances({});
-      alert("Sistema reiniciado a valores de fabrica.");
+      alert("Sistema reiniciado (global) a valores de fabrica.");
       window.location.reload();
+    } catch (e) {
+      alert(e?.message || 'No se pudo borrar el sistema.');
     }
   };
 
-  const onSaveSystem = () => {
-    const systemData = {
-      sales: salesHistory,
-      clients: registeredClients,
-      inventory: stock,
-      debts: cartera,
-      shiftHistory: shiftHistory,
-      audit: auditLogs,
-      timestamp: new Date().toISOString()
-    };
-    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(systemData));
-    const downloadAnchorNode = document.createElement('a');
-    downloadAnchorNode.setAttribute("href", dataStr);
-    downloadAnchorNode.setAttribute("download", `respaldo_sistema_${new Date().getTime()}.json`);
-    document.body.appendChild(downloadAnchorNode);
-    downloadAnchorNode.click();
-    downloadAnchorNode.remove();
+  const onSaveSystem = async () => {
+    try {
+      const exported = await runAdminSystemAction('export');
+      const payload = exported?.data || { exportedAt: new Date().toISOString() };
+      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(payload));
+      const downloadAnchorNode = document.createElement('a');
+      downloadAnchorNode.setAttribute("href", dataStr);
+      downloadAnchorNode.setAttribute("download", `respaldo_sistema_empresa_${new Date().getTime()}.json`);
+      document.body.appendChild(downloadAnchorNode);
+      downloadAnchorNode.click();
+      downloadAnchorNode.remove();
+    } catch (e) {
+      alert(e?.message || 'No se pudo generar el respaldo.');
+    }
   };
 
   const addLog = async (logEntry) => {
@@ -1680,12 +1860,17 @@ function App() {
     }
   };
 
-  const onApplyOperationalDateOffset = ({ daysOffset = 0, reason = '' } = {}) => {
+  const onApplyOperationalDateOffset = async ({ daysOffset = 0, reason = '' } = {}) => {
     const normalizedOffset = Math.max(-30, Math.min(30, Math.trunc(Number(daysOffset) || 0)));
     const cleanReason = String(reason || '').trim();
 
     if (normalizedOffset !== 0 && cleanReason.length < 10) {
       alert('Debe escribir un motivo claro (minimo 10 caracteres).');
+      return false;
+    }
+
+    if (!isAdminAuth) {
+      alert('Solo un Administrador puede ajustar la fecha operativa para toda la empresa.');
       return false;
     }
 
@@ -1697,6 +1882,31 @@ function App() {
     };
 
     setOperationalDateSettings(nextSettings);
+
+    if (companyId && currentUser?.id) {
+      try {
+        const payload = {
+          company_id: companyId,
+          operational_days_offset: normalizedOffset,
+          operational_reason: normalizedOffset === 0 ? null : cleanReason,
+          operational_applied_by: normalizedOffset === 0 ? null : currentUser.id,
+          operational_applied_at: normalizedOffset === 0 ? null : new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+
+        const { error } = await supabase
+          .from('company_settings')
+          .upsert(payload, { onConflict: 'company_id' });
+
+        if (error) throw error;
+
+        setCompanySettingsLastSyncAt(Date.now());
+      } catch (e) {
+        console.error('No se pudo guardar fecha operativa global:', e);
+        alert('No se pudo guardar el ajuste global en la nube.');
+        return false;
+      }
+    }
 
     addLog({
       module: 'Configuracion',
@@ -4011,19 +4221,21 @@ function App() {
             />
           )}
           {activeTab === 'bitacora' && <AuditLog logs={auditLogs} />}
-          {activeTab === 'config' && (
-            <SettingsModule
-              users={users} setUsers={setUsers}
-              paymentMethods={paymentMethods} setPaymentMethods={setPaymentMethods}
-              categories={categories} setCategories={setCategories}
-              onResetSystem={onResetSystem} onSaveSystem={onSaveSystem}
-              soundEnabled={soundEnabled} setSoundEnabled={setSoundEnabled}
-              soundVolume={soundVolume} setSoundVolume={setSoundVolume}
-              soundPreset={soundPreset} setSoundPreset={setSoundPreset}
-              operationalDateSettings={operationalDateSettings}
-              onApplyOperationalDateOffset={onApplyOperationalDateOffset}
-            />
-          )}
+	          {activeTab === 'config' && (
+	            <SettingsModule
+	              users={users} setUsers={setUsers}
+	              paymentMethods={paymentMethods} setPaymentMethods={setPaymentMethods}
+	              onSavePaymentMethods={saveCompanyPaymentMethods}
+	              categories={categories} setCategories={setCategories}
+	              onSaveCategories={saveCompanyCategories}
+	              onResetSystem={onResetSystem} onSaveSystem={onSaveSystem}
+	              soundEnabled={soundEnabled} setSoundEnabled={setSoundEnabled}
+	              soundVolume={soundVolume} setSoundVolume={setSoundVolume}
+	              soundPreset={soundPreset} setSoundPreset={setSoundPreset}
+	              operationalDateSettings={operationalDateSettings}
+	              onApplyOperationalDateOffset={onApplyOperationalDateOffset}
+	            />
+	          )}
           {activeTab === 'trueque' && (
             <TruequeModule
               products={products}
