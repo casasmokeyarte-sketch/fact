@@ -107,6 +107,11 @@ export function SettingsModule({
 
         try {
             const permissions = defaultPermissions[newUser.role] || defaultPermissions.Cajero;
+            const rawUsername = String(newUser.username || '').trim();
+            const normalizedUsername = rawUsername.includes('@') ? rawUsername.split('@')[0].trim() : rawUsername;
+            if (!normalizedUsername || normalizedUsername.length < 3) {
+                throw new Error('El usuario debe tener minimo 3 caracteres (ej: cajero1).');
+            }
             const { data: { session } } = await supabase.auth.getSession();
             const token = session?.access_token;
             if (!token) throw new Error('Sesion no valida. Inicia sesion nuevamente.');
@@ -119,7 +124,7 @@ export function SettingsModule({
                 },
                 body: JSON.stringify({
                     name: newUser.name,
-                    username: newUser.username,
+                    username: normalizedUsername,
                     password: newUser.password,
                     role: newUser.role,
                     permissions,
