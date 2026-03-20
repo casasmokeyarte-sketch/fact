@@ -10,6 +10,30 @@ const fileToDataUrl = (file) => new Promise((resolve, reject) => {
   reader.readAsDataURL(file);
 });
 
+const USER_COLOR_PALETTE = [
+  '#ff00d6', // fucsia
+  '#00e5ff', // cian
+  '#2f7cff', // azul
+  '#00ff9a', // verde neon
+  '#ffb400', // ambar
+  '#ff2d55', // rojo
+];
+
+function hashString(value) {
+  const s = String(value || '').trim().toLowerCase();
+  let hash = 0;
+  for (let i = 0; i < s.length; i += 1) {
+    hash = ((hash << 5) - hash) + s.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash);
+}
+
+function pickUserAccentColor(author) {
+  const idx = hashString(author) % USER_COLOR_PALETTE.length;
+  return USER_COLOR_PALETTE[idx] || USER_COLOR_PALETTE[0];
+}
+
 export function OperationsBoardBubble({ notes = [], onCreateNote, hasAttention = false, onOpenChange }) {
   const [isOpen, setIsOpen] = useState(false);
   const [noteText, setNoteText] = useState('');
@@ -100,7 +124,11 @@ export function OperationsBoardBubble({ notes = [], onCreateNote, hasAttention =
             <div className="ops-board-list">
               {notes.length === 0 && <p>No hay notas todavia.</p>}
               {notes.map((note) => (
-                <article key={note.id} className="ops-board-note">
+                <article
+                  key={note.id}
+                  className="ops-board-note"
+                  style={{ '--note-accent': pickUserAccentColor(note.author) }}
+                >
                   <div className="ops-board-note-meta">
                     <strong>{note.author}</strong>
                     <span>{new Date(note.createdAt).toLocaleString()}</span>

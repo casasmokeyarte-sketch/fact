@@ -543,9 +543,11 @@ body {
 .ops-board-note,
 .ops-board-auth-item {
   border: 1px solid #e2e8f0;
+  border-left: 4px solid var(--note-accent, #00e5ff);
   border-radius: 10px;
   padding: 8px 10px;
   background: #ffffff;
+  color: #0f172a;
 }
 
 .ops-board-note-meta {
@@ -554,6 +556,10 @@ body {
   gap: 8px;
   font-size: 0.8rem;
   color: #475569;
+}
+
+.ops-board-note-meta strong {
+  color: var(--note-accent, #0f172a);
 }
 
 .ops-board-note p {
