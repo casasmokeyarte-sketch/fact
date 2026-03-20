@@ -468,25 +468,25 @@ export function ReportsModule({
                     <div className="card" style={{ padding: '2rem', textAlign: 'center' }}>
                         <h3>BALANCE GENERAL SISTEMA</h3>
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '2rem', marginTop: '2rem' }}>
-                            <div className="card" style={{ backgroundColor: '#f0fdf4' }}>
-                                <h4 style={{ color: '#166534' }}>Ingresos Totales</h4>
-                                <p style={{ fontSize: '2rem', fontWeight: 'bold', color: '#166534' }}>${totalSalesBal.toLocaleString()}</p>
+                            <div className="card card--success">
+                                <h4 style={{ color: 'var(--success-color)' }}>Ingresos Totales</h4>
+                                <p style={{ fontSize: '2rem', fontWeight: 'bold', color: 'var(--success-color)' }}>${totalSalesBal.toLocaleString()}</p>
                             </div>
-                            <div className="card" style={{ backgroundColor: '#fef2f2' }}>
-                                <h4 style={{ color: '#991b1b' }}>Gastos Totales</h4>
-                                <p style={{ fontSize: '2rem', fontWeight: 'bold', color: '#991b1b' }}>${totalGastosBal.toLocaleString()}</p>
+                            <div className="card card--danger">
+                                <h4 style={{ color: 'var(--danger-color)' }}>Gastos Totales</h4>
+                                <p style={{ fontSize: '2rem', fontWeight: 'bold', color: 'var(--danger-color)' }}>${totalGastosBal.toLocaleString()}</p>
                             </div>
-                            <div className="card" style={{ backgroundColor: '#fff7ed' }}>
-                                <h4 style={{ color: '#9a3412' }}>Inversion Total</h4>
-                                <p style={{ fontSize: '2rem', fontWeight: 'bold', color: '#9a3412' }}>${totalInversionBal.toLocaleString()}</p>
+                            <div className="card card--warn">
+                                <h4 style={{ color: 'rgba(255, 180, 0, 0.95)' }}>Inversion Total</h4>
+                                <p style={{ fontSize: '2rem', fontWeight: 'bold', color: 'rgba(255, 180, 0, 0.95)' }}>${totalInversionBal.toLocaleString()}</p>
                             </div>
                         </div>
-                        <div className="card" style={{ marginTop: '2rem', backgroundColor: net >= 0 ? '#f0fdf4' : '#fef2f2' }}>
+                        <div className={`card ${net >= 0 ? 'card--success' : 'card--danger'}`} style={{ marginTop: '2rem' }}>
                             <h4>Utilidad Operativa Bruta</h4>
-                            <p style={{ margin: '0 0 0.6rem', color: '#64748b' }}>
+                            <p style={{ margin: '0 0 0.6rem', color: 'var(--text-secondary)' }}>
                                 Ingresos - Gastos - Inversion = ${totalSalesBal.toLocaleString()} - ${totalGastosBal.toLocaleString()} - ${totalInversionBal.toLocaleString()}
                             </p>
-                            <p style={{ fontSize: '2.5rem', fontWeight: 'bold', color: net >= 0 ? '#15803d' : '#b91c1c' }}>
+                            <p style={{ fontSize: '2.5rem', fontWeight: 'bold', color: net >= 0 ? 'var(--success-color)' : 'var(--danger-color)' }}>
                                 ${net.toLocaleString()}
                             </p>
                         </div>

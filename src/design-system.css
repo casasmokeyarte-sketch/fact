@@ -14,6 +14,13 @@
     --text-primary: #f3f7ff;
     --text-secondary: rgba(243, 247, 255, 0.72);
     --border-color: rgba(0, 229, 255, 0.32);
+    --border-soft: rgba(0, 229, 255, 0.20);
+
+    --surface-muted: rgba(0, 0, 0, 0.30);
+    --surface-warn: rgba(255, 180, 0, 0.12);
+    --surface-success: rgba(0, 255, 154, 0.12);
+    --surface-danger: rgba(255, 45, 85, 0.12);
+    --surface-info: rgba(0, 229, 255, 0.12);
 
     --shadow-sm: 0 10px 26px rgba(0, 0, 0, 0.38);
     --shadow-md: 0 18px 46px rgba(0, 0, 0, 0.48);
@@ -40,6 +47,45 @@ body {
     padding: 1.5rem;
     border: 1px solid var(--border-color);
     backdrop-filter: blur(14px);
+}
+
+.card.card--muted {
+    background: var(--surface-muted);
+    border-color: var(--border-soft);
+}
+
+.card.card--warn {
+    background: var(--surface-warn);
+    border-color: rgba(255, 180, 0, 0.38);
+    box-shadow: 0 0 0 1px rgba(255, 180, 0, 0.18), 0 16px 38px rgba(0, 0, 0, 0.42);
+}
+
+.card.card--success {
+    background: var(--surface-success);
+    border-color: rgba(0, 255, 154, 0.38);
+}
+
+.card.card--danger {
+    background: var(--surface-danger);
+    border-color: rgba(255, 45, 85, 0.38);
+}
+
+.card.card--info {
+    background: var(--surface-info);
+    border-color: rgba(0, 229, 255, 0.38);
+}
+
+.badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.2rem 0.55rem;
+    border-radius: 999px;
+    font-size: 0.8rem;
+    font-weight: 800;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(0, 229, 255, 0.22);
+    color: var(--text-primary);
 }
 
 .input-group {
@@ -125,6 +171,13 @@ body {
     color: var(--text-primary);
     border: 1px solid rgba(255, 0, 214, 0.30);
     box-shadow: var(--glow-fuchsia);
+}
+
+.alert-danger {
+    background: rgba(255, 45, 85, 0.12);
+    color: var(--text-primary);
+    border: 1px solid rgba(255, 45, 85, 0.42);
+    box-shadow: 0 0 0 1px rgba(255, 45, 85, 0.18), 0 0 24px rgba(255, 45, 85, 0.18);
 }
 
 .neon-divider {

@@ -703,7 +703,7 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
                                                             </button>
                                                         </div>
                                                         {pendingRequest && (
-                                                            <span className="badge" style={{ backgroundColor: '#fff7ed', color: '#9a3412' }}>
+                                                            <span className="badge" style={{ backgroundColor: 'var(--surface-warn)', borderColor: 'rgba(255, 180, 0, 0.40)' }}>
                                                                 Pendiente: {Number(pendingRequest?.inventoryRequest?.quantity || 0)}
                                                             </span>
                                                         )}

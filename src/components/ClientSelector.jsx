@@ -71,22 +71,22 @@ export function ClientSelector({
             )}
 
             {selectedClient && !selectedClient.blocked && (
-                <div className="card" style={{ marginTop: '0.75rem', backgroundColor: '#f8fafc' }}>
+                <div className="card card--muted" style={{ marginTop: '0.75rem' }}>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '0.6rem' }}>
                         <div>
-                            <div style={{ fontSize: '0.78rem', color: '#64748b' }}>Nivel</div>
+                            <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Nivel</div>
                             <strong>{selectedClient.creditLevel || 'ESTANDAR'}</strong>
                         </div>
                         <div>
-                            <div style={{ fontSize: '0.78rem', color: '#64748b' }}>Cupo</div>
+                            <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Cupo</div>
                             <strong>${Number(selectedClient.creditLimit || 0).toLocaleString()}</strong>
                         </div>
                         <div>
-                            <div style={{ fontSize: '0.78rem', color: '#64748b' }}>Saldo Pendiente</div>
+                            <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Saldo Pendiente</div>
                             <strong>${Number(selectedClientPendingBalance || 0).toLocaleString()}</strong>
                         </div>
                         <div>
-                            <div style={{ fontSize: '0.78rem', color: '#64748b' }}>Disponible</div>
+                            <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Disponible</div>
                             <strong style={{ color: '#10b981' }}>${Number(selectedClientAvailableCredit || 0).toLocaleString()}</strong>
                         </div>
                     </div>

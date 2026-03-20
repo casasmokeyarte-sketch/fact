@@ -265,7 +265,7 @@ export function MainCashier({
 
             {!isCajero && subTab === 'flujo' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-                    <div className="card" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', textAlign: 'center', backgroundColor: '#f8fafc' }}>
+                    <div className="card card--muted" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', textAlign: 'center' }}>
                         <div>
                             <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Ingresos en Efectivo del Dia</p>
                             <p style={{ fontSize: '1.2rem', fontWeight: 'bold', color: '#10b981' }}>+ ${dailyCashIncome.toLocaleString()}</p>
@@ -381,26 +381,26 @@ export function MainCashier({
                     <p style={{ color: 'var(--text-secondary)' }}>Su saldo queda guardado por usuario y continua para la siguiente apertura.</p>
 
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem', marginTop: '2rem' }}>
-                        <div className="card" style={{ backgroundColor: '#f0fdf4', borderTop: '4px solid #10b981' }}>
+                        <div className="card card--success" style={{ borderTop: '4px solid #10b981' }}>
                             <div style={{ textAlign: 'center' }}>
                                 <span style={{ fontSize: '3rem' }}></span>
                                 <h4>Mi Balance Actual</h4>
-                                <p style={{ fontSize: '2.5rem', fontWeight: 'bold', color: '#15803d' }}>${cajeroBalance.toLocaleString()}</p>
+                                <p style={{ fontSize: '2.5rem', fontWeight: 'bold', color: 'var(--success-color)' }}>${cajeroBalance.toLocaleString()}</p>
                                 <p style={{ fontSize: '0.85em', color: 'var(--text-secondary)' }}>Dinero asociado a su usuario</p>
                             </div>
                         </div>
 
-                        <div className="card" style={{ backgroundColor: '#fef2f2', borderTop: '4px solid #ef4444' }}>
+                        <div className="card card--danger" style={{ borderTop: '4px solid #ef4444' }}>
                             <div style={{ textAlign: 'center' }}>
                                 <span style={{ fontSize: '3rem' }}></span>
                                 <h4>Caja Mayor (Boveda)</h4>
-                                <p style={{ fontSize: '2.5rem', fontWeight: 'bold', color: '#991b1b' }}>${cajaMayor.toLocaleString()}</p>
+                                <p style={{ fontSize: '2.5rem', fontWeight: 'bold', color: 'var(--danger-color)' }}>${cajaMayor.toLocaleString()}</p>
                                 <p style={{ fontSize: '0.85em', color: 'var(--text-secondary)' }}>Fondo disponible para transferencias</p>
                             </div>
                         </div>
                     </div>
 
-                    <div className="card" style={{ marginTop: '2rem', backgroundColor: '#f8fafc' }}>
+                    <div className="card card--muted" style={{ marginTop: '2rem' }}>
                         <h4>Realizar Transferencia</h4>
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: '1rem', alignItems: 'end' }}>
                             <div className="input-group">

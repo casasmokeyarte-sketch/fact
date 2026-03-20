@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { playSound } from '../lib/soundService';
 import { PaginationControls } from './PaginationControls';
 import { usePagination } from '../lib/usePagination';
+import { supabase } from '../lib/supabaseClient';
 
 export function SettingsModule({
     users, setUsers,
@@ -28,10 +29,56 @@ export function SettingsModule({
     const [dayOffsetInput, setDayOffsetInput] = useState(() => Number(operationalDateSettings?.daysOffset || 0));
     const [dayOffsetReason, setDayOffsetReason] = useState('');
     const usersPagination = usePagination(users, 15);
+    const [usersLoading, setUsersLoading] = useState(false);
+    const [usersError, setUsersError] = useState('');
+
+    const adminApiBase = String(import.meta.env?.VITE_ADMIN_API_BASE_URL || '').trim();
+    const adminUsersUrl = `${adminApiBase}/api/admin-users`;
 
     React.useEffect(() => {
         setDayOffsetInput(Number(operationalDateSettings?.daysOffset || 0));
     }, [operationalDateSettings?.daysOffset]);
+
+    const refreshUsersFromSupabase = React.useCallback(async () => {
+        setUsersError('');
+        setUsersLoading(true);
+        try {
+            const { data: { session } } = await supabase.auth.getSession();
+            const token = session?.access_token;
+            if (!token) throw new Error('Sesion no valida. Inicia sesion nuevamente.');
+
+            const res = await fetch(adminUsersUrl, {
+                method: 'GET',
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || !data?.ok) {
+                throw new Error(data?.error || 'No se pudo cargar usuarios.');
+            }
+
+            const mapped = (data?.users || []).map((u) => ({
+                id: u.user_id || u.id,
+                name: u.name || u.display_name || u.username || u.email || 'Usuario',
+                username: u.username || (String(u.email || '').split('@')[0] || ''),
+                email: u.email || null,
+                role: u.role || 'Cajero',
+                permissions: u.permissions || {},
+            }));
+
+            setUsers(mapped);
+        } catch (err) {
+            setUsersError(err?.message || 'Error cargando usuarios.');
+        } finally {
+            setUsersLoading(false);
+        }
+    }, [adminUsersUrl, setUsers]);
+
+    React.useEffect(() => {
+        if (subTab !== 'usuarios') return;
+        if (!Array.isArray(users) || users.length <= 1) {
+            refreshUsersFromSupabase();
+        }
+    }, [subTab, users?.length, refreshUsersFromSupabase]);
 
     const defaultPermissions = {
         Administrador: {
@@ -51,25 +98,120 @@ export function SettingsModule({
         }
     };
 
-    const handleCreateUser = (e) => {
+    const handleCreateUser = async (e) => {
         e.preventDefault();
         if (!newUser.username || !newUser.password) return alert("Usuario y clave obligatorios");
 
-        const permissions = defaultPermissions[newUser.role] || defaultPermissions.Cajero;
+        setUsersError('');
+        setUsersLoading(true);
 
-        setUsers([...users, { ...newUser, id: Date.now(), permissions }]);
-        setNewUser({ name: '', username: '', password: '', role: 'Cajero' });
-        alert("Usuario creado");
+        try {
+            const permissions = defaultPermissions[newUser.role] || defaultPermissions.Cajero;
+            const { data: { session } } = await supabase.auth.getSession();
+            const token = session?.access_token;
+            if (!token) throw new Error('Sesion no valida. Inicia sesion nuevamente.');
+
+            const res = await fetch(adminUsersUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${token}`
+                },
+                body: JSON.stringify({
+                    name: newUser.name,
+                    username: newUser.username,
+                    password: newUser.password,
+                    role: newUser.role,
+                    permissions,
+                    emailDomain: '@fact.local',
+                })
+            });
+
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || !data?.ok) {
+                throw new Error(data?.error || 'No se pudo crear el usuario.');
+            }
+
+            setNewUser({ name: '', username: '', password: '', role: 'Cajero' });
+            await refreshUsersFromSupabase();
+            alert("Usuario creado en Supabase.");
+        } catch (err) {
+            alert(err?.message || 'Error creando usuario.');
+        } finally {
+            setUsersLoading(false);
+        }
     };
 
-    const togglePermission = (userId, module) => {
-        setUsers(users.map(u => {
-            if (u.id === userId) {
-                const newPermissions = { ...(u.permissions || {}), [module]: !(u.permissions?.[module]) };
-                return { ...u, permissions: newPermissions };
+    const togglePermission = async (userId, module) => {
+        const target = users.find((u) => String(u?.id || '') === String(userId));
+        if (!target) return;
+        if (String(target?.role || '') === 'Administrador') return;
+
+        const newPermissions = { ...(target.permissions || {}), [module]: !(target.permissions?.[module]) };
+        const nextUsers = users.map((u) => (String(u?.id || '') === String(userId) ? { ...u, permissions: newPermissions } : u));
+        setUsers(nextUsers);
+
+        try {
+            const { data: { session } } = await supabase.auth.getSession();
+            const token = session?.access_token;
+            if (!token) throw new Error('Sesion no valida.');
+
+            const res = await fetch(adminUsersUrl, {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${token}`
+                },
+                body: JSON.stringify({
+                    user_id: userId,
+                    role: target.role,
+                    permissions: newPermissions,
+                })
+            });
+
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || !data?.ok) {
+                throw new Error(data?.error || 'No se pudo guardar permisos.');
             }
-            return u;
-        }));
+        } catch (err) {
+            alert(err?.message || 'Error guardando permisos.');
+            refreshUsersFromSupabase();
+        }
+    };
+
+    const handleDeleteUser = async (userRow) => {
+        if (!userRow?.id) return;
+        const label = userRow?.username || userRow?.email || userRow?.name || 'usuario';
+        const ok = confirm(`Eliminar al usuario ${label}?\n\nEsta accion lo borra de Supabase Auth y su perfil.`);
+        if (!ok) return;
+
+        setUsersLoading(true);
+        try {
+            const { data: { session } } = await supabase.auth.getSession();
+            const token = session?.access_token;
+            if (!token) throw new Error('Sesion no valida.');
+
+            const res = await fetch(adminUsersUrl, {
+                method: 'DELETE',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${token}`
+                },
+                body: JSON.stringify({ user_id: userRow.id })
+            });
+
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || !data?.ok) {
+                throw new Error(data?.error || 'No se pudo eliminar el usuario.');
+            }
+
+            await refreshUsersFromSupabase();
+            alert('Usuario eliminado.');
+        } catch (err) {
+            alert(err?.message || 'Error eliminando usuario.');
+        } finally {
+            setUsersLoading(false);
+        }
     };
 
     const handleAddPayment = () => {
@@ -132,6 +274,12 @@ export function SettingsModule({
                             </div>
                             <button type="submit" className="btn btn-primary" style={{ width: '100%' }}>Crear Usuario</button>
                         </form>
+                        <div style={{ marginTop: '0.75rem', display: 'flex', gap: '0.5rem' }}>
+                            <button className="btn" onClick={refreshUsersFromSupabase} disabled={usersLoading}>
+                                {usersLoading ? 'Cargando...' : 'Refrescar lista'}
+                            </button>
+                            {usersError && <div style={{ color: 'rgba(255, 45, 85, 0.95)', fontSize: '0.85rem' }}>{usersError}</div>}
+                        </div>
                     </div>
 
                     <div className="card">
@@ -148,14 +296,24 @@ export function SettingsModule({
                             <tbody>
                                 {usersPagination.pageItems.map(u => (
                                     <React.Fragment key={u.id}>
-                                        <tr style={{ borderBottom: '1px solid #eee' }}>
+                                        <tr style={{ borderBottom: '1px solid rgba(0, 229, 255, 0.12)' }}>
                                             <td style={{ padding: '0.5rem' }}>{u.name}</td>
                                             <td style={{ padding: '0.5rem' }}>{u.username}</td>
-                                            <td style={{ padding: '0.5rem' }}><span className="badge" style={{ backgroundColor: u.role === 'Administrador' ? '#fee2e2' : '#e2e8f0', color: u.role === 'Administrador' ? '#991b1b' : 'inherit' }}>{u.role}</span></td>
+                                            <td style={{ padding: '0.5rem' }}>
+                                                <span
+                                                    className="badge"
+                                                    style={{
+                                                        backgroundColor: u.role === 'Administrador' ? 'var(--surface-danger)' : 'var(--surface-info)',
+                                                        borderColor: u.role === 'Administrador' ? 'rgba(255, 45, 85, 0.45)' : 'rgba(0, 229, 255, 0.42)',
+                                                    }}
+                                                >
+                                                    {u.role}
+                                                </span>
+                                            </td>
                                             <td style={{ padding: '0.5rem', textAlign: 'right', display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
                                                 <button
                                                     className="btn"
-                                                    style={{ padding: '2px 8px', fontSize: '0.8em', backgroundColor: '#e2e8f0' }}
+                                                    style={{ padding: '2px 8px', fontSize: '0.8em', backgroundColor: 'var(--surface-muted)' }}
                                                     onClick={() => setEditingPermissionsUser(editingPermissionsUser?.id === u.id ? null : u)}
                                                 >
                                                     {'\uD83D\uDD10'} Permisos
@@ -165,9 +323,7 @@ export function SettingsModule({
                                                     style={{ padding: '2px 8px', fontSize: '0.8em' }}
                                                     onClick={() => {
                                                         if (u.username === 'Admin') return alert("No se puede eliminar al administrador principal");
-                                                        if (confirm(`AEliminar al usuario ${u.username}?`)) {
-                                                            setUsers(users.filter(user => user.id !== u.id));
-                                                        }
+                                                        handleDeleteUser(u);
                                                     }}
                                                 >
                                                     {'\uD83D\uDDD1\uFE0F'}
@@ -176,7 +332,7 @@ export function SettingsModule({
                                         </tr>
                                         {editingPermissionsUser?.id === u.id && (
                                             <tr>
-                                                <td colSpan="4" style={{ padding: '1rem', backgroundColor: '#f8fafc' }}>
+                                                <td colSpan="4" style={{ padding: '1rem', backgroundColor: 'var(--surface-muted)' }}>
                                                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '10px' }}>
                                                         {Object.keys(defaultPermissions.Administrador).map(module => (
                                                             <label key={module} style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '0.85em', textTransform: 'capitalize' }}>
@@ -223,7 +379,7 @@ export function SettingsModule({
 
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '1rem' }}>
                         {paymentMethods.map(method => (
-                            <div key={method} className="card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem', backgroundColor: '#f8fafc' }}>
+                            <div key={method} className="card card--muted" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem' }}>
                                 <strong>{method}</strong>
                                 <button
                                     className="btn" style={{ color: 'red', border: 'none', backgroundColor: 'transparent' }}
@@ -235,13 +391,13 @@ export function SettingsModule({
                             </div>
                         ))}
                     </div>
-                    <p style={{ fontSize: '0.8em', color: '#64748b', marginTop: '1rem' }}>Nota: Metodos bAsicos (Efectivo/Credito) no se pueden eliminar.</p>
+                    <p style={{ fontSize: '0.8em', color: 'var(--text-secondary)', marginTop: '1rem' }}>Nota: Metodos bAsicos (Efectivo/Credito) no se pueden eliminar.</p>
                 </div>
             )}
 
             {subTab === 'sistema' && (
                 <div style={{ display: 'grid', gap: '1rem' }}>
-                    <div className="card" style={{ border: '1px solid #f59e0b', backgroundColor: '#fffbeb' }}>
+                    <div className="card card--warn">
                         <h3 style={{ marginTop: 0 }}>Fecha Operativa (Retroceder Dia)</h3>
                         <p style={{ marginTop: 0 }}>
                             Permite ajustar temporalmente la fecha del sistema para corregir errores del dia anterior.
@@ -270,7 +426,7 @@ export function SettingsModule({
                                     placeholder="Ej: correccion de cierre y reporte del turno de ayer"
                                 />
                             </div>
-                            <div style={{ fontSize: '0.9em', color: '#78350f' }}>
+                            <div style={{ fontSize: '0.9em', color: 'var(--text-secondary)' }}>
                                 Estado actual: <strong>{Number(operationalDateSettings?.daysOffset || 0)} dia(s)</strong>
                                 {operationalDateSettings?.reason ? ` | Motivo: ${operationalDateSettings.reason}` : ''}
                             </div>
@@ -348,8 +504,8 @@ export function SettingsModule({
                         </div>
                     </div>
 
-                    <div className="card" style={{ border: '2px solid #fee2e2' }}>
-                        <h3 style={{ marginTop: 0, color: '#991b1b' }}>Zona de Peligro - Control del Sistema</h3>
+                    <div className="card card--danger">
+                        <h3 style={{ marginTop: 0, color: 'rgba(255, 45, 85, 0.95)' }}>Zona de Peligro - Control del Sistema</h3>
                         <p>Estas acciones afectan a toda la base de datos del sistema.</p>
 
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem', marginTop: '2rem' }}>
@@ -383,7 +539,7 @@ export function SettingsModule({
 
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '1rem' }}>
                         {categories.map(cat => (
-                            <div key={cat} className="card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem', backgroundColor: '#f8fafc' }}>
+                            <div key={cat} className="card card--muted" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem' }}>
                                 <strong>{cat}</strong>
                                 <button
                                     className="btn" style={{ color: 'red', border: 'none', backgroundColor: 'transparent' }}

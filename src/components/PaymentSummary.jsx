@@ -81,9 +81,23 @@ export function PaymentSummary({
   );
 
   const automaticDiscountPercent = Number(selectedClientDiscount || 0);
-  const automaticDiscountAmount = subtotal * (automaticDiscountPercent / 100);
-  const totalDiscount = automaticDiscountAmount + (Number(extraDiscount) || 0);
-  const total = Math.max(0, subtotal + (Number(deliveryFee) || 0) - totalDiscount);
+  const DISCOUNT_MIN_UNIT_PRICE = 50000;
+  const isDiscountEligibleItem = (item) => {
+    const fullPriceOnly = item?.full_price_only === true || item?.fullPriceOnly === true;
+    const unitPrice = Number(item?.price || 0);
+    return !fullPriceOnly && unitPrice > DISCOUNT_MIN_UNIT_PRICE;
+  };
+  const discountableSubtotal = (items || []).reduce(
+    (sum, item) => sum + (isDiscountEligibleItem(item) ? Number(item?.total || 0) : 0),
+    0
+  );
+  const protectedSubtotal = Math.max(0, Number(subtotal || 0) - Number(discountableSubtotal || 0));
+  const automaticDiscountAmount = Number(discountableSubtotal || 0) * (automaticDiscountPercent / 100);
+  const maxExtraDiscount = Math.max(0, Number(discountableSubtotal || 0) - automaticDiscountAmount);
+  const effectiveExtraDiscount = Math.max(0, Math.min(Number(extraDiscount) || 0, maxExtraDiscount));
+  const totalDiscount = automaticDiscountAmount + effectiveExtraDiscount;
+  const discountedPart = Math.max(0, Number(discountableSubtotal || 0) - totalDiscount);
+  const total = Math.max(0, protectedSubtotal + (Number(deliveryFee) || 0) + discountedPart);
   const safeMixedAmountA = clamp(Number(mixedAmountA) || 0, 0, Math.max(0, total));
   const mixedAmountB = Math.max(0, total - safeMixedAmountA);
 
@@ -105,7 +119,7 @@ export function PaymentSummary({
   const vuelta = cashReceived > total ? cashReceived - total : 0;
 
   const hasGift = items.some((item) => item.isGift);
-  const hasExtraDiscount = Number(extraDiscount) > 0;
+  const hasExtraDiscount = Number(effectiveExtraDiscount) > 0;
   const isTransferWithoutRef = !isMixed && requiresReference(paymentMode) && !paymentRef;
   const needsApproval = hasGift || hasExtraDiscount || isTransferWithoutRef;
 
@@ -267,23 +281,23 @@ export function PaymentSummary({
               total,
               paymentMode: isMixed ? `Mixto (${mixedModeA} + ${mixedModeB})` : paymentMode,
               items,
-              extraLines: [
-                Number(extraDiscount || 0) > 0 ? `Descuento extra: $${Number(extraDiscount || 0).toLocaleString()}` : null,
-                String(authNote || '').trim() ? `Nota: ${String(authNote || '').trim()}` : null,
-              ].filter(Boolean),
-            }) || [],
-          });
+	              extraLines: [
+	                Number(effectiveExtraDiscount || 0) > 0 ? `Descuento extra: $${Number(effectiveExtraDiscount || 0).toLocaleString()}` : null,
+	                String(authNote || '').trim() ? `Nota: ${String(authNote || '').trim()}` : null,
+	              ].filter(Boolean),
+	            }) || [],
+	          });
           if (requestId) {
             setActiveRemoteRequestId(requestId);
-            await onSaveDraft?.({
+	            await onSaveDraft?.({
               source: 'AUTH_REQUEST',
               authRequestId: requestId,
               reasonType,
               reasonLabel,
               authNote: String(authNote || '').trim(),
               paymentMode: isMixed ? `Mixto (${mixedModeA} + ${mixedModeB})` : paymentMode,
-              extraDiscount: Number(extraDiscount || 0),
-              mixedData: isMixed
+	              extraDiscount: Number(effectiveExtraDiscount || 0),
+	              mixedData: isMixed
                 ? {
                     modeA: mixedModeA,
                     modeB: mixedModeB,
@@ -344,19 +358,19 @@ export function PaymentSummary({
 
       if (limitExceeded) return alert('El monto a credito supera el limite permitido.');
 
-      onFacturar(
-        {
-          cash: mixedCashPortion,
-          credit: mixedCreditPortion,
-          discount: extraDiscount,
-          parts,
-          splitSummary: `${mixedModeA}: ${safeMixedAmountA.toLocaleString()} | ${mixedModeB}: ${mixedAmountB.toLocaleString()}`,
-        },
-        extraDiscount,
-        {
-          authorization: buildAuthorizationMeta(),
-        }
-      );
+	      onFacturar(
+	        {
+	          cash: mixedCashPortion,
+	          credit: mixedCreditPortion,
+	          discount: effectiveExtraDiscount,
+	          parts,
+	          splitSummary: `${mixedModeA}: ${safeMixedAmountA.toLocaleString()} | ${mixedModeB}: ${mixedAmountB.toLocaleString()}`,
+	        },
+	        effectiveExtraDiscount,
+	        {
+	          authorization: buildAuthorizationMeta(),
+	        }
+	      );
       return;
     }
 
@@ -368,15 +382,15 @@ export function PaymentSummary({
     }
     if (limitExceeded) return alert('El monto de la factura supera el limite de credito permitido.');
 
-    onFacturar(
-      null,
-      extraDiscount,
-      {
-        otherPaymentDetail: String(otherPaymentDetail || '').trim(),
-        authorization: buildAuthorizationMeta(),
-      }
-    );
-  };
+	    onFacturar(
+	      null,
+	      effectiveExtraDiscount,
+	      {
+	        otherPaymentDetail: String(otherPaymentDetail || '').trim(),
+	        authorization: buildAuthorizationMeta(),
+	      }
+	    );
+	  };
 
   React.useEffect(() => {
     if (!activeRemoteRequestId) return;
@@ -420,19 +434,19 @@ export function PaymentSummary({
     if (!paymentMethodsWithOther.includes(mixedModeB)) setMixedModeB(fallbackB);
   }, [isMixed, paymentMethodsWithOther, mixedModeA, mixedModeB]);
 
-  const handlePrintInvoice = (mode) => {
-    const previewInvoice = {
+	  const handlePrintInvoice = (mode) => {
+	    const previewInvoice = {
       id: `PRE-${Date.now()}`,
       clientName,
       clientDoc: selectedClient?.document || 'N/A',
       items,
       subtotal,
       deliveryFee: Number(deliveryFee || 0),
-      automaticDiscountPercent,
-      automaticDiscountAmount,
-      extraDiscount: Number(extraDiscount || 0),
-      totalDiscount,
-      total,
+	      automaticDiscountPercent,
+	      automaticDiscountAmount,
+	      extraDiscount: Number(effectiveExtraDiscount || 0),
+	      totalDiscount,
+	      total,
       paymentMode: isMixed ? `Mixto (${mixedModeA} + ${mixedModeB})` : paymentMode,
       authorization: buildAuthorizationMeta(),
       date: new Date().toISOString(),
@@ -456,31 +470,36 @@ export function PaymentSummary({
         ${total.toLocaleString()}
       </div>
 
-      {automaticDiscountAmount > 0 && (
-        <div className="card" style={{ backgroundColor: '#f8fafc', marginBottom: '1rem' }}>
-          <div style={{ fontSize: '0.9rem', color: '#334155' }}>
-            Descuento por nivel cliente ({automaticDiscountPercent}%): <strong>-${automaticDiscountAmount.toLocaleString()}</strong>
-          </div>
-        </div>
-      )}
+	      {automaticDiscountAmount > 0 && (
+	        <div className="card card--muted" style={{ marginBottom: '1rem' }}>
+	          <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+	            Descuento por nivel cliente ({automaticDiscountPercent}%): <strong>-${automaticDiscountAmount.toLocaleString()}</strong>
+	          </div>
+	          {Number(discountableSubtotal || 0) < Number(subtotal || 0) && (
+	            <div style={{ marginTop: '0.35rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+	              Aplica solo sobre ${Number(discountableSubtotal || 0).toLocaleString()} (productos &le; $50.000 o “Precio Full” no descuentan).
+	            </div>
+	          )}
+	        </div>
+	      )}
 
       {selectedClient && (
-        <div className="card" style={{ backgroundColor: '#f8fafc', marginBottom: '1rem' }}>
+        <div className="card card--muted" style={{ marginBottom: '1rem' }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '0.5rem', fontSize: '0.9rem' }}>
             <div>
-              <div style={{ color: '#64748b' }}>Nivel</div>
+              <div style={{ color: 'var(--text-secondary)' }}>Nivel</div>
               <strong>{selectedClient.creditLevel || selectedClient.credit_level || 'ESTANDAR'}</strong>
             </div>
             <div>
-              <div style={{ color: '#64748b' }}>Cupo</div>
+              <div style={{ color: 'var(--text-secondary)' }}>Cupo</div>
               <strong>${Number(clientLimit || 0).toLocaleString()}</strong>
             </div>
             <div>
-              <div style={{ color: '#64748b' }}>Saldo Pendiente</div>
+              <div style={{ color: 'var(--text-secondary)' }}>Saldo Pendiente</div>
               <strong>${Number(selectedClientPendingBalance || 0).toLocaleString()}</strong>
             </div>
             <div>
-              <div style={{ color: '#64748b' }}>Cupo Disponible</div>
+              <div style={{ color: 'var(--text-secondary)' }}>Cupo Disponible</div>
               <strong style={{ color: '#10b981' }}>${Number(selectedClientAvailableCredit || 0).toLocaleString()}</strong>
             </div>
           </div>
@@ -488,7 +507,7 @@ export function PaymentSummary({
       )}
 
       {limitExceeded && (
-        <div className="alert alert-warning" style={{ backgroundColor: '#fee2e2', color: '#b91c1c', border: '1px solid #f87171', padding: '1rem', borderRadius: '8px', marginBottom: '1rem', fontSize: '0.9rem' }}>
+        <div className="alert alert-danger" style={{ fontSize: '0.9rem' }}>
           <strong>Limite Excedido:</strong> El monto a credito (${creditPortion.toLocaleString()}) supera el maximo permitido para este cliente (${clientLimit.toLocaleString()}).
           <br /><br />
           <strong>Solucion:</strong> El cliente debe realizar un <strong>Abono</strong> de al menos <strong>${excess.toLocaleString()}</strong> en efectivo.
@@ -517,9 +536,9 @@ export function PaymentSummary({
       </div>
 
       {shouldUseRemoteAuth && needsApproval && (
-        <div className="card" style={{ backgroundColor: '#fff7ed', border: '1px solid #fed7aa', marginBottom: '1rem' }}>
+        <div className="card card--warn" style={{ marginBottom: '1rem' }}>
           <p style={{ margin: '0 0 0.5rem', fontWeight: 600 }}>Autorizacion remota requerida</p>
-          <p style={{ margin: '0 0 0.5rem', fontSize: '0.85rem', color: '#9a3412' }}>
+          <p style={{ margin: '0 0 0.5rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
             Motivo: {reasonLabel}
           </p>
           <textarea
@@ -530,7 +549,7 @@ export function PaymentSummary({
             placeholder="Nota breve para administracion (opcional)"
           />
           {activeRemoteRequestId && (
-            <p style={{ margin: '0.5rem 0 0', fontSize: '0.82rem', color: '#334155' }}>
+            <p style={{ margin: '0.5rem 0 0', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
               Estado solicitud: {currentRemoteDecision === 'APPROVED' ? 'Aprobada' : currentRemoteDecision === 'REJECTED' ? 'Rechazada' : 'Pendiente'} ({activeRemoteRequestId})
             </p>
           )}
@@ -562,13 +581,13 @@ export function PaymentSummary({
       </div>
 
       {isStandardClient && (
-        <div className="alert alert-warning" style={{ backgroundColor: '#fffbeb', color: '#92400e', border: '1px solid #f59e0b', padding: '0.75rem', borderRadius: '8px', marginBottom: '1rem', fontSize: '0.85rem' }}>
+        <div className="alert alert-warning" style={{ marginBottom: '1rem', fontSize: '0.85rem' }}>
           Cliente ESTANDAR: solo se permite facturacion de contado (sin credito).
         </div>
       )}
 
       {isMixed && (
-        <div style={{ backgroundColor: '#f1f5f9', padding: '10px', borderRadius: '8px', marginBottom: '1rem' }}>
+        <div className="card card--muted" style={{ padding: '10px', marginBottom: '1rem' }}>
           <div style={{ display: 'grid', gap: '0.6rem' }}>
             <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>Pago 1</div>
             <div className="input-group">

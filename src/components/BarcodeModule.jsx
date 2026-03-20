@@ -525,19 +525,19 @@ export function BarcodeModule({ products, setProducts, onLog, preselectedProduct
               )}
             </div>
           ) : (
-            <div className="card" style={{ backgroundColor: '#f8fafc', marginTop: '0.5rem' }}>
-              <p style={{ margin: 0, color: '#334155' }}>
+            <div className="card card--muted" style={{ marginTop: '0.5rem' }}>
+              <p style={{ margin: 0, color: 'var(--text-secondary)' }}>
                 Modo Cajero: solo impresion de codigos existentes.
               </p>
             </div>
           )}
 
           {massGenerated.length > 0 && (
-            <div className="card" style={{ marginTop: '1rem', backgroundColor: '#fff7ed' }}>
+            <div className="card card--warn" style={{ marginTop: '1rem' }}>
               <h4 style={{ margin: '0 0 0.5rem 0' }}>Generados automaticamente (sin codigo previo)</h4>
               <div style={{ maxHeight: '180px', overflowY: 'auto', fontSize: '0.85rem' }}>
                 {massGenerated.map((item) => (
-                  <div key={item.id} style={{ padding: '0.35rem 0', borderBottom: '1px solid #fed7aa' }}>
+                  <div key={item.id} style={{ padding: '0.35rem 0', borderBottom: '1px solid rgba(255, 180, 0, 0.25)' }}>
                     <strong>{item.name}</strong>{' -> '}{item.barcode}
                   </div>
                 ))}
@@ -631,7 +631,7 @@ export function BarcodeModule({ products, setProducts, onLog, preselectedProduct
           </div>
 
           {savedLabels.length === 0 ? (
-            <p style={{ color: '#64748b', marginTop: '1rem' }}>
+            <p style={{ color: 'var(--text-secondary)', marginTop: '1rem' }}>
               No hay etiquetas guardadas. Tambien puede imprimir productos que ya tienen codigo desde el boton de impresion.
             </p>
           ) : (
@@ -639,19 +639,18 @@ export function BarcodeModule({ products, setProducts, onLog, preselectedProduct
               {savedLabels.map((label) => (
                 <div
                   key={label.id}
-                  className="card"
+                  className="card card--muted"
                   style={{
                     display: 'flex',
                     justifyContent: 'space-between',
                     alignItems: 'center',
                     padding: '10px',
                     marginBottom: '10px',
-                    backgroundColor: '#f8fafc',
                   }}
                 >
                   <div>
                     <strong>{label.name}</strong>
-                    <div style={{ fontSize: '0.8em', color: '#64748b' }}>
+                    <div style={{ fontSize: '0.8em', color: 'var(--text-secondary)' }}>
                       {label.barcode} | ${label.price}
                     </div>
                   </div>
@@ -664,14 +663,14 @@ export function BarcodeModule({ products, setProducts, onLog, preselectedProduct
             </div>
           )}
 
-          <div className="card" style={{ marginTop: '1rem', backgroundColor: '#f8fafc' }}>
+          <div className="card card--muted" style={{ marginTop: '1rem' }}>
             <h4 style={{ margin: '0 0 0.5rem' }}>Productos ya codificados</h4>
             {productsWithBarcode.length === 0 ? (
-              <p style={{ margin: 0, color: '#64748b' }}>Aun no hay productos con codigo.</p>
+              <p style={{ margin: 0, color: 'var(--text-secondary)' }}>Aun no hay productos con codigo.</p>
             ) : (
               <div style={{ maxHeight: '220px', overflowY: 'auto', fontSize: '0.85rem' }}>
                 {productsWithBarcode.map((p) => (
-                  <div key={p.id} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', alignItems: 'center', gap: '0.4rem', padding: '0.35rem 0', borderBottom: '1px solid #e2e8f0' }}>
+                  <div key={p.id} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', alignItems: 'center', gap: '0.4rem', padding: '0.35rem 0', borderBottom: '1px solid rgba(0, 229, 255, 0.12)' }}>
                     <span>{p.name}</span>
                     <strong>{p.barcode}</strong>
                     <div style={{ display: 'flex', gap: '0.25rem' }}>

@@ -1736,8 +1736,15 @@ function App() {
       subtotal,
       deliveryFee,
       autoDiscountPercent: Number(selectedClient?.discount || 0),
-      autoDiscountAmount: subtotal * (Number(selectedClient?.discount || 0) / 100),
-      total: Math.max(0, subtotal + deliveryFee - (subtotal * (Number(selectedClient?.discount || 0) / 100)) - Number(draftExtra?.extraDiscount || 0)),
+      autoDiscountAmount: Number(discountableSubtotal || 0) * (Number(selectedClient?.discount || 0) / 100),
+      total: (() => {
+        const percent = Number(selectedClient?.discount || 0);
+        const auto = Number(discountableSubtotal || 0) * (percent / 100);
+        const maxExtra = Math.max(0, Number(discountableSubtotal || 0) - auto);
+        const extra = Math.max(0, Math.min(Number(draftExtra?.extraDiscount || 0), maxExtra));
+        const discountedPart = Math.max(0, Number(discountableSubtotal || 0) - auto - extra);
+        return Math.max(0, protectedSubtotal + Number(deliveryFee || 0) + discountedPart);
+      })(),
       paymentMode,
       paymentRef,
       ...draftExtra,
@@ -2606,6 +2613,17 @@ function App() {
   };
 
   const subtotal = items.reduce((sum, item) => sum + item.total, 0);
+  const DISCOUNT_MIN_UNIT_PRICE = 50000;
+  const isDiscountEligibleItem = (item) => {
+    const fullPriceOnly = item?.full_price_only === true || item?.fullPriceOnly === true;
+    const unitPrice = Number(item?.price || 0);
+    return !fullPriceOnly && unitPrice > DISCOUNT_MIN_UNIT_PRICE;
+  };
+  const discountableSubtotal = items.reduce(
+    (sum, item) => sum + (isDiscountEligibleItem(item) ? Number(item?.total || 0) : 0),
+    0
+  );
+  const protectedSubtotal = Math.max(0, Number(subtotal || 0) - Number(discountableSubtotal || 0));
 
   const getNextInvoiceCode = () => {
     const fromHistory = (salesHistory || []).reduce((max, inv) => {
@@ -2661,9 +2679,12 @@ function App() {
     // Credit Limit check (Individual Invoice Max)
     const isCreditPortion = paymentMode === PAYMENT_MODES.CREDITO || mixedData?.credit > 0;
     const automaticDiscountPercent = Number(selectedClient?.discount || 0);
-    const automaticDiscountAmount = subtotal * (automaticDiscountPercent / 100);
-    const totalDiscount = automaticDiscountAmount + Number(extraDiscount || 0);
-    const totalAfterDiscounts = Math.max(0, subtotal + deliveryFee - totalDiscount);
+    const automaticDiscountAmount = Number(discountableSubtotal || 0) * (automaticDiscountPercent / 100);
+    const maxExtraDiscount = Math.max(0, Number(discountableSubtotal || 0) - automaticDiscountAmount);
+    const effectiveExtraDiscount = Math.max(0, Math.min(Number(extraDiscount || 0), maxExtraDiscount));
+    const totalDiscount = automaticDiscountAmount + effectiveExtraDiscount;
+    const discountedPart = Math.max(0, Number(discountableSubtotal || 0) - totalDiscount);
+    const totalAfterDiscounts = Math.max(0, protectedSubtotal + Number(deliveryFee || 0) + discountedPart);
     if (!isInternalZero && isCreditPortion && selectedClient) {
       const creditPortion = mixedData ? mixedData.credit : totalAfterDiscounts;
       if (creditPortion > selectedClient.creditLimit) {
@@ -2701,7 +2722,7 @@ function App() {
       deliveryFee,
       automaticDiscountPercent,
       automaticDiscountAmount,
-      extraDiscount: Number(extraDiscount || 0),
+      extraDiscount: effectiveExtraDiscount,
       totalDiscount,
       total: finalTotal,
       paymentMode: finalMode,
@@ -2712,7 +2733,7 @@ function App() {
         discount: {
           automaticPercent: automaticDiscountPercent,
           automaticAmount: automaticDiscountAmount,
-          extraAmount: Number(extraDiscount || 0),
+          extraAmount: effectiveExtraDiscount,
           totalAmount: totalDiscount
         },
         authorization,

@@ -96,10 +96,14 @@ export function ShiftManager({ shift, onStartShift, onEndShift, reconciliationPr
 
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-      <div className="badge" style={{ backgroundColor: '#dcfce7', color: '#166534' }}>
+      <div className="badge" style={{ backgroundColor: 'var(--surface-success)', borderColor: 'rgba(0, 255, 154, 0.45)' }}>
         {'\uD83D\uDFE2'} Jornada Activa
       </div>
-      <button className="btn" style={{ backgroundColor: '#fee2e2', color: '#991b1b' }} onClick={() => setShowReconciliation(true)}>
+      <button
+        className="btn"
+        style={{ backgroundColor: 'var(--surface-danger)', borderColor: 'rgba(255, 45, 85, 0.45)' }}
+        onClick={() => setShowReconciliation(true)}
+      >
         Cerrar Jornada
       </button>
 
@@ -110,15 +114,15 @@ export function ShiftManager({ shift, onStartShift, onEndShift, reconciliationPr
         }}>
           <div className="card" style={{ width: '560px', maxWidth: '95vw' }}>
             <h3 style={{ marginTop: 0 }}>Cierre de Caja / Cuadre del Dia</h3>
-            <p style={{ marginTop: 0, color: '#64748b' }}>
+            <p style={{ marginTop: 0, color: 'var(--text-secondary)' }}>
               Registre todas las cuentas. Si no hubo movimiento, escriba <strong>0</strong>.
             </p>
-            <div style={{ marginBottom: '0.9rem', padding: '10px', borderRadius: '6px', backgroundColor: '#fff7ed', color: '#9a3412', fontSize: '0.9rem' }}>
+            <div style={{ marginBottom: '0.9rem', padding: '10px', borderRadius: '6px', backgroundColor: 'var(--surface-warn)', border: '1px solid rgba(255, 180, 0, 0.30)', fontSize: '0.9rem' }}>
               El <strong>efectivo</strong> debe ser el dinero que realmente quedo en caja al final.
               Si ya registro un <strong>gasto</strong> o una <strong>inversion</strong>, ese valor normalmente ya salio del efectivo y no debe sumarse otra vez.
             </div>
             {reconciliationPreview?.systemAccounts && (
-              <div style={{ marginBottom: '0.9rem', padding: '10px', borderRadius: '6px', backgroundColor: '#f8fafc' }}>
+              <div style={{ marginBottom: '0.9rem', padding: '10px', borderRadius: '6px', backgroundColor: 'var(--surface-muted)', border: '1px solid var(--border-soft)' }}>
                 <div style={{ fontWeight: 700, marginBottom: '0.45rem' }}>Desglose sistema</div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '0.35rem 0.75rem', fontSize: '0.92rem' }}>
                   {ACCOUNT_FIELDS.map((field) => (
@@ -128,7 +132,7 @@ export function ShiftManager({ shift, onStartShift, onEndShift, reconciliationPr
                     </React.Fragment>
                   ))}
                 </div>
-                <p style={{ margin: '0.55rem 0 0', color: '#64748b', fontSize: '0.84rem' }}>
+                <p style={{ margin: '0.55rem 0 0', color: 'var(--text-secondary)', fontSize: '0.84rem' }}>
                   <strong>Gastos</strong> e <strong>inversion</strong> se reportan aparte y no descuentan de nuevo el total,
                   porque ya impactan el efectivo real del cierre.
                 </p>
@@ -151,7 +155,7 @@ export function ShiftManager({ shift, onStartShift, onEndShift, reconciliationPr
               ))}
             </div>
 
-            <div style={{ marginTop: '0.9rem', padding: '10px', borderRadius: '6px', backgroundColor: '#f8fafc' }}>
+            <div style={{ marginTop: '0.9rem', padding: '10px', borderRadius: '6px', backgroundColor: 'var(--surface-muted)', border: '1px solid var(--border-soft)' }}>
               <p style={{ margin: 0 }}>
                 Total declarado: <strong>${Number(totalDeclared || 0).toLocaleString()}</strong>
               </p>

@@ -223,31 +223,31 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
                         <p style={{ margin: 0, fontSize: '0.85rem' }}>{COMPANY_INFO.address}</p>
                         <p style={{ margin: 0, fontSize: '0.85rem' }}>Tel: {COMPANY_INFO.phone} | {COMPANY_INFO.email}</p>
                     </div>
-                    <div style={{ textAlign: 'center', borderBottom: '2px solid #334155', paddingBottom: '1rem', marginBottom: '2rem' }}>
+                    <div style={{ textAlign: 'center', borderBottom: '2px solid rgba(0, 229, 255, 0.22)', paddingBottom: '1rem', marginBottom: '2rem' }}>
                         <h2 style={{ margin: 0 }}>ESTADO DE CUENTA INDIVIDUAL</h2>
-                        <p style={{ color: '#64748b', margin: '0.5rem 0' }}>Reporte generado el {new Date().toLocaleString()}</p>
+                        <p style={{ color: 'var(--text-secondary)', margin: '0.5rem 0' }}>Reporte generado el {new Date().toLocaleString()}</p>
                     </div>
 
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem', marginBottom: '2rem' }}>
                         <div>
-                            <h4 style={{ textTransform: 'uppercase', color: '#64748b', fontSize: '0.8rem', borderBottom: '1px solid #e2e8f0' }}>InformaciAn del Cliente</h4>
+                            <h4 style={{ textTransform: 'uppercase', color: 'var(--text-secondary)', fontSize: '0.8rem', borderBottom: '1px solid rgba(0, 229, 255, 0.18)' }}>InformaciAn del Cliente</h4>
                             <p><strong>Nombre:</strong> {selectedClientReport.name}</p>
                             <p><strong>NIT/Documento:</strong> {selectedClientReport.document}</p>
                             <p><strong>Telèfono:</strong> {selectedClientReport.phone || 'N/A'}</p>
                             <p><strong>Direcciòn:</strong> {selectedClientReport.address || 'N/A'}</p>
                         </div>
-                        <div style={{ backgroundColor: '#f8fafc', padding: '1rem', borderRadius: '8px', textAlign: 'right' }}>
-                            <h4 style={{ textTransform: 'uppercase', color: '#64748b', fontSize: '0.8rem', borderBottom: '1px solid #e2e8f0' }}>Resumen Financiero</h4>
+                        <div style={{ backgroundColor: 'var(--surface-muted)', border: '1px solid var(--border-soft)', padding: '1rem', borderRadius: '8px', textAlign: 'right' }}>
+                            <h4 style={{ textTransform: 'uppercase', color: 'var(--text-secondary)', fontSize: '0.8rem', borderBottom: '1px solid rgba(0, 229, 255, 0.18)' }}>Resumen Financiero</h4>
                             <p style={{ fontSize: '1.5rem', margin: '0.5rem 0' }}>Saldo Pendiente: <strong style={{ color: '#e11d48' }}>${currentBalance.toLocaleString()}</strong></p>
                             <p>Limite de Credito: ${selectedClientReport.creditLimit.toLocaleString()}</p>
                             <p>Cupo Disponible: ${(selectedClientReport.creditLimit - currentBalance).toLocaleString()}</p>
                         </div>
                     </div>
 
-                    <h4 style={{ borderBottom: '2px solid #e2e8f0', paddingBottom: '0.5rem' }}>Detalle de Cartera (Pendientes)</h4>
+                    <h4 style={{ borderBottom: '2px solid rgba(0, 229, 255, 0.18)', paddingBottom: '0.5rem' }}>Detalle de Cartera (Pendientes)</h4>
                     <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '2rem' }}>
                         <thead>
-                            <tr style={{ background: '#f1f5f9' }}>
+                            <tr style={{ background: 'var(--surface-muted)' }}>
                                 <th style={{ padding: '0.5rem', textAlign: 'left' }}>Fecha</th>
                                 <th style={{ padding: '0.5rem', textAlign: 'left' }}>Factura #</th>
                                 <th style={{ padding: '0.5rem', textAlign: 'right' }}>Total</th>
@@ -259,7 +259,7 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
                                 <tr><td colSpan="4" style={{ textAlign: 'center', padding: '1rem' }}>No posee facturas pendientes</td></tr>
                             ) : (
                                 clientCartera.map(inv => (
-                                    <tr key={inv.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                    <tr key={inv.id} style={{ borderBottom: '1px solid rgba(0, 229, 255, 0.12)' }}>
                                         <td style={{ padding: '0.5rem' }}>{new Date(inv.date).toLocaleDateString()}</td>
                                         <td style={{ padding: '0.5rem' }}>{inv.id}</td>
                                         <td style={{ padding: '0.5rem', textAlign: 'right' }}>${inv.total.toLocaleString()}</td>
@@ -270,10 +270,10 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
                         </tbody>
                     </table>
 
-                    <h4 style={{ borderBottom: '2px solid #e2e8f0', paddingBottom: '0.5rem' }}>Asltimas Compras (Historial)</h4>
+                    <h4 style={{ borderBottom: '2px solid rgba(0, 229, 255, 0.18)', paddingBottom: '0.5rem' }}>Asltimas Compras (Historial)</h4>
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
-                            <tr style={{ background: '#f1f5f9' }}>
+                            <tr style={{ background: 'var(--surface-muted)' }}>
                                 <th style={{ padding: '0.5rem', textAlign: 'left' }}>Fecha</th>
                                 <th style={{ padding: '0.5rem', textAlign: 'left' }}>Factura #</th>
                                 <th style={{ padding: '0.5rem', textAlign: 'left' }}>Metodo</th>
@@ -282,7 +282,7 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
                         </thead>
                         <tbody>
                             {clientSales.slice(0, 5).map(s => (
-                                <tr key={s.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                <tr key={s.id} style={{ borderBottom: '1px solid rgba(0, 229, 255, 0.12)' }}>
                                     <td style={{ padding: '0.5rem' }}>{new Date(s.date).toLocaleDateString()}</td>
                                     <td style={{ padding: '0.5rem' }}>{s.id}</td>
                                     <td style={{ padding: '0.5rem' }}><span className="badge">{s.paymentMode}</span></td>
@@ -349,7 +349,7 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
                             </div>
                             <div className="input-group">
                                 <label className="input-label">Descuento AutomAtico (%)</label>
-                                <input type="number" className="input-field" value={newClient.discount} readOnly style={{ backgroundColor: '#f1f5f9' }} />
+                                <input type="number" className="input-field" value={newClient.discount} readOnly style={{ backgroundColor: 'var(--surface-muted)' }} />
                             </div>
                         </div>
                         <div className="input-group">

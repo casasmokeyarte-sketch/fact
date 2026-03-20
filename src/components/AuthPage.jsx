@@ -37,6 +37,14 @@ export function AuthPage({ onAuthSuccess }) {
     setLoading(true)
 
     try {
+      const usernameDomain = String(import.meta.env?.VITE_USERNAME_EMAIL_DOMAIN || '@fact.local').trim() || '@fact.local'
+      const normalizedDomain = usernameDomain.startsWith('@') ? usernameDomain : `@${usernameDomain}`
+      const normalizeLoginEmail = (value) => {
+        const raw = String(value || '').trim()
+        if (!raw) return ''
+        return raw.includes('@') ? raw : `${raw}${normalizedDomain}`
+      }
+
       if (isRecoveryMode) {
         if (!recoveryPassword || recoveryPassword.length < 6) {
           setError('La nueva contrasena debe tener al menos 6 caracteres.')
@@ -63,9 +71,9 @@ export function AuthPage({ onAuthSuccess }) {
 
       let result
       if (isLogin) {
-        result = await signIn(email, password)
+        result = await signIn(normalizeLoginEmail(email), password)
       } else {
-        result = await signUp(email, password)
+        result = await signUp(normalizeLoginEmail(email), password)
       }
 
       if (result.error) {
@@ -132,13 +140,13 @@ export function AuthPage({ onAuthSuccess }) {
         <form onSubmit={handleSubmit}>
           {!isRecoveryMode && (
             <div className="form-group">
-              <label htmlFor="email">Email</label>
+              <label htmlFor="email">Usuario o Email</label>
               <input
                 id="email"
-                type="email"
+                type="text"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="tu@email.com"
+                placeholder="ej: cajero1 (o tu@email.com)"
                 required
               />
             </div>

@@ -858,7 +858,7 @@ export function HistorialModule({
                 </div>
 
                 {authorization?.required && (
-                  <div className="card" style={{ marginTop: '0.75rem', backgroundColor: '#f8fafc' }}>
+                  <div className="card card--muted" style={{ marginTop: '0.75rem' }}>
                     <div><strong>Autorizacion:</strong> {authorization?.reasonLabel || authorization?.reasonType || 'Manual'}</div>
                     <div><strong>Estado:</strong> {authorization?.status || 'N/A'}</div>
                     <div>
@@ -870,7 +870,7 @@ export function HistorialModule({
                 )}
 
                 {Array.isArray(previewInvoice?.abonos) && previewInvoice.abonos.length > 0 && (
-                  <div className="card" style={{ marginTop: '0.75rem', backgroundColor: '#f8fafc' }}>
+                  <div className="card card--muted" style={{ marginTop: '0.75rem' }}>
                     <div style={{ fontWeight: 700, marginBottom: '0.4rem' }}>Abonos de cartera</div>
                     {previewInvoice.abonos.slice(0, 10).map((a, idx) => (
                       <div key={`${a?.id || idx}-${idx}`} style={{ fontSize: '0.9rem', marginBottom: '0.25rem' }}>

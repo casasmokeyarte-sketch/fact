@@ -66,7 +66,8 @@ export function ShiftHistoryModule({ shiftHistory, onLog }) {
                     <div className="card" style={{ width: '350px', maxHeight: '80vh', overflowY: 'auto' }}>
                         <h3>Detalle de Cierre</h3>
                         <pre style={{
-                            backgroundColor: '#f8fafc',
+                            backgroundColor: 'var(--surface-muted)',
+                            color: 'var(--text-primary)',
                             padding: '1rem',
                             borderRadius: '8px',
                             whiteSpace: 'pre-wrap',
