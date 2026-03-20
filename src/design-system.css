@@ -255,15 +255,12 @@ body {
 }
 
 .sort-button .arrow {
-    color: rgba(243, 247, 255, 0.55);
-}
-
-.ops-board-panel .sort-button .arrow,
-.card .sort-button .arrow {
-    color: rgba(243, 247, 255, 0.55);
+    color: currentColor;
+    opacity: 0.45;
 }
 
 .sort-button.active .arrow.on {
     color: var(--neon-cyan);
+    opacity: 1;
     text-shadow: 0 0 14px rgba(0, 229, 255, 0.45);
 }

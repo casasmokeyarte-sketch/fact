@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { COMPANY_INFO } from '../constants';
 import { PaginationControls } from './PaginationControls';
 import { usePagination } from '../lib/usePagination';
+import { useTableSort } from '../lib/useTableSort';
+import { SortButton } from './SortButton';
 
 export function GastosModule({
     expenses,
@@ -56,7 +58,17 @@ export function GastosModule({
     };
 
     const totalExpenses = expenses.reduce((sum, item) => sum + Number(item.amount || 0), 0);
-    const expensesPagination = usePagination(expenses, 15);
+    const { sortedRows: sortedExpenses, sortConfig, setSortKey } = useTableSort(
+        expenses,
+        {
+            date: { getValue: (e) => e?.date, type: 'date' },
+            beneficiary: { getValue: (e) => e?.beneficiary || '', type: 'string' },
+            amount: { getValue: (e) => Number(e?.amount || 0), type: 'number' },
+        },
+        'date',
+        'desc'
+    );
+    const expensesPagination = usePagination(sortedExpenses, 15);
 
     if (selectedReceipt) {
         return (
@@ -177,11 +189,17 @@ export function GastosModule({
 
                     <div className="table-container" style={{ maxHeight: '500px', overflowY: 'auto' }}>
                         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                            <thead style={{ position: 'sticky', top: 0, background: 'white', zIndex: 1 }}>
+                            <thead style={{ position: 'sticky', top: 0, background: 'rgba(12, 12, 24, 0.95)', zIndex: 1 }}>
                                 <tr style={{ borderBottom: '2px solid #e2e8f0' }}>
-                                    <th style={{ textAlign: 'left', padding: '0.75rem' }}>Fecha</th>
-                                    <th style={{ textAlign: 'left', padding: '0.75rem' }}>Beneficiario</th>
-                                    <th style={{ textAlign: 'right', padding: '0.75rem' }}>Monto</th>
+                                    <th style={{ textAlign: 'left', padding: '0.75rem' }}>
+                                        <SortButton label="Fecha" sortKey="date" sortConfig={sortConfig} onChange={setSortKey} />
+                                    </th>
+                                    <th style={{ textAlign: 'left', padding: '0.75rem' }}>
+                                        <SortButton label="Beneficiario" sortKey="beneficiary" sortConfig={sortConfig} onChange={setSortKey} />
+                                    </th>
+                                    <th style={{ textAlign: 'right', padding: '0.75rem' }}>
+                                        <SortButton label="Monto" sortKey="amount" sortConfig={sortConfig} onChange={setSortKey} />
+                                    </th>
                                     <th style={{ textAlign: 'center', padding: '0.75rem' }}>Accion</th>
                                 </tr>
                             </thead>

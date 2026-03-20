@@ -7,7 +7,11 @@ export function SortButton({ label, sortKey, sortConfig, onChange }) {
       type="button"
       className={`sort-button ${active ? 'active' : ''}`}
       onClick={() => onChange?.(sortKey)}
-      title={active ? `Orden: ${direction === 'asc' ? 'A→Z / menor→mayor' : 'Z→A / mayor→menor'}` : 'Ordenar'}
+      title={
+        active
+          ? `Orden: ${direction === 'asc' ? 'A-Z (menor a mayor)' : 'Z-A (mayor a menor)'}`
+          : 'Ordenar A-Z / Z-A'
+      }
     >
       <span className="sort-label">{label}</span>
       <span className="sort-arrows" aria-hidden="true">

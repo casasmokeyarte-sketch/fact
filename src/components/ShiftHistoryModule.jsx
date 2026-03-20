@@ -2,10 +2,23 @@ import React, { useState } from 'react';
 import { printShiftClosure } from '../lib/printReports';
 import { PaginationControls } from './PaginationControls';
 import { usePagination } from '../lib/usePagination';
+import { useTableSort } from '../lib/useTableSort';
+import { SortButton } from './SortButton';
 
 export function ShiftHistoryModule({ shiftHistory, onLog }) {
     const [selectedShift, setSelectedShift] = useState(null);
-    const historyPagination = usePagination(shiftHistory, 15);
+    const { sortedRows: sortedShifts, sortConfig, setSortKey } = useTableSort(
+        shiftHistory,
+        {
+            endTime: { getValue: (s) => s?.endTime, type: 'date' },
+            user: { getValue: (s) => s?.user || '', type: 'string' },
+            salesTotal: { getValue: (s) => Number(s?.salesTotal || 0), type: 'number' },
+            discrepancy: { getValue: (s) => Number(s?.discrepancy || 0), type: 'number' },
+        },
+        'endTime',
+        'desc'
+    );
+    const historyPagination = usePagination(sortedShifts, 15);
 
     const handlePrint = (shift, mode = '58mm') => {
         printShiftClosure(shift, mode);
@@ -20,10 +33,18 @@ export function ShiftHistoryModule({ shiftHistory, onLog }) {
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead>
                         <tr style={{ borderBottom: '2px solid var(--border-color)' }}>
-                            <th style={{ padding: '0.5rem', textAlign: 'left' }}>Fecha/Hora Cierre</th>
-                            <th style={{ padding: '0.5rem', textAlign: 'left' }}>Cajero</th>
-                            <th style={{ padding: '0.5rem', textAlign: 'right' }}>Ventas</th>
-                            <th style={{ padding: '0.5rem', textAlign: 'right' }}>Diferencia</th>
+                            <th style={{ padding: '0.5rem', textAlign: 'left' }}>
+                                <SortButton label="Fecha/Hora Cierre" sortKey="endTime" sortConfig={sortConfig} onChange={setSortKey} />
+                            </th>
+                            <th style={{ padding: '0.5rem', textAlign: 'left' }}>
+                                <SortButton label="Cajero" sortKey="user" sortConfig={sortConfig} onChange={setSortKey} />
+                            </th>
+                            <th style={{ padding: '0.5rem', textAlign: 'right' }}>
+                                <SortButton label="Ventas" sortKey="salesTotal" sortConfig={sortConfig} onChange={setSortKey} />
+                            </th>
+                            <th style={{ padding: '0.5rem', textAlign: 'right' }}>
+                                <SortButton label="Diferencia" sortKey="discrepancy" sortConfig={sortConfig} onChange={setSortKey} />
+                            </th>
                             <th style={{ padding: '0.5rem', textAlign: 'center' }}>Acciones</th>
                         </tr>
                     </thead>

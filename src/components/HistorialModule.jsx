@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { printInvoiceDocument } from '../lib/printInvoice.js';
 import { PaginationControls } from './PaginationControls';
 import { usePagination } from '../lib/usePagination';
+import { useTableSort } from '../lib/useTableSort';
+import { SortButton } from './SortButton';
 
 const AUTH_REQUEST_LOG_PREFIX = 'AUTH_REQUEST_EVENT::';
 
@@ -128,7 +130,7 @@ export function HistorialModule({
     (!statusFilter || String(s?.status || 'pagado').toLowerCase() === statusFilter) &&
     (!paymentFilter || String(s?.paymentMode || '').trim() === paymentFilter) &&
     isDateInSelectedRange(s?.date)
-  ).sort((a, b) => new Date(b.date) - new Date(a.date));
+  );
 
   const facturationMovements = useMemo(() => {
     const ownId = String(currentUser?.id || '').trim();
@@ -137,13 +139,55 @@ export function HistorialModule({
       ? source
       : source.filter((log) => String(log?.user_id || '').trim() === ownId);
     return scoped
-      .filter((log) => isDateInSelectedRange(log?.timestamp))
-      .sort((a, b) => new Date(b?.timestamp || 0) - new Date(a?.timestamp || 0));
+      .filter((log) => isDateInSelectedRange(log?.timestamp));
   }, [logs, movementScope, currentUser?.id, dateFrom, dateTo]);
 
-  const salesPagination = usePagination(filteredSales, 15);
-  const movementPagination = usePagination(facturationMovements, 15);
-  const productMovementPagination = usePagination(productMovementView?.movements || [], 15);
+  const { sortedRows: sortedMovements, sortConfig: movementSort, setSortKey: setMovementSortKey } = useTableSort(
+    facturationMovements,
+    {
+      timestamp: { getValue: (l) => l?.timestamp, type: 'date' },
+      user: { getValue: (l) => l?.user_name || l?.user || '', type: 'string' },
+      action: { getValue: (l) => l?.action || '', type: 'string' },
+      details: { getValue: (l) => l?.details || '', type: 'string' },
+    },
+    'timestamp',
+    'desc'
+  );
+
+  const { sortedRows: sortedSales, sortConfig: salesSort, setSortKey: setSalesSortKey } = useTableSort(
+    filteredSales,
+    {
+      invoice: { getValue: (s) => String(getInvoiceCode(s)).toLowerCase(), type: 'string' },
+      date: { getValue: (s) => s?.date, type: 'date' },
+      client: { getValue: (s) => s?.clientName || '', type: 'string' },
+      user: { getValue: (s) => getInvoiceUser(s) || '', type: 'string' },
+      products: { getValue: (s) => Number((s?.items || []).length || 0), type: 'number' },
+      payment: { getValue: (s) => String(s?.paymentMode || ''), type: 'string' },
+      status: { getValue: (s) => String(s?.status || 'pagado'), type: 'string' },
+      total: { getValue: (s) => Number(s?.total || 0), type: 'number' },
+    },
+    'date',
+    'desc'
+  );
+
+  const { sortedRows: sortedProductMovements, sortConfig: productMvSort, setSortKey: setProductMvSortKey } = useTableSort(
+    productMovementView?.movements || [],
+    {
+      timestamp: { getValue: (m) => m?.timestamp, type: 'date' },
+      type: { getValue: (m) => m?.type || '', type: 'string' },
+      direction: { getValue: (m) => m?.direction || '', type: 'string' },
+      invoiceCode: { getValue: (m) => m?.invoiceCode || '', type: 'string' },
+      quantity: { getValue: (m) => Number(m?.quantity || 0), type: 'number' },
+      user: { getValue: (m) => m?.user || '', type: 'string' },
+      details: { getValue: (m) => m?.details || '', type: 'string' },
+    },
+    'timestamp',
+    'desc'
+  );
+
+  const salesPagination = usePagination(sortedSales, 15);
+  const movementPagination = usePagination(sortedMovements, 15);
+  const productMovementPagination = usePagination(sortedProductMovements, 15);
 
   const productMovementsById = useMemo(() => {
     const movementMap = {};
@@ -510,15 +554,23 @@ export function HistorialModule({
           <input type="date" className="input-field" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
         </div>
         <div className="table-container" style={{ marginTop: '0.75rem' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr style={{ borderBottom: '1px solid #e2e8f0', textAlign: 'left' }}>
-                <th style={{ padding: '0.5rem' }}>Fecha</th>
-                <th style={{ padding: '0.5rem' }}>Usuario</th>
-                <th style={{ padding: '0.5rem' }}>Accion</th>
-                <th style={{ padding: '0.5rem' }}>Detalle</th>
-              </tr>
-            </thead>
+	          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+	            <thead>
+	              <tr style={{ borderBottom: '1px solid #e2e8f0', textAlign: 'left' }}>
+	                <th style={{ padding: '0.5rem' }}>
+	                  <SortButton label="Fecha" sortKey="timestamp" sortConfig={movementSort} onChange={setMovementSortKey} />
+	                </th>
+	                <th style={{ padding: '0.5rem' }}>
+	                  <SortButton label="Usuario" sortKey="user" sortConfig={movementSort} onChange={setMovementSortKey} />
+	                </th>
+	                <th style={{ padding: '0.5rem' }}>
+	                  <SortButton label="Accion" sortKey="action" sortConfig={movementSort} onChange={setMovementSortKey} />
+	                </th>
+	                <th style={{ padding: '0.5rem' }}>
+	                  <SortButton label="Detalle" sortKey="details" sortConfig={movementSort} onChange={setMovementSortKey} />
+	                </th>
+	              </tr>
+	            </thead>
             <tbody>
               {movementPagination.totalItems === 0 ? (
                 <tr><td colSpan="4" style={{ padding: '0.75rem', textAlign: 'center' }}>Sin movimientos para el filtro actual.</td></tr>
@@ -594,19 +646,33 @@ export function HistorialModule({
 
       <div className="card">
         <div className="table-container">
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr style={{ borderBottom: '2px solid #e2e8f0', textAlign: 'left' }}>
-                <th style={{ padding: '1rem' }}>ID / Fecha</th>
-                <th style={{ padding: '1rem' }}>Cliente</th>
-                <th style={{ padding: '1rem' }}>Usuario</th>
-                <th style={{ padding: '1rem' }}>Productos</th>
-                <th style={{ padding: '1rem' }}>Pago</th>
-                <th style={{ padding: '1rem' }}>Estado</th>
-                <th style={{ padding: '1rem', textAlign: 'right' }}>Total</th>
-                <th style={{ padding: '1rem', textAlign: 'center' }}>Acciones</th>
-              </tr>
-            </thead>
+	          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+	            <thead>
+	              <tr style={{ borderBottom: '2px solid #e2e8f0', textAlign: 'left' }}>
+	                <th style={{ padding: '1rem' }}>
+	                  <SortButton label="ID / Fecha" sortKey="date" sortConfig={salesSort} onChange={setSalesSortKey} />
+	                </th>
+	                <th style={{ padding: '1rem' }}>
+	                  <SortButton label="Cliente" sortKey="client" sortConfig={salesSort} onChange={setSalesSortKey} />
+	                </th>
+	                <th style={{ padding: '1rem' }}>
+	                  <SortButton label="Usuario" sortKey="user" sortConfig={salesSort} onChange={setSalesSortKey} />
+	                </th>
+	                <th style={{ padding: '1rem' }}>
+	                  <SortButton label="Productos" sortKey="products" sortConfig={salesSort} onChange={setSalesSortKey} />
+	                </th>
+	                <th style={{ padding: '1rem' }}>
+	                  <SortButton label="Pago" sortKey="payment" sortConfig={salesSort} onChange={setSalesSortKey} />
+	                </th>
+	                <th style={{ padding: '1rem' }}>
+	                  <SortButton label="Estado" sortKey="status" sortConfig={salesSort} onChange={setSalesSortKey} />
+	                </th>
+	                <th style={{ padding: '1rem', textAlign: 'right' }}>
+	                  <SortButton label="Total" sortKey="total" sortConfig={salesSort} onChange={setSalesSortKey} />
+	                </th>
+	                <th style={{ padding: '1rem', textAlign: 'center' }}>Acciones</th>
+	              </tr>
+	            </thead>
             <tbody>
               {salesPagination.totalItems === 0 ? (
                 <tr><td colSpan="8" style={{ textAlign: 'center', padding: '3rem' }}>No se encontraron ventas</td></tr>
@@ -733,17 +799,29 @@ export function HistorialModule({
             </div>
 
             <div className="table-container">
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr style={{ borderBottom: '1px solid #e2e8f0', textAlign: 'left' }}>
-                    <th style={{ padding: '0.5rem' }}>Fecha</th>
-                    <th style={{ padding: '0.5rem' }}>Tipo</th>
-                    <th style={{ padding: '0.5rem', textAlign: 'right' }}>Cantidad</th>
-                    <th style={{ padding: '0.5rem' }}>Factura</th>
-                    <th style={{ padding: '0.5rem' }}>Usuario</th>
-                    <th style={{ padding: '0.5rem' }}>Detalle</th>
-                  </tr>
-                </thead>
+	              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+	                <thead>
+	                  <tr style={{ borderBottom: '1px solid #e2e8f0', textAlign: 'left' }}>
+	                    <th style={{ padding: '0.5rem' }}>
+	                      <SortButton label="Fecha" sortKey="timestamp" sortConfig={productMvSort} onChange={setProductMvSortKey} />
+	                    </th>
+	                    <th style={{ padding: '0.5rem' }}>
+	                      <SortButton label="Tipo" sortKey="type" sortConfig={productMvSort} onChange={setProductMvSortKey} />
+	                    </th>
+	                    <th style={{ padding: '0.5rem', textAlign: 'right' }}>
+	                      <SortButton label="Cantidad" sortKey="quantity" sortConfig={productMvSort} onChange={setProductMvSortKey} />
+	                    </th>
+	                    <th style={{ padding: '0.5rem' }}>
+	                      <SortButton label="Factura" sortKey="invoiceCode" sortConfig={productMvSort} onChange={setProductMvSortKey} />
+	                    </th>
+	                    <th style={{ padding: '0.5rem' }}>
+	                      <SortButton label="Usuario" sortKey="user" sortConfig={productMvSort} onChange={setProductMvSortKey} />
+	                    </th>
+	                    <th style={{ padding: '0.5rem' }}>
+	                      <SortButton label="Detalle" sortKey="details" sortConfig={productMvSort} onChange={setProductMvSortKey} />
+	                    </th>
+	                  </tr>
+	                </thead>
                 <tbody>
                   {productMovementPagination.totalItems === 0 ? (
                     <tr><td colSpan="6" style={{ padding: '0.75rem', textAlign: 'center' }}>Sin movimientos detectados para este producto.</td></tr>

@@ -3,6 +3,8 @@ import * as XLSX from 'xlsx';
 import { INITIAL_REGISTERED_CLIENT, CREDIT_LEVELS, COMPANY_INFO } from '../constants';
 import { PaginationControls } from './PaginationControls';
 import { usePagination } from '../lib/usePagination';
+import { useTableSort } from '../lib/useTableSort';
+import { SortButton } from './SortButton';
 
 export function ClientModule({ currentUser, clients, setClients, cartera, salesHistory, onLog }) {
     const [newClient, setNewClient] = useState(INITIAL_REGISTERED_CLIENT);
@@ -30,7 +32,18 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
         (!statusFilter || (statusFilter === 'blocked' ? !!c.blocked : !c.blocked)) &&
         (!creditLevelFilter || resolveCreditLevel(c.creditLevel || c.credit_level) === creditLevelFilter)
     );
-    const clientsPagination = usePagination(filteredClients, 15);
+    const { sortedRows: sortedClients, sortConfig: clientsSort, setSortKey: setClientsSortKey } = useTableSort(
+        filteredClients,
+        {
+            name: { getValue: (c) => c?.name || '', type: 'string' },
+            document: { getValue: (c) => c?.document || '', type: 'string' },
+            blocked: { getValue: (c) => (c?.blocked ? 1 : 0), type: 'number' },
+            discount: { getValue: (c) => Number(c?.discount ?? 0), type: 'number' },
+            creditLimit: { getValue: (c) => Number(c?.creditLimit ?? c?.credit_limit ?? 0), type: 'number' },
+        },
+        'name'
+    );
+    const clientsPagination = usePagination(sortedClients, 15);
 
     const normalizeCreditLevelKey = (value) => String(value || '')
         .normalize('NFD')
@@ -414,11 +427,21 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
                             <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
-                                <th style={{ padding: '0.5rem', textAlign: 'left' }}>Cliente</th>
-                                <th style={{ padding: '0.5rem', textAlign: 'left' }}>NIT</th>
-                                <th style={{ padding: '0.5rem', textAlign: 'center' }}>Estado</th>
-                                <th style={{ padding: '0.5rem', textAlign: 'center' }}>Desc.</th>
-                                <th style={{ padding: '0.5rem', textAlign: 'right' }}>Cupo</th>
+                                <th style={{ padding: '0.5rem', textAlign: 'left' }}>
+                                    <SortButton label="Cliente" sortKey="name" sortConfig={clientsSort} onChange={setClientsSortKey} />
+                                </th>
+                                <th style={{ padding: '0.5rem', textAlign: 'left' }}>
+                                    <SortButton label="NIT" sortKey="document" sortConfig={clientsSort} onChange={setClientsSortKey} />
+                                </th>
+                                <th style={{ padding: '0.5rem', textAlign: 'center' }}>
+                                    <SortButton label="Estado" sortKey="blocked" sortConfig={clientsSort} onChange={setClientsSortKey} />
+                                </th>
+                                <th style={{ padding: '0.5rem', textAlign: 'center' }}>
+                                    <SortButton label="Desc." sortKey="discount" sortConfig={clientsSort} onChange={setClientsSortKey} />
+                                </th>
+                                <th style={{ padding: '0.5rem', textAlign: 'right' }}>
+                                    <SortButton label="Cupo" sortKey="creditLimit" sortConfig={clientsSort} onChange={setClientsSortKey} />
+                                </th>
                                 <th style={{ padding: '0.5rem', textAlign: 'right' }}>AcciAn</th>
                             </tr>
                         </thead>

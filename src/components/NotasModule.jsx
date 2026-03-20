@@ -1,11 +1,24 @@
 import React, { useState } from 'react';
 import { PaginationControls } from './PaginationControls';
 import { usePagination } from '../lib/usePagination';
+import { useTableSort } from '../lib/useTableSort';
+import { SortButton } from './SortButton';
 
 export function NotasModule({ clients, sales, onLog, onCreateNote }) {
     const [notes, setNotes] = useState([]);
     const [form, setForm] = useState({ clientId: '', invoiceId: '', type: 'Credito', amount: '', reason: '' });
-    const notesPagination = usePagination(notes, 15);
+    const { sortedRows: sortedNotes, sortConfig, setSortKey } = useTableSort(
+        notes,
+        {
+            id: { getValue: (n) => n?.id || '', type: 'string' },
+            client: { getValue: (n) => n?.clientName || '', type: 'string' },
+            type: { getValue: (n) => n?.type || '', type: 'string' },
+            amount: { getValue: (n) => Number(n?.amount || 0), type: 'number' },
+        },
+        'id',
+        'desc'
+    );
+    const notesPagination = usePagination(sortedNotes, 15);
 
     const handleAddNote = (e) => {
         e.preventDefault();
@@ -93,10 +106,18 @@ export function NotasModule({ clients, sales, onLog, onCreateNote }) {
                         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                             <thead>
                                 <tr style={{ borderBottom: '2px solid #e2e8f0' }}>
-                                    <th style={{ textAlign: 'left', padding: '0.75rem' }}>ID</th>
-                                    <th style={{ textAlign: 'left', padding: '0.75rem' }}>Cliente</th>
-                                    <th style={{ textAlign: 'left', padding: '0.75rem' }}>Tipo</th>
-                                    <th style={{ textAlign: 'right', padding: '0.75rem' }}>Monto</th>
+                                    <th style={{ textAlign: 'left', padding: '0.75rem' }}>
+                                        <SortButton label="ID" sortKey="id" sortConfig={sortConfig} onChange={setSortKey} />
+                                    </th>
+                                    <th style={{ textAlign: 'left', padding: '0.75rem' }}>
+                                        <SortButton label="Cliente" sortKey="client" sortConfig={sortConfig} onChange={setSortKey} />
+                                    </th>
+                                    <th style={{ textAlign: 'left', padding: '0.75rem' }}>
+                                        <SortButton label="Tipo" sortKey="type" sortConfig={sortConfig} onChange={setSortKey} />
+                                    </th>
+                                    <th style={{ textAlign: 'right', padding: '0.75rem' }}>
+                                        <SortButton label="Monto" sortKey="amount" sortConfig={sortConfig} onChange={setSortKey} />
+                                    </th>
                                 </tr>
                             </thead>
                             <tbody>

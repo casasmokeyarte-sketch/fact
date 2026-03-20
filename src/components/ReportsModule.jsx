@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { COMPANY_INFO } from '../constants';
 import { printReportHtml } from '../lib/printReports';
 import { PaginationControls } from './PaginationControls';
+import { SortButton } from './SortButton';
 
 export function ReportsModule({
     currentUser,
@@ -29,6 +30,7 @@ export function ReportsModule({
     const [supplierFilter, setSupplierFilter] = useState('');
     const [reportPage, setReportPage] = useState(1);
     const reportCanvasRef = useRef(null);
+    const [tableSort, setTableSort] = useState({ key: '', direction: 'asc' });
 
     const filterStorageKey = `fact_filter_reports_${currentUser?.id || 'anon'}`;
     const reportTypeStorageKey = `fact_report_type_${currentUser?.id || 'anon'}`;
@@ -56,6 +58,61 @@ export function ReportsModule({
     useEffect(() => {
         setReportPage(1);
     }, [reportType, filter, dateFrom, dateTo, userFilter, statusFilter, paymentFilter, categoryFilter, supplierFilter]);
+
+    useEffect(() => {
+        const defaults = {
+            bitacora: { key: 'date', direction: 'desc' },
+            ventas: { key: 'total', direction: 'desc' },
+            inventario: { key: 'product', direction: 'asc' },
+            clientes: { key: 'name', direction: 'asc' },
+            gastos: { key: 'date', direction: 'desc' },
+            compras: { key: 'date', direction: 'desc' },
+            cartera: { key: 'date', direction: 'desc' },
+            saldos: { key: 'balance', direction: 'desc' },
+            asesores: { key: 'salesTotal', direction: 'desc' },
+        };
+        setTableSort(defaults[reportType] || { key: '', direction: 'asc' });
+    }, [reportType]);
+
+    const setTableSortKey = (key) => {
+        if (!key) return;
+        setReportPage(1);
+        setTableSort((prev) => {
+            if (prev.key === key) {
+                return { key, direction: prev.direction === 'asc' ? 'desc' : 'asc' };
+            }
+            return { key, direction: 'asc' };
+        });
+    };
+
+    const normalizeSortValue = (value, type) => {
+        if (value == null) return type === 'number' || type === 'date' ? 0 : '';
+        if (type === 'number') {
+            const num = Number(value);
+            return Number.isFinite(num) ? num : 0;
+        }
+        if (type === 'date') {
+            const ms = new Date(value).getTime();
+            return Number.isFinite(ms) ? ms : 0;
+        }
+        return String(value).toLowerCase();
+    };
+
+    const sortRows = (rows, columns, fallbackKey = '') => {
+        const list = Array.isArray(rows) ? [...rows] : [];
+        const key = columns?.[tableSort.key] ? tableSort.key : fallbackKey;
+        if (!key || !columns?.[key]) return list;
+        const col = columns[key] || {};
+        const type = col.type || 'string';
+        const getValue = typeof col.getValue === 'function' ? col.getValue : (row) => row?.[key];
+        const dir = tableSort.direction === 'desc' ? -1 : 1;
+        return list.sort((a, b) => {
+            const va = normalizeSortValue(getValue(a), type);
+            const vb = normalizeSortValue(getValue(b), type);
+            if (va === vb) return 0;
+            return va > vb ? dir : -dir;
+        });
+    };
 
     const userNameByKey = useMemo(() => {
         const map = {};
@@ -153,14 +210,28 @@ export function ReportsModule({
                     .filter((l) => String(l?.details || '').toLowerCase().includes(f))
                     .filter((l) => isDateWithinRange(l?.timestamp))
                     .filter((l) => matchesUserFilter(l));
-                const pagination = paginateRows(filteredLogs);
+                const columns = {
+                    date: { getValue: (l) => l?.timestamp, type: 'date' },
+                    user: { getValue: (l) => resolveUserLabel(l), type: 'string' },
+                    action: { getValue: (l) => l?.action || '', type: 'string' },
+                    detail: { getValue: (l) => l?.details || '', type: 'string' },
+                };
+                const sortedLogs = sortRows(filteredLogs, columns, 'date');
+                const pagination = paginateRows(sortedLogs);
                 return (
                     <>
                         <table>
-                            <thead><tr><th>Fecha</th><th>Usuario</th><th>Accion</th><th>Detalle</th></tr></thead>
+                            <thead>
+                                <tr>
+                                    <th><SortButton label="Fecha" sortKey="date" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                    <th><SortButton label="Usuario" sortKey="user" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                    <th><SortButton label="Accion" sortKey="action" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                    <th><SortButton label="Detalle" sortKey="detail" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                </tr>
+                            </thead>
                             <tbody>
                                 {pagination.pageItems.map((l, i) => (
-                                    <tr key={i}><td>{new Date(l.timestamp).toLocaleString()}</td><td>{l.user_name || l.user || 'Sistema'}</td><td>{l.action}</td><td>{l.details}</td></tr>
+                                    <tr key={i}><td>{new Date(l.timestamp).toLocaleString()}</td><td>{resolveUserLabel(l)}</td><td>{l.action}</td><td>{l.details}</td></tr>
                                 ))}
                             </tbody>
                         </table>
@@ -180,13 +251,29 @@ export function ReportsModule({
                     .filter((s) => matchesUserFilter(s))
                     .filter((s) => !statusFilter || String(s?.status || 'pagado').toLowerCase() === statusFilter)
                     .filter((s) => !paymentFilter || String(s?.paymentMode || '').trim() === paymentFilter);
-                const pagination = paginateRows(filteredSales);
+                const columns = {
+                    invoice: { getValue: (s) => s?.id || '', type: 'string' },
+                    user: { getValue: (s) => resolveUserLabel(s), type: 'string' },
+                    client: { getValue: (s) => s?.clientName || '', type: 'string' },
+                    total: { getValue: (s) => Number(s?.total || 0), type: 'number' },
+                    payment: { getValue: (s) => String(s?.paymentMode || ''), type: 'string' },
+                };
+                const sortedSales = sortRows(filteredSales, columns, 'total');
+                const pagination = paginateRows(sortedSales);
                 const totalSales = filteredSales.reduce((sum, s) => sum + Number(s.total || 0), 0);
                 return (
                     <>
                         <div style={{ marginBottom: '1rem', fontWeight: 'bold' }}>Total Ventas: ${totalSales.toLocaleString()}</div>
                         <table>
-                            <thead><tr><th>Factura</th><th>Usuario</th><th>Cliente</th><th>Total</th><th>Pago</th></tr></thead>
+                            <thead>
+                                <tr>
+                                    <th><SortButton label="Factura" sortKey="invoice" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                    <th><SortButton label="Usuario" sortKey="user" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                    <th><SortButton label="Cliente" sortKey="client" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                    <th><SortButton label="Total" sortKey="total" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                    <th><SortButton label="Pago" sortKey="payment" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                </tr>
+                            </thead>
                             <tbody>
                                 {pagination.pageItems.map((s, i) => (
                                     <tr key={i}><td>{s.id}</td><td>{resolveUserLabel(s)}</td><td>{s.clientName}</td><td>${Number(s.total || 0).toLocaleString()}</td><td>{s.paymentMode}</td></tr>
@@ -200,11 +287,28 @@ export function ReportsModule({
 
             case 'inventario': {
                 const filteredProducts = (products || []).filter((p) => String(p?.name || '').toLowerCase().includes(f));
-                const pagination = paginateRows(filteredProducts);
+                const columns = {
+                    product: { getValue: (p) => p?.name || '', type: 'string' },
+                    bodega: { getValue: (p) => Number(inventory?.bodega?.[p?.id] || 0), type: 'number' },
+                    ventas: { getValue: (p) => Number(inventory?.ventas?.[p?.id] || 0), type: 'number' },
+                    total: {
+                        getValue: (p) => Number(inventory?.bodega?.[p?.id] || 0) + Number(inventory?.ventas?.[p?.id] || 0),
+                        type: 'number'
+                    },
+                };
+                const sortedProducts = sortRows(filteredProducts, columns, 'product');
+                const pagination = paginateRows(sortedProducts);
                 return (
                     <>
                         <table>
-                            <thead><tr><th>Producto</th><th>Bodega</th><th>Punto Venta</th><th>Total Stock</th></tr></thead>
+                            <thead>
+                                <tr>
+                                    <th><SortButton label="Producto" sortKey="product" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                    <th><SortButton label="Bodega" sortKey="bodega" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                    <th><SortButton label="Punto Venta" sortKey="ventas" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                    <th><SortButton label="Total Stock" sortKey="total" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                </tr>
+                            </thead>
                             <tbody>
                                 {pagination.pageItems.map((p, idx) => {
                                     const bodega = inventory?.bodega?.[p.id] || 0;
@@ -230,11 +334,25 @@ export function ReportsModule({
                     String(c?.name || '').toLowerCase().includes(f) ||
                     String(c?.document || '').toLowerCase().includes(f)
                 );
-                const pagination = paginateRows(filteredClients);
+                const columns = {
+                    name: { getValue: (c) => c?.name || '', type: 'string' },
+                    document: { getValue: (c) => c?.document || '', type: 'string' },
+                    type: { getValue: (c) => c?.type || '', type: 'string' },
+                    credit: { getValue: (c) => Number(c?.creditLimit || 0), type: 'number' },
+                };
+                const sortedClients = sortRows(filteredClients, columns, 'name');
+                const pagination = paginateRows(sortedClients);
                 return (
                     <>
                         <table>
-                            <thead><tr><th>Nombre</th><th>Documento</th><th>Tipo</th><th>Credito</th></tr></thead>
+                            <thead>
+                                <tr>
+                                    <th><SortButton label="Nombre" sortKey="name" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                    <th><SortButton label="Documento" sortKey="document" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                    <th><SortButton label="Tipo" sortKey="type" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                    <th><SortButton label="Credito" sortKey="credit" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                </tr>
+                            </thead>
                             <tbody>
                                 {pagination.pageItems.map((c, i) => (
                                     <tr key={i}>
@@ -262,13 +380,31 @@ export function ReportsModule({
                     matchesUserFilter(g) &&
                     (!categoryFilter || String(g?.type || g?.category || '').trim() === categoryFilter)
                 );
-                const pagination = paginateRows(filteredExpenses);
+                const columns = {
+                    date: { getValue: (g) => g?.date, type: 'date' },
+                    user: { getValue: (g) => resolveUserLabel(g), type: 'string' },
+                    type: { getValue: (g) => g?.type || '', type: 'string' },
+                    beneficiary: { getValue: (g) => g?.beneficiary || '', type: 'string' },
+                    description: { getValue: (g) => g?.description || '', type: 'string' },
+                    amount: { getValue: (g) => Number(g?.amount || 0), type: 'number' },
+                };
+                const sortedExpenses = sortRows(filteredExpenses, columns, 'date');
+                const pagination = paginateRows(sortedExpenses);
                 const totalExp = filteredExpenses.reduce((sum, g) => sum + Number(g.amount || 0), 0);
                 return (
                     <>
                         <div style={{ marginBottom: '1rem', fontWeight: 'bold' }}>Total Gastos: ${totalExp.toLocaleString()}</div>
                         <table>
-                            <thead><tr><th>Fecha</th><th>Usuario</th><th>Tipo</th><th>Beneficiario</th><th>Descripcion</th><th>Monto</th></tr></thead>
+                            <thead>
+                                <tr>
+                                    <th><SortButton label="Fecha" sortKey="date" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                    <th><SortButton label="Usuario" sortKey="user" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                    <th><SortButton label="Tipo" sortKey="type" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                    <th><SortButton label="Beneficiario" sortKey="beneficiary" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                    <th><SortButton label="Descripcion" sortKey="description" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                    <th><SortButton label="Monto" sortKey="amount" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                </tr>
+                            </thead>
                             <tbody>
                                 {pagination.pageItems.map((g, i) => (
                                     <tr key={i}>
@@ -297,13 +433,29 @@ export function ReportsModule({
                     matchesUserFilter(p) &&
                     (!supplierFilter || String(p?.supplier || '').trim() === supplierFilter)
                 );
-                const pagination = paginateRows(filteredPurchases);
+                const columns = {
+                    date: { getValue: (p) => p?.date, type: 'date' },
+                    user: { getValue: (p) => resolveUserLabel(p), type: 'string' },
+                    supplier: { getValue: (p) => p?.supplier || '', type: 'string' },
+                    product: { getValue: (p) => p?.productName || '', type: 'string' },
+                    quantity: { getValue: (p) => Number(p?.quantity || 0), type: 'number' },
+                };
+                const sortedPurchases = sortRows(filteredPurchases, columns, 'date');
+                const pagination = paginateRows(sortedPurchases);
                 const totalUnits = filteredPurchases.reduce((sum, p) => sum + Number(p.quantity || 0), 0);
                 return (
                     <>
                         <div style={{ marginBottom: '1rem', fontWeight: 'bold' }}>Total Unidades Compradas: {totalUnits}</div>
                         <table>
-                            <thead><tr><th>Fecha</th><th>Usuario</th><th>Proveedor</th><th>Producto</th><th>Cant.</th></tr></thead>
+                            <thead>
+                                <tr>
+                                    <th><SortButton label="Fecha" sortKey="date" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                    <th><SortButton label="Usuario" sortKey="user" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                    <th><SortButton label="Proveedor" sortKey="supplier" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                    <th><SortButton label="Producto" sortKey="product" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                    <th><SortButton label="Cant." sortKey="quantity" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                </tr>
+                            </thead>
                             <tbody>
                                 {pagination.pageItems.map((p, i) => (
                                     <tr key={i}><td>{new Date(p.date).toLocaleDateString()}</td><td>{resolveUserLabel(p)}</td><td>{p.supplier}</td><td>{p.productName}</td><td>{p.quantity}</td></tr>
@@ -322,20 +474,48 @@ export function ReportsModule({
                     (!statusFilter || String(c?.status || '').toLowerCase() === statusFilter)
                 );
                 const totalCartera = filteredCartera.reduce((sum, c) => sum + Number(c.balance || 0), 0);
-                const pagination = paginateRows(filteredCartera);
+                const columnsPending = {
+                    date: { getValue: (c) => c?.date, type: 'date' },
+                    user: { getValue: (c) => resolveUserLabel(c), type: 'string' },
+                    client: { getValue: (c) => c?.clientName || '', type: 'string' },
+                    invoice: { getValue: (c) => c?.id || '', type: 'string' },
+                    balance: { getValue: (c) => Number(c?.balance || 0), type: 'number' },
+                };
+                const sortedPending = sortRows(filteredCartera, columnsPending, 'date');
+                const pagination = paginateRows(sortedPending);
                 const carteraHistory = (sales || [])
                     .filter((s) => {
                         const hasCredit = String(s?.paymentMode || '').toLowerCase().includes('credito') || Number(s?.balance || 0) > 0;
                         const hasAbonos = Array.isArray(s?.abonos) && s.abonos.length > 0;
                         return hasCredit || hasAbonos || String(s?.status || '').toLowerCase() === 'pagado';
                     })
-                    .filter((s) => String(s?.clientName || '').toLowerCase().includes(f))
-                    .sort((a, b) => new Date(b?.date || 0) - new Date(a?.date || 0));
+                    .filter((s) => String(s?.clientName || '').toLowerCase().includes(f));
+
+                const columnsHistory = {
+                    date: { getValue: (s) => s?.date, type: 'date' },
+                    invoice: { getValue: (s) => s?.id || '', type: 'string' },
+                    client: { getValue: (s) => s?.clientName || '', type: 'string' },
+                    status: { getValue: (s) => String(s?.status || ''), type: 'string' },
+                    balance: { getValue: (s) => Number(s?.balance || 0), type: 'number' },
+                    payments: {
+                        getValue: (s) => (Array.isArray(s?.abonos) ? s.abonos.reduce((sum, a) => sum + Number(a?.amount || 0), 0) : 0),
+                        type: 'number'
+                    },
+                };
+                const sortedHistory = sortRows(carteraHistory, columnsHistory, 'date');
                 return (
                     <>
                         <div style={{ marginBottom: '1rem', fontWeight: 'bold' }}>Total Deuda Pendiente: ${totalCartera.toLocaleString()}</div>
                         <table>
-                            <thead><tr><th>Fecha</th><th>Usuario</th><th>Cliente</th><th>Factura #</th><th>Saldo</th></tr></thead>
+                            <thead>
+                                <tr>
+                                    <th><SortButton label="Fecha" sortKey="date" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                    <th><SortButton label="Usuario" sortKey="user" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                    <th><SortButton label="Cliente" sortKey="client" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                    <th><SortButton label="Factura #" sortKey="invoice" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                    <th><SortButton label="Saldo" sortKey="balance" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                </tr>
+                            </thead>
                             <tbody>
                                 {pagination.pageItems.map((c, i) => (
                                     <tr key={i}><td>{new Date(c.date).toLocaleDateString()}</td><td>{resolveUserLabel(c)}</td><td>{c.clientName}</td><td>{c.id}</td><td>${Number(c.balance || 0).toLocaleString()}</td></tr>
@@ -345,12 +525,21 @@ export function ReportsModule({
                         <PaginationControls page={pagination.page} totalPages={pagination.totalPages} totalItems={pagination.totalItems} pageSize={pagination.pageSize} onPageChange={setReportPage} />
                         <h4 style={{ margin: '1.2rem 0 0.6rem' }}>Historial de Cartera (incluye facturas pagadas y abonos)</h4>
                         <table>
-                            <thead><tr><th>Fecha</th><th>Factura</th><th>Cliente</th><th>Estado</th><th>Saldo</th><th>Abonos</th></tr></thead>
+                            <thead>
+                                <tr>
+                                    <th><SortButton label="Fecha" sortKey="date" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                    <th><SortButton label="Factura" sortKey="invoice" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                    <th><SortButton label="Cliente" sortKey="client" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                    <th><SortButton label="Estado" sortKey="status" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                    <th><SortButton label="Saldo" sortKey="balance" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                    <th><SortButton label="Abonos" sortKey="payments" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                </tr>
+                            </thead>
                             <tbody>
-                                {carteraHistory.length === 0 ? (
+                                {sortedHistory.length === 0 ? (
                                     <tr><td colSpan="6" style={{ textAlign: 'center' }}>Sin historial para el filtro actual</td></tr>
                                 ) : (
-                                    carteraHistory.map((inv, i) => {
+                                    sortedHistory.map((inv, i) => {
                                         const abonos = Array.isArray(inv?.abonos) ? inv.abonos : [];
                                         const abonosText = abonos.length === 0
                                             ? 'Sin abonos'
@@ -374,14 +563,21 @@ export function ReportsModule({
             }
 
             case 'saldos': {
-                const saldoEntries = Object.entries(userCashBalances || {})
+                const saldoEntriesRaw = Object.entries(userCashBalances || {})
                     .map(([userKey, balance]) => ({
                         userKey,
                         userName: userNameByKey[userKey] || userKey,
                         balance: Number(balance || 0)
                     }))
-                    .filter((row) => row.userName.toLowerCase().includes(f) || row.userKey.toLowerCase().includes(f))
-                    .sort((a, b) => b.balance - a.balance);
+                    .filter((row) => row.userName.toLowerCase().includes(f) || row.userKey.toLowerCase().includes(f));
+
+                const columnsBalances = {
+                    user: { getValue: (row) => row?.userName || '', type: 'string' },
+                    userKey: { getValue: (row) => row?.userKey || '', type: 'string' },
+                    balance: { getValue: (row) => Number(row?.balance || 0), type: 'number' },
+                };
+
+                const saldoEntries = sortRows(saldoEntriesRaw, columnsBalances, 'balance');
 
                 const saldoTotal = saldoEntries.reduce((sum, row) => sum + row.balance, 0);
 
@@ -399,6 +595,13 @@ export function ReportsModule({
                         return !f || details.includes(f) || String(l?.action || '').toLowerCase().includes(f);
                     });
 
+                const columnsCashLogs = {
+                    date: { getValue: (l) => l?.timestamp, type: 'date' },
+                    action: { getValue: (l) => l?.action || '', type: 'string' },
+                    detail: { getValue: (l) => l?.details || '', type: 'string' },
+                };
+                const sortedCashLogs = sortRows(cashLogs, columnsCashLogs, 'date');
+
                 return (
                     <>
                         <div style={{ marginBottom: '1rem', fontWeight: 'bold' }}>
@@ -407,9 +610,9 @@ export function ReportsModule({
                         <table style={{ marginBottom: '1.5rem' }}>
                             <thead>
                                 <tr>
-                                    <th>Usuario</th>
-                                    <th>Identificador</th>
-                                    <th>Saldo Actual</th>
+                                    <th><SortButton label="Usuario" sortKey="user" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                    <th><SortButton label="Identificador" sortKey="userKey" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                    <th><SortButton label="Saldo Actual" sortKey="balance" sortConfig={tableSort} onChange={setTableSortKey} /></th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -431,16 +634,16 @@ export function ReportsModule({
                         <table>
                             <thead>
                                 <tr>
-                                    <th>Fecha</th>
-                                    <th>Accion</th>
-                                    <th>Detalle</th>
+                                    <th><SortButton label="Fecha" sortKey="date" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                    <th><SortButton label="Accion" sortKey="action" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                    <th><SortButton label="Detalle" sortKey="detail" sortConfig={tableSort} onChange={setTableSortKey} /></th>
                                 </tr>
                             </thead>
                             <tbody>
-                                {cashLogs.length === 0 ? (
+                                {sortedCashLogs.length === 0 ? (
                                     <tr><td colSpan="3" style={{ textAlign: 'center' }}>Sin movimientos de caja para el filtro actual</td></tr>
                                 ) : (
-                                    cashLogs.map((l, i) => (
+                                    sortedCashLogs.map((l, i) => (
                                         <tr key={i}>
                                             <td>{new Date(l.timestamp).toLocaleString()}</td>
                                             <td>{l.action}</td>
@@ -556,7 +759,7 @@ export function ReportsModule({
                     ])
                 );
 
-                const rows = allKeys
+                const rowsRaw = allKeys
                     .map((key) => {
                         const salesData = salesByUser[key] || { count: 0, total: 0, label: key };
                         const shiftData = shiftsByUser[key] || { count: 0, totalDurationMs: 0, rows: [], label: salesData.label };
@@ -572,20 +775,49 @@ export function ReportsModule({
                             shifts: shiftData.rows
                         };
                     })
-                    .filter((row) => row.user.toLowerCase().includes(f))
-                    .sort((a, b) => b.salesTotal - a.salesTotal);
+                    .filter((row) => row.user.toLowerCase().includes(f));
+
+                const columnsUsers = {
+                    user: { getValue: (row) => row?.user || '', type: 'string' },
+                    salesCount: { getValue: (row) => Number(row?.salesCount || 0), type: 'number' },
+                    salesTotal: { getValue: (row) => Number(row?.salesTotal || 0), type: 'number' },
+                    notesCount: { getValue: (row) => Number(row?.notesCount || 0), type: 'number' },
+                    shiftsCount: { getValue: (row) => Number(row?.shiftsCount || 0), type: 'number' },
+                    hours: { getValue: (row) => Number(row?.totalDurationMs || 0), type: 'number' },
+                };
+
+                const rows = sortRows(rowsRaw, columnsUsers, 'salesTotal');
+
+                const shiftRowsRaw = rows.flatMap((row) =>
+                    (row.shifts || []).map((s) => ({
+                        key: row.key,
+                        user: row.user,
+                        start: s.start || null,
+                        end: s.end || null,
+                        durationMs: s.durationMs || 0,
+                    }))
+                );
+
+                const columnsShiftRows = {
+                    user: { getValue: (r) => r?.user || '', type: 'string' },
+                    start: { getValue: (r) => r?.start, type: 'date' },
+                    end: { getValue: (r) => r?.end, type: 'date' },
+                    duration: { getValue: (r) => Number(r?.durationMs || 0), type: 'number' },
+                };
+
+                const shiftRows = sortRows(shiftRowsRaw, columnsShiftRows, 'start');
 
                 return (
                     <>
                         <table style={{ marginBottom: '1.5rem' }}>
                             <thead>
                                 <tr>
-                                    <th>Asesor/Usuario</th>
-                                    <th># Ventas</th>
-                                    <th>Total Ventas</th>
-                                    <th># Notas</th>
-                                    <th># Jornadas</th>
-                                    <th>Horas Totales</th>
+                                    <th><SortButton label="Asesor/Usuario" sortKey="user" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                    <th><SortButton label="# Ventas" sortKey="salesCount" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                    <th><SortButton label="Total Ventas" sortKey="salesTotal" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                    <th><SortButton label="# Notas" sortKey="notesCount" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                    <th><SortButton label="# Jornadas" sortKey="shiftsCount" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                    <th><SortButton label="Horas Totales" sortKey="hours" sortConfig={tableSort} onChange={setTableSortKey} /></th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -610,35 +842,24 @@ export function ReportsModule({
                         <table>
                             <thead>
                                 <tr>
-                                    <th>Asesor/Usuario</th>
-                                    <th>Inicio</th>
-                                    <th>Fin</th>
-                                    <th>Duracion</th>
+                                    <th><SortButton label="Asesor/Usuario" sortKey="user" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                    <th><SortButton label="Inicio" sortKey="start" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                    <th><SortButton label="Fin" sortKey="end" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                    <th><SortButton label="Duracion" sortKey="duration" sortConfig={tableSort} onChange={setTableSortKey} /></th>
                                 </tr>
                             </thead>
                             <tbody>
-                                {rows.flatMap((row) =>
-                                    (row.shifts || []).map((s, i) => (
-                                        <tr key={`${row.key}-shift-${i}`}>
-                                            <td>{row.user}</td>
+                                {shiftRows.length === 0 ? (
+                                    <tr><td colSpan="4" style={{ textAlign: 'center' }}>Sin jornadas registradas</td></tr>
+                                ) : (
+                                    shiftRows.map((s, i) => (
+                                        <tr key={`${s.key}-shift-${i}`}>
+                                            <td>{s.user}</td>
                                             <td>{s.start ? new Date(s.start).toLocaleString() : 'N/A'}</td>
                                             <td>{s.end ? new Date(s.end).toLocaleString() : 'N/A'}</td>
                                             <td>{formatDurationHours(s.durationMs)}</td>
                                         </tr>
                                     ))
-                                ).length === 0 ? (
-                                    <tr><td colSpan="4" style={{ textAlign: 'center' }}>Sin jornadas registradas</td></tr>
-                                ) : (
-                                    rows.flatMap((row) =>
-                                        (row.shifts || []).map((s, i) => (
-                                            <tr key={`${row.key}-shift-${i}`}>
-                                                <td>{row.user}</td>
-                                                <td>{s.start ? new Date(s.start).toLocaleString() : 'N/A'}</td>
-                                                <td>{s.end ? new Date(s.end).toLocaleString() : 'N/A'}</td>
-                                                <td>{formatDurationHours(s.durationMs)}</td>
-                                            </tr>
-                                        ))
-                                    )
                                 )}
                             </tbody>
                         </table>

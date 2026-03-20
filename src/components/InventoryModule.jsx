@@ -2,6 +2,8 @@ import React, { useMemo, useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import { PaginationControls } from './PaginationControls';
 import { usePagination } from '../lib/usePagination';
+import { useTableSort } from '../lib/useTableSort';
+import { SortButton } from './SortButton';
 
 export function InventoryModule({ currentUser, products, setProducts, onDeleteProduct, onCreateInventoryRequest, pendingInventoryRequests = [], onAdjustStock, stock, categories, onLog, setActiveTab, setPreselectedProductId }) {
     const [view, setView] = useState('list'); // 'list', 'edit', 'count'
@@ -141,7 +143,31 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
         })
     ), [products, searchTerm, categoryFilter, statusFilter, stock]);
 
-    const productsPagination = usePagination(filteredProducts, 15);
+    const { sortedRows: sortedProducts, sortConfig: productsSort, setSortKey: setProductsSortKey } = useTableSort(
+        filteredProducts,
+        {
+            name: { getValue: (p) => p?.name || '', type: 'string' },
+            price: { getValue: (p) => Number(p?.price || 0), type: 'number' },
+            bodega: { getValue: (p) => Number(stock?.bodega?.[p?.id] || 0), type: 'number' },
+            ventas: { getValue: (p) => Number(stock?.ventas?.[p?.id] || 0), type: 'number' },
+            status: { getValue: (p) => String(p?.status || ''), type: 'string' },
+            web: { getValue: (p) => (p?.is_visible === false ? 0 : 1), type: 'number' },
+        },
+        'name'
+    );
+
+    const productsPagination = usePagination(sortedProducts, 15);
+
+    const { sortedRows: sortedCountProducts, sortConfig: countSort, setSortKey: setCountSortKey } = useTableSort(
+        products,
+        {
+            name: { getValue: (p) => p?.name || '', type: 'string' },
+            sys: { getValue: (p) => Number(stock?.ventas?.[p?.id] || 0), type: 'number' },
+            real: { getValue: (p) => Number(physicalCounts?.[p?.id] || 0), type: 'number' },
+            diff: { getValue: (p) => Number(physicalCounts?.[p?.id] || 0) - Number(stock?.ventas?.[p?.id] || 0), type: 'number' },
+        },
+        'name'
+    );
 
     useEffect(() => {
         const handleOutsideClick = (event) => {
@@ -503,20 +529,25 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
                 </div>
             )}
 
-            {view === 'count' && (
-                <div className="card printable-area">
-                    <h3>Hacer Inventario (Conteo Fisicoco)</h3>
-                    <p>Ingrese las cantidades reales encontradas en el punto de venta.</p>
-                    <table>
-                        <thead>
-                            <tr><th>Producto</th><th>Saldo Sistema</th><th>Conte Real</th><th>Diferencia</th></tr>
-                        </thead>
-                        <tbody>
-                            {products.map((p, idx) => {
-                                const sys = stock.ventas[p.id] || 0;
-                                const real = physicalCounts[p.id] || 0;
-                                return (
-                                    <tr key={`${p.id}-${idx}`}>
+	            {view === 'count' && (
+	                <div className="card printable-area">
+	                    <h3>Hacer Inventario (Conteo Fisicoco)</h3>
+	                    <p>Ingrese las cantidades reales encontradas en el punto de venta.</p>
+	                    <table>
+	                        <thead>
+	                            <tr>
+	                                <th><SortButton label="Producto" sortKey="name" sortConfig={countSort} onChange={setCountSortKey} /></th>
+	                                <th><SortButton label="Saldo Sistema" sortKey="sys" sortConfig={countSort} onChange={setCountSortKey} /></th>
+	                                <th><SortButton label="Conteo Real" sortKey="real" sortConfig={countSort} onChange={setCountSortKey} /></th>
+	                                <th><SortButton label="Diferencia" sortKey="diff" sortConfig={countSort} onChange={setCountSortKey} /></th>
+	                            </tr>
+	                        </thead>
+	                        <tbody>
+	                            {sortedCountProducts.map((p, idx) => {
+	                                const sys = stock.ventas[p.id] || 0;
+	                                const real = physicalCounts[p.id] || 0;
+	                                return (
+	                                    <tr key={`${p.id}-${idx}`}>
                                         <td>{p.name}</td>
                                         <td>{sys}</td>
                                         <td>
@@ -561,18 +592,18 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
                             <option value="agotado">Agotado</option>
                         </select>
                     </div>
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Nombre</th>
-                                <th>Venta ($)</th>
-                                <th>Bodega</th>
-                                <th>Ventas</th>
-                                <th>Estado</th>
-                                <th>Web</th>
-                                <th>Acciones</th>
-                            </tr>
-                        </thead>
+	                    <table>
+	                        <thead>
+	                            <tr>
+	                                <th><SortButton label="Nombre" sortKey="name" sortConfig={productsSort} onChange={setProductsSortKey} /></th>
+	                                <th><SortButton label="Venta ($)" sortKey="price" sortConfig={productsSort} onChange={setProductsSortKey} /></th>
+	                                <th><SortButton label="Bodega" sortKey="bodega" sortConfig={productsSort} onChange={setProductsSortKey} /></th>
+	                                <th><SortButton label="Ventas" sortKey="ventas" sortConfig={productsSort} onChange={setProductsSortKey} /></th>
+	                                <th><SortButton label="Estado" sortKey="status" sortConfig={productsSort} onChange={setProductsSortKey} /></th>
+	                                <th><SortButton label="Web" sortKey="web" sortConfig={productsSort} onChange={setProductsSortKey} /></th>
+	                                <th>Acciones</th>
+	                            </tr>
+	                        </thead>
                         <tbody>
                             {productsPagination.pageItems.map((p, idx) => (
                                 (() => {

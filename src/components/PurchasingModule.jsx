@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { PaginationControls } from './PaginationControls';
 import { usePagination } from '../lib/usePagination';
+import { useTableSort } from '../lib/useTableSort';
+import { SortButton } from './SortButton';
 
 export function PurchasingModule({
     warehouseStock,
@@ -21,6 +23,15 @@ export function PurchasingModule({
         unitCost: 0
     });
     const purchasesPagination = usePagination(purchases, 15);
+
+    const { sortedRows: sortedWarehouseProducts, sortConfig: warehouseSort, setSortKey: setWarehouseSortKey } = useTableSort(
+        products,
+        {
+            name: { getValue: (p) => p?.name || '', type: 'string' },
+            stock: { getValue: (p) => Number(warehouseStock?.[p?.id] || 0), type: 'number' },
+        },
+        'name'
+    );
 
     const handleSave = async (e) => {
         e.preventDefault();
@@ -154,13 +165,17 @@ export function PurchasingModule({
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
                             <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
-                                <th style={{ padding: '0.5rem', textAlign: 'left' }}>Producto</th>
-                                <th style={{ padding: '0.5rem', textAlign: 'center' }}>Stock Bodega</th>
+                                <th style={{ padding: '0.5rem', textAlign: 'left' }}>
+                                    <SortButton label="Producto" sortKey="name" sortConfig={warehouseSort} onChange={setWarehouseSortKey} />
+                                </th>
+                                <th style={{ padding: '0.5rem', textAlign: 'center' }}>
+                                    <SortButton label="Stock Bodega" sortKey="stock" sortConfig={warehouseSort} onChange={setWarehouseSortKey} />
+                                </th>
                                 <th style={{ padding: '0.5rem', textAlign: 'right' }}>AcciAn</th>
                             </tr>
                         </thead>
                         <tbody>
-                            {products.map((p, idx) => (
+                            {sortedWarehouseProducts.map((p, idx) => (
                                 <tr key={`${p.id}-${idx}`} style={{ borderBottom: '1px solid #f1f5f9' }}>
                                     <td style={{ padding: '0.5rem' }}>{p.name}</td>
                                     <td style={{ padding: '0.5rem', textAlign: 'center' }}><strong>{warehouseStock[p.id] || 0}</strong></td>
