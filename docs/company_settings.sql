@@ -25,12 +25,17 @@ create table if not exists public.company_settings (
   company_id uuid primary key default public.current_company_id(),
   payment_methods jsonb not null default '["Efectivo","Credito","Transferencia","Tarjeta"]'::jsonb,
   categories jsonb not null default '["General","Alimentos","Limpieza","Otros"]'::jsonb,
+  promotions jsonb not null default '[]'::jsonb,
   operational_days_offset int not null default 0,
   operational_reason text,
   operational_applied_by uuid references auth.users(id),
   operational_applied_at timestamptz,
   updated_at timestamptz not null default now()
 );
+
+-- Migracion segura si la tabla ya existia sin la columna promotions
+alter table public.company_settings
+  add column if not exists promotions jsonb not null default '[]'::jsonb;
 
 alter table public.company_settings enable row level security;
 
@@ -57,4 +62,3 @@ using (company_id = public.current_company_id() and public.is_admin())
 with check (company_id = public.current_company_id() and public.is_admin());
 
 create index if not exists idx_company_settings_company_id on public.company_settings(company_id);
-

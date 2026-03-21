@@ -7,6 +7,7 @@ import { ClientSelector } from './components/ClientSelector'
 import { ProductSelector } from './components/ProductSelector'
 import { InvoiceTable } from './components/InvoiceTable'
 import { PaymentSummary } from './components/PaymentSummary'
+import { computeInvoiceTotals } from './lib/invoiceTotals.js'
 
 // New Modules
 import { CarteraModule } from './components/CarteraModule'
@@ -527,7 +528,9 @@ function App() {
   const [selectedClient, setSelectedClient] = useState(null); // Full client object if registered
   const [items, setItems] = useState([]);
   const [deliveryFee, setDeliveryFee] = useState(0);
+  const [composerExtraDiscount, setComposerExtraDiscount] = useState(0);
   const [paymentMethods, setPaymentMethods] = useState(['Efectivo', 'Credito', 'Transferencia', 'Tarjeta']);
+  const [companyPromotions, setCompanyPromotions] = useState([]);
   const [paymentMode, setPaymentMode] = useState('Efectivo');
   const [paymentRef, setPaymentRef] = useState('');
   const [quickScanCode, setQuickScanCode] = useState('');
@@ -645,6 +648,7 @@ function App() {
   const getProductsCacheStorageKey = (userId) => `${PRODUCTS_CACHE_STORAGE_KEY}_${userId || 'anon'}`;
   const getClientsCacheStorageKey = (userId) => `${CLIENTS_CACHE_STORAGE_KEY}_${userId || 'anon'}`;
   const getSoundSettingsStorageKey = (userId) => `${SOUND_SETTINGS_STORAGE_KEY}_${userId || 'anon'}`;
+  const getCompanyPromotionsStorageKey = (cid) => `fact_company_promotions_${cid || 'local'}`;
 
   const saveOpenShift = (userId, openShift) => {
     if (!userId || !openShift) return;
@@ -961,6 +965,27 @@ function App() {
 
   const companyId = liveProfile?.company_id || null;
 
+  useEffect(() => {
+    if (!companyId) return;
+    try {
+      const raw = localStorage.getItem(getCompanyPromotionsStorageKey(companyId));
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) setCompanyPromotions(parsed);
+    } catch (e) {
+      console.error('No se pudo cargar promociones locales:', e);
+    }
+  }, [companyId]);
+
+  useEffect(() => {
+    if (!companyId) return;
+    try {
+      localStorage.setItem(getCompanyPromotionsStorageKey(companyId), JSON.stringify(Array.isArray(companyPromotions) ? companyPromotions : []));
+    } catch (e) {
+      console.error('No se pudo guardar promociones locales:', e);
+    }
+  }, [companyId, companyPromotions]);
+
   const normalizeStringArray = (value, fallback = []) => {
     if (!Array.isArray(value)) return fallback;
     return value.map((v) => String(v || '').trim()).filter(Boolean);
@@ -999,6 +1024,15 @@ function App() {
 
       setPaymentMethods(nextPaymentMethods);
       setCategories(nextCategories);
+
+      if (Array.isArray(data.promotions)) {
+        setCompanyPromotions(data.promotions);
+        try {
+          localStorage.setItem(getCompanyPromotionsStorageKey(companyId), JSON.stringify(data.promotions));
+        } catch (e) {
+          console.error('No se pudo cachear promociones en localStorage:', e);
+        }
+      }
 
       const daysOffset = Number(data.operational_days_offset || 0);
       setOperationalDateSettings({
@@ -1057,6 +1091,41 @@ function App() {
 
     if (error) {
       console.error('No se pudo guardar categorias:', error);
+      return false;
+    }
+
+    setCompanySettingsLastSyncAt(Date.now());
+    return true;
+  }, [companyId, currentUser?.id, isAdminAuth]);
+
+  const saveCompanyPromotions = useCallback(async (nextPromotions) => {
+    if (!companyId || !currentUser?.id) return false;
+    if (!isAdminAuth) return false;
+
+    const safePromotions = Array.isArray(nextPromotions) ? nextPromotions : [];
+    setCompanyPromotions(safePromotions);
+    try {
+      localStorage.setItem(getCompanyPromotionsStorageKey(companyId), JSON.stringify(safePromotions));
+    } catch (e) {
+      console.error('No se pudo guardar promociones locales:', e);
+    }
+
+    const payload = {
+      company_id: companyId,
+      promotions: safePromotions,
+      updated_at: new Date().toISOString(),
+    };
+
+    const { error } = await supabase
+      .from('company_settings')
+      .upsert(payload, { onConflict: 'company_id' });
+
+    if (error) {
+      console.error('No se pudo guardar promociones:', error);
+      const msg = String(error?.message || '');
+      if (msg.toLowerCase().includes('promotions') && msg.toLowerCase().includes('does not exist')) {
+        alert('Falta la columna promotions en company_settings. Ejecute el SQL de migracion en Supabase (docs/company_settings.sql).');
+      }
       return false;
     }
 
@@ -1924,6 +1993,7 @@ function App() {
     setClientName(CLIENT_OCASIONAL);
     setSelectedClient(null);
     setDeliveryFee(0);
+    setComposerExtraDiscount(0);
     setPaymentMode(PAYMENT_MODES.CONTADO);
     setPaymentRef('');
     setLoadedDraftState(null);
@@ -1935,6 +2005,15 @@ function App() {
       return;
     }
 
+    const draftTotals = computeInvoiceTotals({
+      items,
+      deliveryFee,
+      selectedClientDiscountPercent: Number(selectedClient?.discount || 0),
+      extraDiscount: Number(draftExtra?.extraDiscount || 0),
+      promotions: companyPromotions,
+      now: getOperationalNow(),
+    });
+
     const draft = {
       id: `DF-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
       savedAt: getOperationalNowIso(),
@@ -1945,16 +2024,12 @@ function App() {
       items,
       subtotal,
       deliveryFee,
-      autoDiscountPercent: Number(selectedClient?.discount || 0),
-      autoDiscountAmount: Number(discountableSubtotal || 0) * (Number(selectedClient?.discount || 0) / 100),
-      total: (() => {
-        const percent = Number(selectedClient?.discount || 0);
-        const auto = Number(discountableSubtotal || 0) * (percent / 100);
-        const maxExtra = Math.max(0, Number(discountableSubtotal || 0) - auto);
-        const extra = Math.max(0, Math.min(Number(draftExtra?.extraDiscount || 0), maxExtra));
-        const discountedPart = Math.max(0, Number(discountableSubtotal || 0) - auto - extra);
-        return Math.max(0, protectedSubtotal + Number(deliveryFee || 0) + discountedPart);
-      })(),
+      autoDiscountPercent: draftTotals.automaticDiscountPercent,
+      autoDiscountAmount: draftTotals.automaticDiscountAmount,
+      promoDiscountAmount: draftTotals.promoDiscountAmount,
+      promotion: draftTotals.promotion,
+      totalDiscount: draftTotals.totalDiscount,
+      total: draftTotals.total,
       paymentMode,
       paymentRef,
       ...draftExtra,
@@ -2834,6 +2909,16 @@ function App() {
     0
   );
   const protectedSubtotal = Math.max(0, Number(subtotal || 0) - Number(discountableSubtotal || 0));
+  const composerTotals = computeInvoiceTotals({
+    items,
+    deliveryFee,
+    selectedClientDiscountPercent: Number(selectedClient?.discount || 0),
+    extraDiscount: composerExtraDiscount,
+    promotions: companyPromotions,
+    now: getOperationalNow(),
+  });
+  const composerTotalDiscount = composerTotals.totalDiscount;
+  const composerTotal = composerTotals.total;
 
   const getNextInvoiceCode = () => {
     const fromHistory = (salesHistory || []).reduce((max, inv) => {
@@ -2888,13 +2973,21 @@ function App() {
 
     // Credit Limit check (Individual Invoice Max)
     const isCreditPortion = paymentMode === PAYMENT_MODES.CREDITO || mixedData?.credit > 0;
-    const automaticDiscountPercent = Number(selectedClient?.discount || 0);
-    const automaticDiscountAmount = Number(discountableSubtotal || 0) * (automaticDiscountPercent / 100);
-    const maxExtraDiscount = Math.max(0, Number(discountableSubtotal || 0) - automaticDiscountAmount);
-    const effectiveExtraDiscount = Math.max(0, Math.min(Number(extraDiscount || 0), maxExtraDiscount));
-    const totalDiscount = automaticDiscountAmount + effectiveExtraDiscount;
-    const discountedPart = Math.max(0, Number(discountableSubtotal || 0) - totalDiscount);
-    const totalAfterDiscounts = Math.max(0, protectedSubtotal + Number(deliveryFee || 0) + discountedPart);
+    const totals = computeInvoiceTotals({
+      items,
+      deliveryFee,
+      selectedClientDiscountPercent: Number(selectedClient?.discount || 0),
+      extraDiscount,
+      promotions: companyPromotions,
+      now: getOperationalNow(),
+    });
+    const automaticDiscountPercent = totals.automaticDiscountPercent;
+    const automaticDiscountAmount = totals.automaticDiscountAmount;
+    const promoDiscountAmount = totals.promoDiscountAmount;
+    const promotion = totals.promotion;
+    const effectiveExtraDiscount = totals.effectiveExtraDiscount;
+    const totalDiscount = totals.totalDiscount;
+    const totalAfterDiscounts = totals.total;
     if (!isInternalZero && isCreditPortion && selectedClient) {
       const creditPortion = mixedData ? mixedData.credit : totalAfterDiscounts;
       if (creditPortion > selectedClient.creditLimit) {
@@ -2932,6 +3025,8 @@ function App() {
       deliveryFee,
       automaticDiscountPercent,
       automaticDiscountAmount,
+      promoDiscountAmount,
+      promotion,
       extraDiscount: effectiveExtraDiscount,
       totalDiscount,
       total: finalTotal,
@@ -2941,6 +3036,8 @@ function App() {
         ...(mixedData || {}),
         invoiceCode,
         discount: {
+          promotion,
+          promoAmount: Number(promoDiscountAmount || 0),
           automaticPercent: automaticDiscountPercent,
           automaticAmount: automaticDiscountAmount,
           extraAmount: effectiveExtraDiscount,
@@ -3808,7 +3905,12 @@ function App() {
                   </table>
                   <div style={{ marginTop: '15px', borderTop: '1px solid #000', paddingTop: '10px', textAlign: 'right' }}>
                     {deliveryFee > 0 && <p>Domicilio: ${deliveryFee.toLocaleString()}</p>}
-                    <p style={{ fontSize: '1.2rem', fontWeight: 'bold' }}>TOTAL: ${(subtotal + deliveryFee).toLocaleString()}</p>
+                    {composerTotalDiscount > 0 && (
+                      <p>{`Descuento: -$${Number(composerTotalDiscount || 0).toLocaleString()}`}</p>
+                    )}
+                    <p style={{ fontSize: '1.2rem', fontWeight: 'bold' }}>
+                      {`TOTAL: $${Number(composerTotal || 0).toLocaleString()}`}
+                    </p>
                   </div>
                   <div style={{ marginTop: '20px', textAlign: 'center', fontSize: '0.8rem' }}>
                     <p>Gracias por su compra.</p>
@@ -3835,6 +3937,10 @@ function App() {
                   selectedClientAvailableCredit={selectedClientAvailableCredit}
                   items={items}
                   adminPass={users.find(u => u.username === 'Admin')?.password || 'Admin'}
+                  extraDiscount={composerExtraDiscount}
+                  setExtraDiscount={setComposerExtraDiscount}
+                  promotions={companyPromotions}
+                  operationalNow={getOperationalNow()}
                   currentUser={currentUser}
                   onCreateRemoteAuthRequest={onCreateRemoteAuthRequest}
                   remoteAuthDecisionByRequestId={remoteAuthDecisionByRequestId}
@@ -4228,6 +4334,10 @@ function App() {
 	              onSavePaymentMethods={saveCompanyPaymentMethods}
 	              categories={categories} setCategories={setCategories}
 	              onSaveCategories={saveCompanyCategories}
+                products={products}
+                promotions={companyPromotions}
+                setPromotions={setCompanyPromotions}
+                onSavePromotions={saveCompanyPromotions}
 	              onResetSystem={onResetSystem} onSaveSystem={onSaveSystem}
 	              soundEnabled={soundEnabled} setSoundEnabled={setSoundEnabled}
 	              soundVolume={soundVolume} setSoundVolume={setSoundVolume}

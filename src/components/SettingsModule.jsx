@@ -12,6 +12,10 @@ export function SettingsModule({
     onSavePaymentMethods,
     categories, setCategories,
     onSaveCategories,
+    products = [],
+    promotions = [],
+    setPromotions,
+    onSavePromotions,
     onResetSystem, onSaveSystem,
     soundEnabled, setSoundEnabled,
     soundVolume, setSoundVolume,
@@ -20,6 +24,22 @@ export function SettingsModule({
     onApplyOperationalDateOffset
 }) {
     const [subTab, setSubTab] = useState('usuarios');
+
+    const [promoDraft, setPromoDraft] = useState(() => ({
+        name: '',
+        enabled: true,
+        scope: 'ALL',
+        discountType: 'PERCENT',
+        percent: 0,
+        amount: 0,
+        includeFullPriceOnly: false,
+        productIds: [],
+        startAt: '',
+        endAt: '',
+    }));
+    const [promoSaveBusy, setPromoSaveBusy] = useState(false);
+    const [promoProductsOpenId, setPromoProductsOpenId] = useState('');
+    const [promoProductSearch, setPromoProductSearch] = useState('');
 
     // New User State
     const [newUser, setNewUser] = useState({ name: '', username: '', password: '', role: 'Cajero' });
@@ -262,6 +282,98 @@ export function SettingsModule({
         onSaveCategories?.(next);
     };
 
+    const buildPromoId = () => `PR-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+
+    const toDatetimeLocal = (iso) => {
+        if (!iso) return '';
+        const d = new Date(iso);
+        const t = d.getTime();
+        if (!Number.isFinite(t)) return '';
+        const pad = (n) => String(n).padStart(2, '0');
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    };
+
+    const fromDatetimeLocal = (value) => {
+        const raw = String(value || '').trim();
+        if (!raw) return '';
+        const d = new Date(raw);
+        const t = d.getTime();
+        if (!Number.isFinite(t)) return '';
+        return d.toISOString();
+    };
+
+    const updatePromotion = (promoId, patch) => {
+        if (!promoId) return;
+        const next = (promotions || []).map((p) => (
+            String(p?.id || '') === String(promoId) ? { ...(p || {}), ...(patch || {}) } : p
+        ));
+        setPromotions?.(next);
+    };
+
+    const removePromotion = (promoId) => {
+        if (!promoId) return;
+        const ok = confirm('Eliminar esta promocion?');
+        if (!ok) return;
+        const next = (promotions || []).filter((p) => String(p?.id || '') !== String(promoId));
+        setPromotions?.(next);
+    };
+
+    const addPromotion = () => {
+        const name = String(promoDraft?.name || '').trim();
+        if (!name) return alert('Nombre de promocion obligatorio.');
+
+        const scope = promoDraft?.scope === 'PRODUCTS' ? 'PRODUCTS' : 'ALL';
+        const discountType = promoDraft?.discountType === 'AMOUNT' ? 'AMOUNT' : 'PERCENT';
+        const percent = Math.max(0, Math.min(100, Number(promoDraft?.percent || 0)));
+        const amount = Math.max(0, Number(promoDraft?.amount || 0));
+
+        if (discountType === 'PERCENT' && percent <= 0) return alert('Ingrese un porcentaje mayor a 0.');
+        if (discountType === 'AMOUNT' && amount <= 0) return alert('Ingrese un monto mayor a 0.');
+        if (scope === 'PRODUCTS' && (!Array.isArray(promoDraft?.productIds) || promoDraft.productIds.length === 0)) {
+            return alert('Seleccione al menos 1 producto para la promocion.');
+        }
+
+        const startAt = fromDatetimeLocal(promoDraft?.startAt);
+        const endAt = fromDatetimeLocal(promoDraft?.endAt);
+        if (startAt && endAt && new Date(startAt).getTime() > new Date(endAt).getTime()) {
+            return alert('La fecha/hora "hasta" debe ser mayor o igual a "desde".');
+        }
+
+        const promo = {
+            id: buildPromoId(),
+            name,
+            enabled: promoDraft?.enabled !== false,
+            scope,
+            discountType,
+            percent,
+            amount,
+            includeFullPriceOnly: promoDraft?.includeFullPriceOnly === true,
+            productIds: scope === 'PRODUCTS' ? (promoDraft.productIds || []).map((id) => String(id)) : [],
+            startAt,
+            endAt,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+        };
+
+        const next = [promo, ...(promotions || [])];
+        setPromotions?.(next);
+        setPromoDraft((prev) => ({ ...(prev || {}), name: '', percent: 0, amount: 0, productIds: [], startAt: '', endAt: '' }));
+    };
+
+    const savePromotionsNow = async () => {
+        setPromoSaveBusy(true);
+        try {
+            const ok = await onSavePromotions?.(Array.isArray(promotions) ? promotions : []);
+            if (ok === false) {
+                alert('No se pudieron guardar las promociones (requiere Admin o migracion en Supabase).');
+            } else {
+                alert('Promociones guardadas.');
+            }
+        } finally {
+            setPromoSaveBusy(false);
+        }
+    };
+
     return (
         <div className="settings-module">
             <h2>Modulo de ConfiguraciAn</h2>
@@ -270,6 +382,7 @@ export function SettingsModule({
                 <button className={`btn ${subTab === 'usuarios' ? 'btn-primary' : ''}`} onClick={() => setSubTab('usuarios')}>Usuarios</button>
                 <button className={`btn ${subTab === 'pagos' ? 'btn-primary' : ''}`} onClick={() => setSubTab('pagos')}>Pagos</button>
                 <button className={`btn ${subTab === 'categorias' ? 'btn-primary' : ''}`} onClick={() => setSubTab('categorias')}>Categorias</button>
+                <button className={`btn ${subTab === 'promociones' ? 'btn-primary' : ''}`} onClick={() => setSubTab('promociones')}>Promociones</button>
                 <button className={`btn ${subTab === 'sistema' ? 'btn-primary' : ''}`} onClick={() => setSubTab('sistema')}>Sistema</button>
             </nav>
 
@@ -553,6 +666,357 @@ export function SettingsModule({
                                 <button className="btn" style={{ width: '100%', backgroundColor: '#ef4444', color: 'white' }} onClick={onResetSystem}>BORRAR TODO EL SISTEMA</button>
                             </div>
                         </div>
+                    </div>
+                </div>
+            )}
+
+            {subTab === 'promociones' && (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '2rem' }}>
+                    <div className="card">
+                        <h3 style={{ marginTop: 0 }}>Nueva Promocion</h3>
+                        <p style={{ marginTop: 0, color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+                            Estas promociones aplican descuento automatico en Facturacion y no requieren autorizacion adicional.
+                        </p>
+
+                        <div className="input-group">
+                            <label className="input-label">Nombre</label>
+                            <input
+                                type="text"
+                                className="input-field"
+                                value={promoDraft.name}
+                                onChange={(e) => setPromoDraft((p) => ({ ...(p || {}), name: e.target.value }))}
+                                placeholder="Ej: Happy Hour / Promo Viernes / 10% tienda"
+                            />
+                        </div>
+
+                        <div className="input-group">
+                            <label className="input-label">Alcance</label>
+                            <select
+                                className="input-field"
+                                value={promoDraft.scope}
+                                onChange={(e) => setPromoDraft((p) => ({ ...(p || {}), scope: e.target.value }))}
+                            >
+                                <option value="ALL">Toda la tienda</option>
+                                <option value="PRODUCTS">Productos especificos</option>
+                            </select>
+                        </div>
+
+                        {promoDraft.scope === 'PRODUCTS' && (
+                            <div className="card card--muted" style={{ marginBottom: '1rem' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem' }}>
+                                    <strong>Productos ({(promoDraft.productIds || []).length})</strong>
+                                    <button
+                                        className="btn"
+                                        onClick={() => setPromoProductsOpenId((prev) => (prev === 'DRAFT' ? '' : 'DRAFT'))}
+                                    >
+                                        {promoProductsOpenId === 'DRAFT' ? 'Cerrar' : 'Seleccionar'}
+                                    </button>
+                                </div>
+                                {promoProductsOpenId === 'DRAFT' && (
+                                    <div style={{ marginTop: '0.6rem' }}>
+                                        <input
+                                            type="text"
+                                            className="input-field"
+                                            value={promoProductSearch}
+                                            onChange={(e) => setPromoProductSearch(e.target.value)}
+                                            placeholder="Buscar producto..."
+                                        />
+                                        <div style={{ maxHeight: '220px', overflow: 'auto', marginTop: '0.6rem', display: 'grid', gap: '0.35rem' }}>
+                                            {(Array.isArray(products) ? products : [])
+                                                .filter((pr) => {
+                                                    const q = String(promoProductSearch || '').trim().toLowerCase();
+                                                    if (!q) return true;
+                                                    const label = `${pr?.name || ''} ${pr?.code || ''} ${pr?.barcode || ''}`.toLowerCase();
+                                                    return label.includes(q);
+                                                })
+                                                .slice(0, 40)
+                                                .map((pr) => {
+                                                    const pid = String(pr?.id || '');
+                                                    if (!pid) return null;
+                                                    const checked = (promoDraft.productIds || []).map(String).includes(pid);
+                                                    return (
+                                                        <label key={pid} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={checked}
+                                                                onChange={() => {
+                                                                    const current = (promoDraft.productIds || []).map(String);
+                                                                    const nextIds = checked ? current.filter((x) => x !== pid) : [...current, pid];
+                                                                    setPromoDraft((p) => ({ ...(p || {}), productIds: nextIds }));
+                                                                }}
+                                                            />
+                                                            <span style={{ fontSize: '0.9rem' }}>{pr?.name || pid}</span>
+                                                        </label>
+                                                    );
+                                                })
+                                                .filter(Boolean)}
+                                        </div>
+                                        <div style={{ marginTop: '0.5rem', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                                            Muestra maximo 40 resultados. Use el buscador.
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        <div className="input-group">
+                            <label className="input-label">Tipo de descuento</label>
+                            <select
+                                className="input-field"
+                                value={promoDraft.discountType}
+                                onChange={(e) => setPromoDraft((p) => ({ ...(p || {}), discountType: e.target.value }))}
+                            >
+                                <option value="PERCENT">Porcentaje (%)</option>
+                                <option value="AMOUNT">Monto fijo ($)</option>
+                            </select>
+                        </div>
+
+                        {promoDraft.discountType === 'PERCENT' ? (
+                            <div className="input-group">
+                                <label className="input-label">Porcentaje (%)</label>
+                                <input
+                                    type="number"
+                                    className="input-field"
+                                    value={promoDraft.percent}
+                                    onChange={(e) => setPromoDraft((p) => ({ ...(p || {}), percent: Number(e.target.value) }))}
+                                />
+                            </div>
+                        ) : (
+                            <div className="input-group">
+                                <label className="input-label">Monto ($)</label>
+                                <input
+                                    type="number"
+                                    className="input-field"
+                                    value={promoDraft.amount}
+                                    onChange={(e) => setPromoDraft((p) => ({ ...(p || {}), amount: Number(e.target.value) }))}
+                                />
+                            </div>
+                        )}
+
+                        <div className="input-group">
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                                <input
+                                    type="checkbox"
+                                    checked={promoDraft.includeFullPriceOnly === true}
+                                    onChange={(e) => setPromoDraft((p) => ({ ...(p || {}), includeFullPriceOnly: e.target.checked }))}
+                                />
+                                <strong>Incluir items “Precio Full / Sin Descuento”</strong>
+                            </label>
+                        </div>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                            <div className="input-group">
+                                <label className="input-label">Desde (fecha/hora)</label>
+                                <input
+                                    type="datetime-local"
+                                    className="input-field"
+                                    value={promoDraft.startAt}
+                                    onChange={(e) => setPromoDraft((p) => ({ ...(p || {}), startAt: e.target.value }))}
+                                />
+                            </div>
+                            <div className="input-group">
+                                <label className="input-label">Hasta (fecha/hora)</label>
+                                <input
+                                    type="datetime-local"
+                                    className="input-field"
+                                    value={promoDraft.endAt}
+                                    onChange={(e) => setPromoDraft((p) => ({ ...(p || {}), endAt: e.target.value }))}
+                                />
+                            </div>
+                        </div>
+
+                        <button className="btn btn-primary" style={{ width: '100%' }} onClick={addPromotion}>
+                            Agregar promocion
+                        </button>
+                    </div>
+
+                    <div className="card">
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>
+                            <h3 style={{ marginTop: 0, marginBottom: 0 }}>Promociones vigentes</h3>
+                            <button className="btn btn-primary" onClick={savePromotionsNow} disabled={promoSaveBusy}>
+                                {promoSaveBusy ? 'Guardando...' : 'Guardar promociones'}
+                            </button>
+                        </div>
+                        <p style={{ marginTop: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+                            Nota: si el cajero aplica un descuento EXTRA fuera de la promo, el sistema vuelve a pedir autorizacion.
+                        </p>
+
+                        {(promotions || []).length === 0 ? (
+                            <p style={{ margin: 0, color: 'var(--text-secondary)' }}>No hay promociones configuradas.</p>
+                        ) : (
+                            <div style={{ display: 'grid', gap: '1rem' }}>
+                                {(promotions || []).map((promo) => {
+                                    const pid = String(promo?.id || '');
+                                    const name = String(promo?.name || '').trim();
+                                    const scope = promo?.scope === 'PRODUCTS' ? 'PRODUCTS' : 'ALL';
+                                    const discountType = promo?.discountType === 'AMOUNT' ? 'AMOUNT' : 'PERCENT';
+                                    const selectedCount = Array.isArray(promo?.productIds) ? promo.productIds.length : 0;
+                                    const productsOpen = promoProductsOpenId === pid;
+                                    const startLocal = toDatetimeLocal(promo?.startAt);
+                                    const endLocal = toDatetimeLocal(promo?.endAt);
+
+                                    return (
+                                        <div key={pid} className="card card--muted">
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>
+                                                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={promo?.enabled !== false}
+                                                        onChange={(e) => updatePromotion(pid, { enabled: e.target.checked, updatedAt: new Date().toISOString() })}
+                                                    />
+                                                    <strong>{name || pid}</strong>
+                                                </label>
+                                                <button className="btn" onClick={() => removePromotion(pid)} style={{ color: '#b91c1c' }}>
+                                                    Eliminar
+                                                </button>
+                                            </div>
+
+                                            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '0.75rem', marginTop: '0.75rem' }}>
+                                                <div className="input-group" style={{ margin: 0 }}>
+                                                    <label className="input-label">Nombre</label>
+                                                    <input
+                                                        type="text"
+                                                        className="input-field"
+                                                        value={name}
+                                                        onChange={(e) => updatePromotion(pid, { name: e.target.value, updatedAt: new Date().toISOString() })}
+                                                    />
+                                                </div>
+                                                <div className="input-group" style={{ margin: 0 }}>
+                                                    <label className="input-label">Alcance</label>
+                                                    <select
+                                                        className="input-field"
+                                                        value={scope}
+                                                        onChange={(e) => updatePromotion(pid, { scope: e.target.value, updatedAt: new Date().toISOString() })}
+                                                    >
+                                                        <option value="ALL">Toda la tienda</option>
+                                                        <option value="PRODUCTS">Productos</option>
+                                                    </select>
+                                                </div>
+                                                <div className="input-group" style={{ margin: 0 }}>
+                                                    <label className="input-label">Tipo</label>
+                                                    <select
+                                                        className="input-field"
+                                                        value={discountType}
+                                                        onChange={(e) => updatePromotion(pid, { discountType: e.target.value, updatedAt: new Date().toISOString() })}
+                                                    >
+                                                        <option value="PERCENT">%</option>
+                                                        <option value="AMOUNT">$</option>
+                                                    </select>
+                                                </div>
+                                            </div>
+
+                                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.75rem', marginTop: '0.75rem' }}>
+                                                {discountType === 'PERCENT' ? (
+                                                    <div className="input-group" style={{ margin: 0 }}>
+                                                        <label className="input-label">%</label>
+                                                        <input
+                                                            type="number"
+                                                            className="input-field"
+                                                            value={Number(promo?.percent || 0)}
+                                                            onChange={(e) => updatePromotion(pid, { percent: Number(e.target.value), updatedAt: new Date().toISOString() })}
+                                                        />
+                                                    </div>
+                                                ) : (
+                                                    <div className="input-group" style={{ margin: 0 }}>
+                                                        <label className="input-label">$</label>
+                                                        <input
+                                                            type="number"
+                                                            className="input-field"
+                                                            value={Number(promo?.amount || 0)}
+                                                            onChange={(e) => updatePromotion(pid, { amount: Number(e.target.value), updatedAt: new Date().toISOString() })}
+                                                        />
+                                                    </div>
+                                                )}
+
+                                                <div className="input-group" style={{ margin: 0 }}>
+                                                    <label className="input-label">Desde</label>
+                                                    <input
+                                                        type="datetime-local"
+                                                        className="input-field"
+                                                        value={startLocal}
+                                                        onChange={(e) => updatePromotion(pid, { startAt: fromDatetimeLocal(e.target.value), updatedAt: new Date().toISOString() })}
+                                                    />
+                                                </div>
+                                                <div className="input-group" style={{ margin: 0 }}>
+                                                    <label className="input-label">Hasta</label>
+                                                    <input
+                                                        type="datetime-local"
+                                                        className="input-field"
+                                                        value={endLocal}
+                                                        onChange={(e) => updatePromotion(pid, { endAt: fromDatetimeLocal(e.target.value), updatedAt: new Date().toISOString() })}
+                                                    />
+                                                </div>
+                                            </div>
+
+                                            <div style={{ marginTop: '0.75rem', display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                                                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={promo?.includeFullPriceOnly === true}
+                                                        onChange={(e) => updatePromotion(pid, { includeFullPriceOnly: e.target.checked, updatedAt: new Date().toISOString() })}
+                                                    />
+                                                    <span>Incluye “Precio Full”</span>
+                                                </label>
+
+                                                {scope === 'PRODUCTS' && (
+                                                    <button
+                                                        className="btn"
+                                                        onClick={() => setPromoProductsOpenId((prev) => (prev === pid ? '' : pid))}
+                                                    >
+                                                        {productsOpen ? 'Cerrar productos' : `Productos (${selectedCount})`}
+                                                    </button>
+                                                )}
+                                            </div>
+
+                                            {scope === 'PRODUCTS' && productsOpen && (
+                                                <div className="card" style={{ marginTop: '0.75rem' }}>
+                                                    <input
+                                                        type="text"
+                                                        className="input-field"
+                                                        value={promoProductSearch}
+                                                        onChange={(e) => setPromoProductSearch(e.target.value)}
+                                                        placeholder="Buscar producto..."
+                                                    />
+                                                    <div style={{ maxHeight: '260px', overflow: 'auto', marginTop: '0.6rem', display: 'grid', gap: '0.35rem' }}>
+                                                        {(Array.isArray(products) ? products : [])
+                                                            .filter((pr) => {
+                                                                const q = String(promoProductSearch || '').trim().toLowerCase();
+                                                                if (!q) return true;
+                                                                const label = `${pr?.name || ''} ${pr?.code || ''} ${pr?.barcode || ''}`.toLowerCase();
+                                                                return label.includes(q);
+                                                            })
+                                                            .slice(0, 60)
+                                                            .map((pr) => {
+                                                                const prId = String(pr?.id || '');
+                                                                if (!prId) return null;
+                                                                const current = Array.isArray(promo?.productIds) ? promo.productIds.map(String) : [];
+                                                                const checked = current.includes(prId);
+                                                                return (
+                                                                    <label key={prId} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                                                                        <input
+                                                                            type="checkbox"
+                                                                            checked={checked}
+                                                                            onChange={() => {
+                                                                                const nextIds = checked ? current.filter((x) => x !== prId) : [...current, prId];
+                                                                                updatePromotion(pid, { productIds: nextIds, updatedAt: new Date().toISOString() });
+                                                                            }}
+                                                                        />
+                                                                        <span style={{ fontSize: '0.9rem' }}>{pr?.name || prId}</span>
+                                                                    </label>
+                                                                );
+                                                            })
+                                                            .filter(Boolean)}
+                                                    </div>
+                                                    <div style={{ marginTop: '0.5rem', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                                                        Muestra maximo 60 resultados. Use el buscador.
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
                     </div>
                 </div>
             )}

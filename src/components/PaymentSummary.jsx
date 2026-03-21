@@ -1,7 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { CLIENT_OCASIONAL, PAYMENT_MODES } from '../constants';
 import { printInvoiceDocument } from '../lib/printInvoice.js';
 import { playSound } from '../lib/soundService';
+import { computeInvoiceTotals } from '../lib/invoiceTotals.js';
 
 const CASH_MODE = PAYMENT_MODES.CONTADO;
 const CREDIT_MODE = PAYMENT_MODES.CREDITO;
@@ -39,6 +40,11 @@ export function PaymentSummary({
   selectedClientPendingBalance = 0,
   selectedClientAvailableCredit = 0,
   items,
+  adminPass,
+  extraDiscount: extraDiscountProp,
+  setExtraDiscount: setExtraDiscountProp,
+  promotions = [],
+  operationalNow = null,
   currentUser,
   onCreateRemoteAuthRequest,
   remoteAuthDecisionByRequestId = {},
@@ -60,10 +66,14 @@ export function PaymentSummary({
   const normalizedRole = normalizeRole(currentUser?.role);
   const shouldUseRemoteAuth = !!onCreateRemoteAuthRequest && !['Administrador', 'Supervisor'].includes(normalizedRole);
 
-  const [extraDiscount, setExtraDiscount] = useState(0);
+  const [localExtraDiscount, setLocalExtraDiscount] = useState(0);
+  const resolvedExtraDiscount = Number(extraDiscountProp ?? localExtraDiscount) || 0;
+  const setResolvedExtraDiscount = typeof setExtraDiscountProp === 'function' ? setExtraDiscountProp : setLocalExtraDiscount;
+
   const [authNote, setAuthNote] = useState('');
   const [activeRemoteRequestId, setActiveRemoteRequestId] = useState('');
   const [resolvedRemoteApproval, setResolvedRemoteApproval] = useState(null);
+  const localApprovalRef = useRef(null);
   const [isRequestingRemoteAuth, setIsRequestingRemoteAuth] = useState(false);
   const [cashReceived, setCashReceived] = useState(0);
   const [isMixed, setIsMixed] = useState(false);
@@ -80,24 +90,24 @@ export function PaymentSummary({
     new Set([...(paymentMethods || []), OTHER_MODE].filter(Boolean))
   );
 
-  const automaticDiscountPercent = Number(selectedClientDiscount || 0);
-  const DISCOUNT_MIN_UNIT_PRICE = 50000;
-  const isDiscountEligibleItem = (item) => {
-    const fullPriceOnly = item?.full_price_only === true || item?.fullPriceOnly === true;
-    const unitPrice = Number(item?.price || 0);
-    return !fullPriceOnly && unitPrice > DISCOUNT_MIN_UNIT_PRICE;
-  };
-  const discountableSubtotal = (items || []).reduce(
-    (sum, item) => sum + (isDiscountEligibleItem(item) ? Number(item?.total || 0) : 0),
-    0
-  );
-  const protectedSubtotal = Math.max(0, Number(subtotal || 0) - Number(discountableSubtotal || 0));
-  const automaticDiscountAmount = Number(discountableSubtotal || 0) * (automaticDiscountPercent / 100);
-  const maxExtraDiscount = Math.max(0, Number(discountableSubtotal || 0) - automaticDiscountAmount);
-  const effectiveExtraDiscount = Math.max(0, Math.min(Number(extraDiscount) || 0, maxExtraDiscount));
-  const totalDiscount = automaticDiscountAmount + effectiveExtraDiscount;
-  const discountedPart = Math.max(0, Number(discountableSubtotal || 0) - totalDiscount);
-  const total = Math.max(0, protectedSubtotal + (Number(deliveryFee) || 0) + discountedPart);
+  const totals = computeInvoiceTotals({
+    items,
+    deliveryFee,
+    selectedClientDiscountPercent: Number(selectedClientDiscount || 0),
+    extraDiscount: resolvedExtraDiscount,
+    promotions,
+    now: operationalNow instanceof Date ? operationalNow : new Date(),
+  });
+
+  const total = totals.total;
+  const automaticDiscountPercent = totals.automaticDiscountPercent;
+  const automaticDiscountAmount = totals.automaticDiscountAmount;
+  const promoDiscountAmount = totals.promoDiscountAmount;
+  const promoName = totals.promotion?.name || '';
+  const discountableSubtotal = totals.discountableSubtotal;
+  const maxExtraDiscount = totals.maxExtraDiscount;
+  const effectiveExtraDiscount = totals.effectiveExtraDiscount;
+  const totalDiscount = totals.totalDiscount;
   const safeMixedAmountA = clamp(Number(mixedAmountA) || 0, 0, Math.max(0, total));
   const mixedAmountB = Math.max(0, total - safeMixedAmountA);
 
@@ -145,10 +155,11 @@ export function PaymentSummary({
   useEffect(() => {
     if (!loadedDraftState?.draftId) return;
 
-    setExtraDiscount(Number(loadedDraftState.extraDiscount || 0));
+    setResolvedExtraDiscount(Number(loadedDraftState.extraDiscount || 0));
     setAuthNote(String(loadedDraftState.authNote || ''));
     setActiveRemoteRequestId(String(loadedDraftState.activeRemoteRequestId || ''));
     setResolvedRemoteApproval(null);
+    localApprovalRef.current = null;
     setIsMixed(!!loadedDraftState.isMixed);
     setOtherPaymentDetail(String(loadedDraftState.otherPaymentDetail || ''));
 
@@ -171,6 +182,10 @@ export function PaymentSummary({
       setMixedOtherB('');
     }
   }, [loadedDraftState?.draftId]);
+
+  useEffect(() => {
+    if (!needsApproval) localApprovalRef.current = null;
+  }, [needsApproval]);
 
   const reasonType = hasGift
     ? 'REGALO'
@@ -218,20 +233,48 @@ export function PaymentSummary({
       };
     }
 
+    if (localApprovalRef.current) {
+      return {
+        required: true,
+        mode: 'ADMIN_PASSWORD',
+        status: 'APPROVED',
+        requestId: '',
+        reasonType,
+        reasonLabel,
+        note: String(localApprovalRef.current?.note || String(authNote || '')).trim(),
+        approvedAt: localApprovalRef.current?.approvedAt || new Date().toISOString(),
+        approvedBy: localApprovalRef.current?.approvedBy || null
+      };
+    }
+
+    if (['Administrador', 'Supervisor'].includes(normalizedRole)) {
+      return {
+        required: true,
+        mode: 'ROLE_DIRECT',
+        status: 'APPROVED',
+        requestId: '',
+        reasonType,
+        reasonLabel,
+        note: String(authNote || '').trim(),
+        approvedAt: new Date().toISOString(),
+        approvedBy: {
+          id: currentUser?.id || null,
+          name: currentUser?.name || currentUser?.email || 'Usuario',
+          role: normalizedRole || ''
+        }
+      };
+    }
+
     return {
       required: true,
-      mode: 'ROLE_DIRECT',
-      status: 'APPROVED',
+      mode: 'ADMIN_PASSWORD',
+      status: 'PENDING',
       requestId: '',
       reasonType,
       reasonLabel,
       note: String(authNote || '').trim(),
-      approvedAt: new Date().toISOString(),
-      approvedBy: {
-        id: currentUser?.id || null,
-        name: currentUser?.name || currentUser?.email || 'Usuario',
-        role: normalizedRole || ''
-      }
+      approvedAt: null,
+      approvedBy: null
     };
   };
 
@@ -319,9 +362,41 @@ export function PaymentSummary({
         return;
       }
 
-      // Admin/Supervisor: autorización directa por rol, sin clave.
+      if (['Administrador', 'Supervisor'].includes(normalizedRole)) {
+        // Admin/Supervisor: autorización directa por rol, sin clave.
+        playSound('success');
+        action();
+        return;
+      }
+
+      const expectedAdminPass = String(adminPass || '').trim();
+      if (!expectedAdminPass) {
+        playSound('error');
+        alert('No hay clave Admin configurada para autorizar esta accion.');
+        return;
+      }
+
+      const pass = String(prompt(`Ingrese clave Admin para autorizar: ${reasonLabel}`) || '').trim();
+      if (!pass) return;
+      if (pass !== expectedAdminPass) {
+        playSound('error');
+        alert('Clave Admin incorrecta. Accion no autorizada.');
+        return;
+      }
+
+      const approval = {
+        approvedAt: new Date().toISOString(),
+        approvedBy: { id: null, name: 'Admin', role: 'Administrador' },
+        note: String(authNote || '').trim()
+      };
+
+      localApprovalRef.current = approval;
       playSound('success');
-      action();
+      try {
+        action();
+      } finally {
+        localApprovalRef.current = null;
+      }
       return;
     }
 
@@ -444,11 +519,24 @@ export function PaymentSummary({
       deliveryFee: Number(deliveryFee || 0),
 	      automaticDiscountPercent,
 	      automaticDiscountAmount,
+        promoDiscountAmount: Number(promoDiscountAmount || 0),
+        promoName: String(promoName || '').trim(),
 	      extraDiscount: Number(effectiveExtraDiscount || 0),
 	      totalDiscount,
 	      total,
       paymentMode: isMixed ? `Mixto (${mixedModeA} + ${mixedModeB})` : paymentMode,
       authorization: buildAuthorizationMeta(),
+      mixedDetails: {
+        discount: {
+          promotion: totals.promotion,
+          promoAmount: Number(promoDiscountAmount || 0),
+          automaticPercent: automaticDiscountPercent,
+          automaticAmount: automaticDiscountAmount,
+          extraAmount: Number(effectiveExtraDiscount || 0),
+          totalAmount: Number(totalDiscount || 0),
+        },
+        authorization: buildAuthorizationMeta(),
+      },
       date: new Date().toISOString(),
     };
     printInvoiceDocument(previewInvoice, mode);
@@ -477,11 +565,26 @@ export function PaymentSummary({
 	          </div>
 	          {Number(discountableSubtotal || 0) < Number(subtotal || 0) && (
 	            <div style={{ marginTop: '0.35rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-	              Aplica solo sobre ${Number(discountableSubtotal || 0).toLocaleString()} (productos &le; $50.000 o “Precio Full” no descuentan).
+	              Aplica solo sobre ${Number(discountableSubtotal || 0).toLocaleString()} (productos ≤ $50.000 o “Precio Full” no descuentan).
 	            </div>
 	          )}
 	        </div>
 	      )}
+
+        {promoDiscountAmount > 0 && (
+          <div className="card card--muted" style={{ marginBottom: '1rem' }}>
+            <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+              {promoName ? `Promocion (${promoName}): ` : 'Promocion: '}
+              <strong>-${Number(promoDiscountAmount || 0).toLocaleString()}</strong>
+            </div>
+          </div>
+        )}
+
+        {totalDiscount > 0 && (
+          <div style={{ margin: '0 0 1rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+            Descuento total aplicado: <strong>-{Number(totalDiscount || 0).toLocaleString()}</strong>
+          </div>
+        )}
 
       {selectedClient && (
         <div className="card card--muted" style={{ marginBottom: '1rem' }}>
@@ -529,10 +632,20 @@ export function PaymentSummary({
         <input
           type="number"
           className="input-field"
-          value={extraDiscount}
-          onChange={(e) => setExtraDiscount(Number(e.target.value))}
+          value={resolvedExtraDiscount}
+          onChange={(e) => setResolvedExtraDiscount(Number(e.target.value))}
           placeholder="Requiere aprobacion admin"
         />
+        {Number(maxExtraDiscount || 0) <= 0 && (
+          <div style={{ marginTop: '0.35rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+            No hay saldo disponible para descuento extraordinario (ya hay descuentos aplicados o no hay items elegibles).
+          </div>
+        )}
+        {Number(resolvedExtraDiscount || 0) > Number(maxExtraDiscount || 0) && (
+          <div style={{ marginTop: '0.35rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+            Se aplica maximo: ${Number(maxExtraDiscount || 0).toLocaleString()}.
+          </div>
+        )}
       </div>
 
       {shouldUseRemoteAuth && needsApproval && (
@@ -727,7 +840,7 @@ export function PaymentSummary({
             reasonLabel,
             authNote: String(authNote || '').trim(),
             paymentMode: isMixed ? `Mixto (${mixedModeA} + ${mixedModeB})` : paymentMode,
-            extraDiscount: Number(extraDiscount || 0),
+            extraDiscount: Number(resolvedExtraDiscount || 0),
             mixedData: isMixed
               ? {
                   modeA: mixedModeA,

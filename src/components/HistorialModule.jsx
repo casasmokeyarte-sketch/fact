@@ -929,6 +929,15 @@ export function HistorialModule({
                 <div style={{ marginTop: '0.75rem', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
                   <div><strong>Subtotal:</strong> ${subtotal.toLocaleString()}</div>
                   <div><strong>Domicilio:</strong> ${deliveryFee.toLocaleString()}</div>
+                  {Number(discount?.promoAmount || 0) > 0 && (
+                    <div>
+                      <strong>
+                        Promocion{discount?.promotion?.name ? ` (${discount.promotion.name})` : ''}:
+                      </strong>
+                      {' '}
+                      -${Number(discount.promoAmount || 0).toLocaleString()}
+                    </div>
+                  )}
                   <div><strong>Descuento cliente ({automaticLabel}):</strong> -${discount.automaticAmount.toLocaleString()}</div>
                   <div><strong>Descuento extra:</strong> -${discount.extraAmount.toLocaleString()}</div>
                   <div><strong>Descuento total:</strong> -${discount.totalAmount.toLocaleString()}</div>

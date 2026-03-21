@@ -48,8 +48,18 @@ export function printInvoiceDocument(invoice, mode = '58mm') {
   ).trim();
   const automaticDiscountPercent = Number(invoice?.automaticDiscountPercent ?? invoice?.mixedDetails?.discount?.automaticPercent ?? 0);
   const automaticDiscountAmount = Number(invoice?.automaticDiscountAmount ?? invoice?.mixedDetails?.discount?.automaticAmount ?? 0);
+  const promoDiscountAmount = Number(invoice?.promoDiscountAmount ?? invoice?.mixedDetails?.discount?.promoAmount ?? 0);
+  const promoName = String(
+    invoice?.promoName ??
+    invoice?.mixedDetails?.discount?.promotion?.name ??
+    ''
+  ).trim();
   const extraDiscountAmount = Number(invoice?.extraDiscount ?? invoice?.mixedDetails?.discount?.extraAmount ?? 0);
-  const totalDiscountAmount = Number(invoice?.totalDiscount ?? invoice?.mixedDetails?.discount?.totalAmount ?? (automaticDiscountAmount + extraDiscountAmount));
+  const totalDiscountAmount = Number(
+    invoice?.totalDiscount ??
+    invoice?.mixedDetails?.discount?.totalAmount ??
+    (automaticDiscountAmount + promoDiscountAmount + extraDiscountAmount)
+  );
   const subtotalAmount = Number(invoice?.subtotal ?? 0);
   const deliveryFeeAmount = Number(invoice?.deliveryFee ?? 0);
   const authorization = invoice?.authorization || invoice?.mixedDetails?.authorization || null;
@@ -217,8 +227,9 @@ export function printInvoiceDocument(invoice, mode = '58mm') {
           <div class="pay-details">
             <div><strong>Subtotal:</strong> $${subtotalAmount.toLocaleString('es-CO')}</div>
             <div><strong>Domicilio:</strong> $${deliveryFeeAmount.toLocaleString('es-CO')}</div>
-            <div><strong>Desc. cliente (${automaticDiscountPercent}%):</strong> -$${automaticDiscountAmount.toLocaleString('es-CO')}</div>
-            <div><strong>Desc. extra:</strong> -$${extraDiscountAmount.toLocaleString('es-CO')}</div>
+            ${automaticDiscountAmount > 0 ? `<div><strong>Desc. cliente (${automaticDiscountPercent}%):</strong> -$${automaticDiscountAmount.toLocaleString('es-CO')}</div>` : ''}
+            ${promoDiscountAmount > 0 ? `<div><strong>Promo${promoName ? ` (${escapeHtml(promoName)})` : ''}:</strong> -$${promoDiscountAmount.toLocaleString('es-CO')}</div>` : ''}
+            ${extraDiscountAmount > 0 ? `<div><strong>Desc. extra:</strong> -$${extraDiscountAmount.toLocaleString('es-CO')}</div>` : ''}
             <div><strong>Descuento total:</strong> -$${totalDiscountAmount.toLocaleString('es-CO')}</div>
           </div>
           ${authorization?.required ? `
