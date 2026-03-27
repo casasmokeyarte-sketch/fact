@@ -710,6 +710,13 @@ function App() {
   const [companySettingsLoaded, setCompanySettingsLoaded] = useState(false);
   const [companySettingsLastSyncAt, setCompanySettingsLastSyncAt] = useState(0);
   const lastBoardNoteSoundAtRef = useRef(0);
+  const adminAuthResolverRef = useRef(null);
+  const [adminAuthModal, setAdminAuthModal] = useState({
+    open: false,
+    title: 'Autorizacion',
+    message: 'Se necesita clave del administrador para avanzar.',
+    value: '',
+  });
 
   const getActiveTabStorageKey = (userId) => `${ACTIVE_TAB_STORAGE_KEY}_${userId}`;
   const getQuickTrayStorageKey = (userId) => `${QUICK_TRAY_OPEN_STORAGE_KEY}_${userId || 'anon'}`;
@@ -2210,6 +2217,39 @@ function App() {
     }
   };
 
+  const closeAdminAuthModal = useCallback((approved) => {
+    if (adminAuthResolverRef.current) {
+      adminAuthResolverRef.current(approved);
+      adminAuthResolverRef.current = null;
+    }
+    setAdminAuthModal({
+      open: false,
+      title: 'Autorizacion',
+      message: 'Se necesita clave del administrador para avanzar.',
+      value: '',
+    });
+  }, []);
+
+  const requestAdminAuthorization = useCallback(async ({
+    title = 'Autorizacion',
+    message = 'Se necesita clave del administrador para avanzar.',
+  } = {}) => {
+    if (!adminPass) {
+      alert('No hay clave Admin configurada para autorizar esta accion.');
+      return false;
+    }
+
+    return await new Promise((resolve) => {
+      adminAuthResolverRef.current = resolve;
+      setAdminAuthModal({
+        open: true,
+        title,
+        message,
+        value: '',
+      });
+    });
+  }, [adminPass]);
+
   const onStartShift = async (initialCash, options = {}) => {
     const startCash = Number(initialCash) > 0 ? Number(initialCash) : 0;
     const nowIso = getOperationalNowIso();
@@ -2230,13 +2270,8 @@ function App() {
     }
 
     if (inventoryAssignments.length === 0) {
-      const pass = String(prompt('No registro inventario para la apertura. Ingrese clave Admin para autorizar apertura sin inventario declarado:') || '').trim();
-      if (!adminPass) {
-        alert('No hay clave Admin configurada para autorizar esta accion.');
-        return;
-      }
-      if (pass !== String(adminPass).trim()) {
-        alert('Clave incorrecta. No se autorizo la apertura sin inventario declarado.');
+      const approved = await requestAdminAuthorization();
+      if (!approved) {
         return;
       }
     }
@@ -2250,14 +2285,8 @@ function App() {
       );
       if (!allowReopen) return;
 
-      const pass = String(prompt('Ingrese clave Admin para autorizar reapertura de jornada:') || '').trim();
-      if (!adminPass) {
-        alert('No hay clave Admin configurada para autorizar esta accion.');
-        return;
-      }
-
-      if (pass !== String(adminPass).trim()) {
-        alert('Clave incorrecta. No se autorizo reapertura.');
+      const approved = await requestAdminAuthorization();
+      if (!approved) {
         return;
       }
 
@@ -2707,7 +2736,7 @@ function App() {
     inversion: Number(summary?.purchasesTotal || 0),
   });
 
-  const onEndShift = (data) => {
+  const onEndShift = async (data) => {
     if (!shift?.startTime) return;
     const shiftStartMsReal = new Date(shift.startTime).getTime();
     const openShiftAgeMs = Date.now() - shiftStartMsReal;
@@ -2820,13 +2849,8 @@ function App() {
     let authorizedMismatch = false;
 
     if (Math.abs(discrepancy) > 1 || hasAccountMismatch || hasInventoryMismatch) {
-      const pass = String(prompt('DESCUADRE DETECTADO. Ingrese clave Admin para autorizar cierre con diferencias:') || '').trim();
-      if (!adminPass) {
-        alert('No hay clave Admin configurada para autorizar esta accion.');
-        return;
-      }
-      if (pass !== String(adminPass).trim()) {
-        alert('Clave incorrecta o no autorizada. Debe cuadrar la caja.');
+      const approved = await requestAdminAuthorization();
+      if (!approved) {
         return;
       }
       authorizedMismatch = true;
@@ -4601,6 +4625,59 @@ function App() {
         }}
       />
       <SystemHelpBubble currentUser={currentUser} onLog={addLog} />
+      {adminAuthModal.open && (
+        <div className="modal-overlay" style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1200
+        }}>
+          <div className="card" style={{ width: '420px', maxWidth: '92vw' }}>
+            <h3 style={{ marginTop: 0 }}>{adminAuthModal.title}</h3>
+            <p style={{ color: 'var(--text-secondary)' }}>{adminAuthModal.message}</p>
+            <div className="input-group" style={{ marginBottom: 0 }}>
+              <label className="input-label">Clave del administrador</label>
+              <input
+                type="password"
+                className="input-field"
+                inputMode="numeric"
+                autoFocus
+                value={adminAuthModal.value}
+                onChange={(e) => setAdminAuthModal((prev) => ({ ...prev, value: e.target.value }))}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    const pass = String(adminAuthModal.value || '').trim();
+                    if (pass !== String(adminPass).trim()) {
+                      alert('Clave incorrecta.');
+                      return;
+                    }
+                    closeAdminAuthModal(true);
+                  }
+                  if (e.key === 'Escape') closeAdminAuthModal(false);
+                }}
+                placeholder="Ingrese la clave"
+              />
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
+              <button
+                className="btn btn-primary"
+                style={{ flex: 1 }}
+                onClick={() => {
+                  const pass = String(adminAuthModal.value || '').trim();
+                  if (pass !== String(adminPass).trim()) {
+                    alert('Clave incorrecta.');
+                    return;
+                  }
+                  closeAdminAuthModal(true);
+                }}
+              >
+                Autorizar
+              </button>
+              <button className="btn" style={{ flex: 1 }} onClick={() => closeAdminAuthModal(false)}>
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
