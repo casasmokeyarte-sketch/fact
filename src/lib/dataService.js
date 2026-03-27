@@ -138,6 +138,27 @@ function normalizeNumericBarcode(value) {
   return /^\d+$/.test(raw) ? raw : '';
 }
 
+function normalizeShiftInventoryRows(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      const productId = String(item?.productId || item?.product_id || '').trim();
+      if (!productId) return null;
+      return {
+        productId,
+        productName: item?.productName || 'Producto',
+        quantity: Number(item?.quantity ?? item?.assignedQty ?? 0) || 0,
+        assignedQty: Number(item?.assignedQty ?? item?.quantity ?? 0) || 0,
+        soldQty: Number(item?.soldQty ?? 0) || 0,
+        expectedQty: Number(item?.expectedQty ?? 0) || 0,
+        returnedQty: Number(item?.returnedQty ?? 0) || 0,
+        differenceQty: Number(item?.differenceQty ?? 0) || 0,
+        availableInSystem: Number(item?.availableInSystem ?? 0) || 0,
+      };
+    })
+    .filter(Boolean);
+}
+
 function normalizeCreditLevel(value) {
   return String(value ?? '').trim().toUpperCase();
 }
@@ -748,6 +769,13 @@ export const dataService = {
       authorized: !!s.authorized,
       reportText: s.report_text ?? '',
       user: s.user_name ?? s.user ?? null,
+      inventoryAssignment: normalizeShiftInventoryRows(s.inventory_assignment),
+      inventoryAssignedAt: s.inventory_assigned_at ?? null,
+      inventoryClosure: {
+        rows: normalizeShiftInventoryRows(s.inventory_closure?.rows),
+        supervisorNote: s.inventory_closure?.supervisorNote ?? '',
+      },
+      inventoryStatus: s.inventory_status ?? '',
     }));
   },
 
@@ -780,6 +808,13 @@ export const dataService = {
       authorized: !!data.authorized,
       reportText: data.report_text ?? '',
       user: data.user_name ?? data.user ?? null,
+      inventoryAssignments: normalizeShiftInventoryRows(data.inventory_assignment),
+      inventoryAssignedAt: data.inventory_assigned_at ?? null,
+      inventoryClosure: {
+        rows: normalizeShiftInventoryRows(data.inventory_closure?.rows),
+        supervisorNote: data.inventory_closure?.supervisorNote ?? '',
+      },
+      inventoryStatus: data.inventory_status ?? '',
     };
   },
 
@@ -803,12 +838,24 @@ export const dataService = {
       discrepancy: Number(shift.discrepancy ?? 0),
       authorized: !!shift.authorized,
       report_text: shift.report_text ?? shift.reportText ?? '',
+      inventory_assignment: normalizeShiftInventoryRows(shift.inventory_assignment ?? shift.inventoryAssignment),
+      inventory_assigned_at: shift.inventory_assigned_at ?? shift.inventoryAssignedAt ?? null,
+      inventory_closure: shift.inventory_closure ?? shift.inventoryClosure ?? null,
+      inventory_status: shift.inventory_status ?? shift.inventoryStatus ?? null,
     };
 
     if (isUuid(payload.id)) {
       let { data, error } = await supabase.from('shift_history').upsert(payload).select();
       if (error && isUndefinedColumnError(error)) {
-        const { user_name, company_id, ...fallbackPayload } = payload;
+        const {
+          user_name,
+          company_id,
+          inventory_assignment,
+          inventory_assigned_at,
+          inventory_closure,
+          inventory_status,
+          ...fallbackPayload
+        } = payload;
         const retry = await supabase.from('shift_history').upsert(fallbackPayload).select();
         data = retry.data;
         error = retry.error;
@@ -820,7 +867,15 @@ export const dataService = {
     const insertPayload = removeInvalidUuidId(payload);
     let { data, error } = await supabase.from('shift_history').insert(insertPayload).select();
     if (error && isUndefinedColumnError(error)) {
-      const { user_name, company_id, ...fallbackPayload } = insertPayload;
+      const {
+        user_name,
+        company_id,
+        inventory_assignment,
+        inventory_assigned_at,
+        inventory_closure,
+        inventory_status,
+        ...fallbackPayload
+      } = insertPayload;
       const retry = await supabase.from('shift_history').insert(fallbackPayload).select();
       data = retry.data;
       error = retry.error;

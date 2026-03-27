@@ -5,14 +5,13 @@ import { usePagination } from '../lib/usePagination';
 import { useTableSort } from '../lib/useTableSort';
 import { SortButton } from './SortButton';
 
-export function InventoryModule({ currentUser, products, setProducts, onDeleteProduct, onCreateInventoryRequest, pendingInventoryRequests = [], onAdjustStock, stock, categories, onLog, setActiveTab, setPreselectedProductId }) {
+export function InventoryModule({ currentUser, products, setProducts, onDeleteProduct, onAdjustStock, stock, categories, onLog, setActiveTab, setPreselectedProductId, shift }) {
     const [view, setView] = useState('list'); // 'list', 'edit', 'count'
     const [editingProduct, setEditingProduct] = useState(null);
     const [physicalCounts, setPhysicalCounts] = useState({});
     const [searchTerm, setSearchTerm] = useState('');
     const [categoryFilter, setCategoryFilter] = useState('');
     const [statusFilter, setStatusFilter] = useState('');
-    const [acceptQuantities, setAcceptQuantities] = useState({});
     const [openActionMenuId, setOpenActionMenuId] = useState(null);
     const filterStorageKey = `fact_filter_inventory_${currentUser?.id || 'anon'}`;
     
@@ -357,45 +356,6 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
         setView('list');
     };
 
-    const pendingRequestByProductId = useMemo(() => {
-        const ownUserId = String(currentUser?.id || '');
-        return (pendingInventoryRequests || []).reduce((acc, request) => {
-            if (String(request?.requestedBy?.id || '') !== ownUserId) return acc;
-            if (String(request?.module || '') !== 'Inventario') return acc;
-            if (String(request?.status || '') !== 'PENDING') return acc;
-            const productId = String(request?.inventoryRequest?.productId || '');
-            if (productId) acc[productId] = request;
-            return acc;
-        }, {});
-    }, [pendingInventoryRequests, currentUser?.id]);
-
-    const handleRequestFromBodega = async (product) => {
-        const quantity = Number(acceptQuantities[product.id] || 0);
-        if (quantity <= 0 || Number.isNaN(quantity)) {
-            return alert('Ingrese una cantidad valida');
-        }
-
-        const available = Number(stock?.bodega?.[product.id] || 0);
-        if (available < quantity) {
-            return alert('No hay suficiente stock en bodega');
-        }
-
-        try {
-            if (typeof onCreateInventoryRequest === 'function') {
-                await onCreateInventoryRequest(product, quantity);
-            }
-            onLog?.({
-                module: 'Inventario',
-                action: 'Solicitud inventario',
-                details: `${currentUser?.name || currentUser?.email || 'Usuario'} solicito ${quantity} unidades de ${product.name} desde bodega`
-            });
-            setAcceptQuantities((prev) => ({ ...prev, [product.id]: 0 }));
-        } catch (err) {
-            const message = err?.message || 'Error desconocido';
-            alert(`No se pudo crear la solicitud de inventario.\n\nDetalle: ${message}`);
-        }
-    };
-
     const handleAdjustStock = async (product) => {
         if (!canEdit) return alert('No tiene permisos para ajustar stock.');
         const target = String(prompt('Ajustar en cual inventario? Escriba "bodega" o "ventas"') || '').trim().toLowerCase();
@@ -444,6 +404,17 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
                     {isCajero && <div className="alert alert-warning" style={{ padding: '0.5rem', fontSize: '0.85em', margin: 0 }}>{'\uD83D\uDD12'} Modo Solo Lectura</div>}
                 </div>
             </div>
+
+            {isCajero && (
+                <div className="card" style={{ marginBottom: '1rem', backgroundColor: 'var(--surface-muted)', border: '1px solid var(--border-soft)' }}>
+                    <strong>Inventario por turno</strong>
+                    <p style={{ margin: '0.45rem 0 0', color: 'var(--text-secondary)' }}>
+                        La entrega y devolucion de inventario ya no se solicita desde este modulo.
+                        Ahora se registra al abrir y cerrar la jornada con validacion del supervisor.
+                        {shift?.startTime ? ' Su turno actual ya tiene control de inventario activo.' : ' Inicie jornada para recibir inventario del turno.'}
+                    </p>
+                </div>
+            )}
 
             {view === 'edit' && (
                 <div className="card">
@@ -707,40 +678,6 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
                                                     </div>
                                                 )}
                                             </div>
-                                        )}
-                                        {isCajero && !canEdit && !canDelete && (
-                                            (() => {
-                                                const pendingRequest = pendingRequestByProductId[p.id];
-                                                return (
-                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', alignItems: 'flex-start', marginLeft: '5px' }}>
-                                                        <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
-                                                            <input
-                                                                type="number"
-                                                                min="0"
-                                                                className="input-field"
-                                                                style={{ width: '80px', padding: '0.25rem 0.35rem' }}
-                                                                value={acceptQuantities[p.id] || ''}
-                                                                onChange={(e) => setAcceptQuantities((prev) => ({ ...prev, [p.id]: e.target.value }))}
-                                                                placeholder="Cant."
-                                                                disabled={!!pendingRequest}
-                                                            />
-                                                            <button
-                                                                className="btn btn-primary"
-                                                                onClick={() => handleRequestFromBodega(p)}
-                                                                title="Solicitar inventario"
-                                                                disabled={!!pendingRequest}
-                                                            >
-                                                                Solicitar
-                                                            </button>
-                                                        </div>
-                                                        {pendingRequest && (
-                                                            <span className="badge" style={{ backgroundColor: 'var(--surface-warn)', borderColor: 'rgba(255, 180, 0, 0.40)' }}>
-                                                                Pendiente: {Number(pendingRequest?.inventoryRequest?.quantity || 0)}
-                                                            </span>
-                                                        )}
-                                                    </div>
-                                                );
-                                            })()
                                         )}
                                     </td>
                                 </tr>

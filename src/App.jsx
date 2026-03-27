@@ -242,6 +242,12 @@ const normalizeStoredOpenShift = (rawShift) => {
     initialCash: Number(rawShift?.initialCash ?? rawShift?.initial_cash ?? 0),
     user_id: rawShift?.user_id || null,
     user_name: rawShift?.user_name || rawShift?.user || null,
+    inventoryAssignments: normalizeShiftInventoryAssignments(
+      rawShift?.inventoryAssignments ?? rawShift?.inventory_assignment,
+      [],
+      {}
+    ),
+    inventoryAssignedAt: rawShift?.inventoryAssignedAt || rawShift?.inventory_assigned_at || null,
   };
 };
 
@@ -480,6 +486,69 @@ const mergeRemoteAuthRequests = (localRequests, syncedRequests) => {
     .slice(0, 120);
 };
 
+const normalizeShiftInventoryAssignments = (items, products = [], stockVentas = {}) => (
+  (Array.isArray(items) ? items : [])
+    .map((item) => {
+      const productId = String(item?.productId || item?.product_id || '').trim();
+      if (!productId) return null;
+      const product = (products || []).find((p) => String(p?.id || '') === productId);
+      const quantity = Math.max(0, Math.trunc(Number(item?.quantity ?? item?.assignedQty ?? 0) || 0));
+      if (quantity <= 0) return null;
+      return {
+        productId,
+        productName: item?.productName || product?.name || 'Producto',
+        quantity,
+        availableInSystem: Math.max(0, Number(item?.availableInSystem ?? stockVentas?.[productId] ?? 0)),
+      };
+    })
+    .filter(Boolean)
+);
+
+const extractInvoiceItems = (invoice) => {
+  if (Array.isArray(invoice?.items)) return invoice.items;
+  if (Array.isArray(invoice?.mixedDetails?.items)) return invoice.mixedDetails.items;
+  if (Array.isArray(invoice?.mixed_details?.items)) return invoice.mixed_details.items;
+  return [];
+};
+
+const summarizeShiftInventory = ({
+  assignments = [],
+  shiftSales = [],
+}) => {
+  const soldByProduct = new Map();
+
+  (shiftSales || []).forEach((sale) => {
+    extractInvoiceItems(sale).forEach((item) => {
+      const productId = String(item?.productId ?? item?.product_id ?? item?.id ?? '').trim();
+      if (!productId) return;
+      soldByProduct.set(productId, (soldByProduct.get(productId) || 0) + Math.max(0, Number(item?.quantity || 0)));
+    });
+  });
+
+  const rows = (assignments || []).map((assignment) => {
+    const productId = String(assignment?.productId || '').trim();
+    const assignedQty = Math.max(0, Number(assignment?.quantity || 0));
+    const soldQty = Math.max(0, Number(soldByProduct.get(productId) || 0));
+    const expectedQty = Math.max(0, assignedQty - soldQty);
+    return {
+      productId,
+      productName: assignment?.productName || 'Producto',
+      assignedQty,
+      soldQty,
+      expectedQty,
+    };
+  });
+
+  return {
+    rows,
+    totals: rows.reduce((acc, row) => ({
+      assignedQty: acc.assignedQty + Number(row.assignedQty || 0),
+      soldQty: acc.soldQty + Number(row.soldQty || 0),
+      expectedQty: acc.expectedQty + Number(row.expectedQty || 0),
+    }), { assignedQty: 0, soldQty: 0, expectedQty: 0 }),
+  };
+};
+
 const parseBoardNoteLogEvent = (details) => {
   const raw = String(details || '');
   if (!raw.startsWith(BOARD_NOTE_LOG_PREFIX)) return null;
@@ -585,6 +654,9 @@ function App() {
       }
     }
   ]);
+  const adminPass = useMemo(() => (
+    String(users.find((u) => u.username === 'Admin')?.password || '').trim() || 'Admin'
+  ), [users]);
   const [cartera, setCartera] = useState([]);
   const [stock, setStock] = useState({ bodega: {}, ventas: {} });
   const [auditLogs, setAuditLogs] = useState([]);
@@ -1860,49 +1932,6 @@ function App() {
     });
   };
 
-  const onCreateInventoryRequest = async (product, quantity) => {
-    const qty = Math.max(0, Number(quantity) || 0);
-    if (!product?.id || qty <= 0) throw new Error('Solicitud invalida.');
-    const available = Number(stock?.bodega?.[product.id] || 0);
-    if (qty > available) throw new Error('Stock insuficiente en bodega.');
-
-    const existingPending = (remoteAuthRequests || []).find((request) => (
-      request?.status === 'PENDING' &&
-      request?.module === 'Inventario' &&
-      String(request?.requestedBy?.id || '') === String(currentUser?.id || '') &&
-      String(request?.inventoryRequest?.productId || '') === String(product.id)
-    ));
-    if (existingPending) throw new Error('Ya existe una solicitud pendiente para este producto.');
-
-    const attachments = buildApprovalPreviewAttachments({
-      title: 'Solicitud inventario',
-      requester: currentUser?.name || currentUser?.email || 'Usuario',
-      reasonLabel: `Pedido de ${product.name}`,
-      items: [{ name: product.name, quantity: qty }],
-      extraLines: [
-        `Bodega disponible: ${available}`,
-        `Cantidad solicitada: ${qty}`,
-      ],
-    });
-
-    return onCreateRemoteAuthRequest({
-      module: 'Inventario',
-      requestCategory: 'INVENTORY_TRANSFER',
-      reasonType: 'SOLICITUD_INVENTARIO',
-      reasonLabel: 'Solicitud de inventario',
-      note: `Solicitud de ${qty} unidades de ${product.name}`,
-      total: 0,
-      paymentMode: '',
-      attachments,
-      inventoryRequest: {
-        productId: product.id,
-        productName: product.name,
-        quantity: qty,
-        availableInBodega: available,
-      }
-    });
-  };
-
   const onCreateBoardNote = async (input) => {
     const cleanText = String(input?.text || '').trim();
     const attachments = Array.isArray(input?.attachments) ? input.attachments.slice(0, 2) : [];
@@ -2181,28 +2210,41 @@ function App() {
     }
   };
 
-  const onStartShift = async (initialCash) => {
+  const onStartShift = async (initialCash, options = {}) => {
     const startCash = Number(initialCash) > 0 ? Number(initialCash) : 0;
     const nowIso = getOperationalNowIso();
     const nowRealDateKey = getRealDateKey();
     const closeMap = readLastShiftCloseByUser();
     const userKey = String(currentUser?.id || '');
     const lastClosedDateKey = String(closeMap[userKey] || '');
+    const inventoryAssignments = normalizeShiftInventoryAssignments(
+      options?.inventoryAssignments,
+      products,
+      stock?.ventas || {}
+    );
+
+    const invalidAssignment = inventoryAssignments.find((item) => Number(item.quantity || 0) > Number(stock?.ventas?.[item.productId] || 0));
+    if (invalidAssignment) {
+      alert(`No se puede entregar ${invalidAssignment.quantity} de ${invalidAssignment.productName}. En ventas solo hay ${Number(stock?.ventas?.[invalidAssignment.productId] || 0)}.`);
+      return;
+    }
 
     if (userKey && lastClosedDateKey && lastClosedDateKey === nowRealDateKey) {
       const isAdminUser = normalizeRole(currentUser?.role) === 'Administrador';
-      if (!isAdminUser) {
-        alert(`Este usuario ya cerro jornada hoy (${nowRealDateKey}). Solo podra iniciar nueva jornada cuando cambie al siguiente dia real del sistema.`);
-        return;
-      }
-
       const allowReopen = confirm(
-        `Este usuario ya cerro jornada hoy (${nowRealDateKey}).\n\nComo administrador puede hacer una reapertura excepcional.\n\nDesea continuar?`
+        isAdminUser
+          ? `Este usuario ya cerro jornada hoy (${nowRealDateKey}).\n\nComo administrador puede hacer una reapertura excepcional.\n\nDesea continuar?`
+          : `Este usuario ya cerro jornada hoy (${nowRealDateKey}).\n\nSolo un administrador puede autorizar una reapertura excepcional ingresando la clave Admin.\n\nDesea solicitar autorizacion?`
       );
       if (!allowReopen) return;
 
       const pass = String(prompt('Ingrese clave Admin para autorizar reapertura de jornada:') || '').trim();
-      if (pass !== 'Admin') {
+      if (!adminPass) {
+        alert('No hay clave Admin configurada para autorizar esta accion.');
+        return;
+      }
+
+      if (pass !== String(adminPass).trim()) {
         alert('Clave incorrecta. No se autorizo reapertura.');
         return;
       }
@@ -2218,12 +2260,18 @@ function App() {
       startTime: nowIso,
       initialCash: startCash,
       user_id: currentUser?.id || null,
-      user_name: currentUser?.name || currentUser?.email || 'Sistema'
+      user_name: currentUser?.name || currentUser?.email || 'Sistema',
+      inventoryAssignments,
+      inventoryAssignedAt: nowIso,
     };
     setShift(openShift);
     setUserCashBalance(currentUser, startCash);
     saveOpenShift(currentUser?.id, openShift);
-    addLog({ module: 'Jornada', action: 'Inicio Jornada', details: `Iniciada con base de $${startCash}` });
+    addLog({
+      module: 'Jornada',
+      action: 'Inicio Jornada',
+      details: `Iniciada con base de $${startCash}. Inventario entregado al turno: ${inventoryAssignments.length > 0 ? inventoryAssignments.map((item) => `${item.productName} x${item.quantity}`).join(', ') : 'sin inventario asignado'}.`
+    });
 
     try {
       const savedShift = await dataService.saveShift({
@@ -2235,7 +2283,10 @@ function App() {
         physicalCash: 0,
         discrepancy: 0,
         authorized: false,
-        reportText: ''
+        reportText: '',
+        inventoryAssignment: inventoryAssignments,
+        inventoryAssignedAt: nowIso,
+        inventoryStatus: 'OPEN'
       });
       const persistedRow = Array.isArray(savedShift) ? savedShift[0] : savedShift;
       if (persistedRow?.id) {
@@ -2681,6 +2732,19 @@ function App() {
     };
 
     const systemAccounts = buildShiftSystemAccounts(summary);
+    const inventorySummary = summarizeShiftInventory({
+      assignments: shift?.inventoryAssignments || [],
+      shiftSales: summary.shiftSales,
+    });
+    const returnedItemsRaw = Array.isArray(data?.inventoryClosure?.returnedItems)
+      ? data.inventoryClosure.returnedItems
+      : [];
+    const returnedItemsByProductId = returnedItemsRaw.reduce((acc, item) => {
+      const productId = String(item?.productId || '').trim();
+      if (!productId) return acc;
+      acc[productId] = Math.max(0, Number(item?.returnedQty ?? item?.quantity ?? 0));
+      return acc;
+    }, {});
 
     const positiveAccountKeys = ['efectivo', 'transferencia', 'tarjeta', 'credito', 'otros'];
     const totalDeclarado = positiveAccountKeys.reduce((sum, key) => sum + Number(enteredAccounts[key] || 0), 0);
@@ -2693,11 +2757,26 @@ function App() {
       diff: Number(enteredAccounts[key] || 0) - Number(systemAccounts[key] || 0)
     }));
     const hasAccountMismatch = accountDiffs.some((row) => Math.abs(row.diff) > 1);
+    const inventoryClosureRows = inventorySummary.rows.map((row) => {
+      const returnedQty = Object.prototype.hasOwnProperty.call(returnedItemsByProductId, row.productId)
+        ? Number(returnedItemsByProductId[row.productId] || 0)
+        : Number(row.expectedQty || 0);
+      return {
+        ...row,
+        returnedQty,
+        differenceQty: returnedQty - Number(row.expectedQty || 0)
+      };
+    });
+    const hasInventoryMismatch = inventoryClosureRows.some((row) => Math.abs(Number(row.differenceQty || 0)) > 0);
     let authorizedMismatch = false;
 
-    if (Math.abs(discrepancy) > 1 || hasAccountMismatch) {
-      const pass = String(prompt('DESCUADRE DETECTADO. Ingrese clave Admin para autorizar cierre con descuadre:') || '').trim();
-      if (pass !== 'Admin') {
+    if (Math.abs(discrepancy) > 1 || hasAccountMismatch || hasInventoryMismatch) {
+      const pass = String(prompt('DESCUADRE DETECTADO. Ingrese clave Admin para autorizar cierre con diferencias:') || '').trim();
+      if (!adminPass) {
+        alert('No hay clave Admin configurada para autorizar esta accion.');
+        return;
+      }
+      if (pass !== String(adminPass).trim()) {
         alert('Clave incorrecta o no autorizada. Debe cuadrar la caja.');
         return;
       }
@@ -2736,6 +2815,14 @@ function App() {
       `Cierre sin movimientos: ${hasAnyUserMovement ? 'NO' : 'SI'}`,
       ...(hasAnyUserMovement ? [] : [`Motivo cierre sin movimientos: ${emptyCloseReason}`]),
       ...(accountDiffs.map((row) => `Diff ${String(row.key).toUpperCase()}: ${Number(row.diff || 0).toLocaleString()}`)),
+      '------------------------------------------',
+      'CONTROL DE INVENTARIO POR TURNO',
+      ...(inventoryClosureRows.length > 0
+        ? inventoryClosureRows.flatMap((row) => ([
+            `${row.productName} | Entregado: ${Number(row.assignedQty || 0)} | Vendido: ${Number(row.soldQty || 0)} | Esperado: ${Number(row.expectedQty || 0)} | Recibido fisico: ${Number(row.returnedQty || 0)} | Diferencia: ${Number(row.differenceQty || 0)}`,
+          ]))
+        : ['Sin inventario asignado al turno.']),
+      `Nota supervisor: ${String(data?.inventoryClosure?.supervisorNote || '').trim() || 'Sin nota'}`,
       '------------------------------------------',
       'MOVIMIENTOS DE CAJA INTERNOS (INFO)',
       `Mayor -> Menor: ${summary.cashMovements.majorToMinor.toLocaleString()}`,
@@ -2795,6 +2882,13 @@ function App() {
         totalSistema,
         accountDiffs
       },
+      inventoryAssignment: shift?.inventoryAssignments || [],
+      inventoryAssignedAt: shift?.inventoryAssignedAt || shift?.startTime || null,
+      inventoryClosure: {
+        rows: inventoryClosureRows,
+        supervisorNote: String(data?.inventoryClosure?.supervisorNote || '').trim(),
+      },
+      inventoryStatus: hasInventoryMismatch ? 'PENDING_REVIEW' : 'VERIFIED',
       user: currentUser?.name || 'Sistema',
       user_name: currentUser?.name || currentUser?.email || 'Sistema',
       user_id: currentUser?.id || null,
@@ -3547,9 +3641,6 @@ function App() {
     [shift, currentUser]
   );
 
-  const activeShiftSalesTotal = shift?.startTime
-    ? getShiftFinancialSnapshot(shift.startTime, getOperationalNowIso(), activeShiftOwnerRef).salesBreakdown.gross
-    : 0;
   const activeShiftReconciliationPreview = useMemo(() => {
     if (!shift?.startTime) return null;
 
@@ -3564,6 +3655,16 @@ function App() {
 
     return { systemAccounts, netSystemTotal };
   }, [shift, activeShiftOwnerRef, salesHistory, expenses, purchases, auditLogs, getOperationalNowIso]);
+
+  const activeShiftInventorySummary = useMemo(() => {
+    if (!shift?.startTime) return { rows: [], totals: { assignedQty: 0, soldQty: 0, expectedQty: 0 } };
+
+    const summary = getShiftFinancialSnapshot(shift.startTime, getOperationalNowIso(), activeShiftOwnerRef);
+    return summarizeShiftInventory({
+      assignments: shift?.inventoryAssignments || [],
+      shiftSales: summary.shiftSales,
+    });
+  }, [shift, activeShiftOwnerRef, salesHistory, getOperationalNowIso]);
 
   const activeShiftCashBalance = useMemo(() => {
     if (!shift?.startTime) return getUserCashBalance(currentUser);
@@ -3625,6 +3726,7 @@ function App() {
   }
 
   const headerNavItems = getAllowedMenuItemsForUser(currentUser);
+  const canViewShiftSystemResults = ['Administrador', 'Supervisor'].includes(normalizeRole(currentUser?.role));
 
   return (
     <div
@@ -3648,13 +3750,18 @@ function App() {
             <h1 style={{ margin: 0, fontSize: '2rem', color: 'var(--neon-fuchsia)', textShadow: '0 0 14px rgba(255, 0, 214, 0.45)' }}>Sistema de Facturacion Pro</h1>
             <div style={{ color: 'var(--text-secondary)', margin: '0.5rem 0 0', display: 'flex', alignItems: 'center', gap: '1rem' }}>
               {currentUser?.role || 'Usuario'}: <strong>{currentUser?.name || 'Sistema'}</strong> |
-              <ShiftManager
-                shift={shift}
-                onStartShift={onStartShift}
-                onEndShift={onEndShift}
-                salesTotal={activeShiftSalesTotal}
-                reconciliationPreview={activeShiftReconciliationPreview}
-              />
+              {shift && (
+                <ShiftManager
+                  shift={shift}
+                  onStartShift={onStartShift}
+                  onEndShift={onEndShift}
+                  reconciliationPreview={activeShiftReconciliationPreview}
+                  products={products}
+                  stock={stock}
+                  activeShiftInventorySummary={activeShiftInventorySummary}
+                  hideSystemResults={!canViewShiftSystemResults}
+                />
+              )}
             </div>
           </div>
           <div style={{ display: 'flex', gap: '0.5rem' }}>
@@ -3845,8 +3952,11 @@ function App() {
           shift={shift}
           onStartShift={onStartShift}
           onEndShift={onEndShift}
-          salesTotal={activeShiftSalesTotal}
           reconciliationPreview={activeShiftReconciliationPreview}
+          products={products}
+          stock={stock}
+          activeShiftInventorySummary={activeShiftInventorySummary}
+          hideSystemResults={!canViewShiftSystemResults}
         />
       ) : (
         <>
@@ -3936,7 +4046,7 @@ function App() {
                   selectedClientPendingBalance={selectedClientPendingBalance}
                   selectedClientAvailableCredit={selectedClientAvailableCredit}
                   items={items}
-                  adminPass={users.find(u => u.username === 'Admin')?.password || 'Admin'}
+                  adminPass={adminPass}
                   extraDiscount={composerExtraDiscount}
                   setExtraDiscount={setComposerExtraDiscount}
                   promotions={companyPromotions}
@@ -4243,8 +4353,6 @@ function App() {
                   pendingProductsSyncRef.current = false;
                 }
               }}
-              onCreateInventoryRequest={onCreateInventoryRequest}
-              pendingInventoryRequests={remoteAuthRequests}
               onAdjustStock={async (product, target, delta, reason) => {
                 const productId = product?.id;
                 if (!productId) throw new Error('Producto invalido.');
@@ -4276,6 +4384,7 @@ function App() {
               onLog={addLog}
               setActiveTab={setActiveTab}
               setPreselectedProductId={setPreselectedProductId}
+              shift={shift}
             />
           )}
           {activeTab === 'codigos' && (

@@ -140,16 +140,40 @@ export function PaymentSummary({
     activeRemoteRequestId ? remoteAuthDecisionByRequestId?.[activeRemoteRequestId] : null
   );
 
-  const buildResolvedRemoteApproval = () => {
-    if (currentRemoteDecision !== 'APPROVED') return null;
+  const normalizeComparableText = (value) => String(value || '').trim().toLowerCase();
+  const comparableTotal = Number(Number(total || 0).toFixed(2));
+  const comparablePaymentMode = normalizeComparableText(isMixed ? `Mixto (${mixedModeA} + ${mixedModeB})` : paymentMode);
+  const comparableClientName = normalizeComparableText(clientName);
+
+  const getMatchingRemoteRequests = () => (
+    Object.values(remoteAuthRequestById || {})
+      .filter((request) => String(request?.requestedBy?.id || '') === String(currentUser?.id || ''))
+      .filter((request) => String(request?.module || '') === 'Facturacion')
+      .filter((request) => String(request?.reasonType || '') === String(reasonType || ''))
+      .filter((request) => Number(Number(request?.total || 0).toFixed(2)) === comparableTotal)
+      .filter((request) => normalizeComparableText(request?.paymentMode) === comparablePaymentMode)
+      .filter((request) => normalizeComparableText(request?.clientName) === comparableClientName)
+      .sort((a, b) => new Date(b?.createdAt || 0).getTime() - new Date(a?.createdAt || 0).getTime())
+  );
+
+  const buildApprovalFromRequest = (request) => {
+    if (!request || request.status !== 'APPROVED') return null;
     return {
-      requestId: activeRemoteRequestId || currentRemoteRequest?.id || '',
-      approvedAt: currentRemoteRequest?.resolvedAt || new Date().toISOString(),
-      approvedBy: currentRemoteRequest?.resolvedBy || null,
+      requestId: request.id || '',
+      approvedAt: request.resolvedAt || new Date().toISOString(),
+      approvedBy: request.resolvedBy || null,
       reasonType,
       reasonLabel,
-      note: String(authNote || '').trim(),
+      note: String(request?.note || authNote || '').trim(),
     };
+  };
+
+  const buildResolvedRemoteApproval = () => {
+    if (currentRemoteDecision !== 'APPROVED') return null;
+    return buildApprovalFromRequest({
+      ...currentRemoteRequest,
+      id: activeRemoteRequestId || currentRemoteRequest?.id || '',
+    });
   };
 
   useEffect(() => {
@@ -202,6 +226,30 @@ export function PaymentSummary({
       : isTransferWithoutRef
         ? 'Transferencia sin referencia'
         : 'Autorizacion manual';
+
+  useEffect(() => {
+    if (!shouldUseRemoteAuth || !needsApproval) return;
+    const matchingRequests = getMatchingRemoteRequests();
+    const latestApprovedRequest = matchingRequests.find((request) => request?.status === 'APPROVED');
+    if (!latestApprovedRequest) return;
+    setResolvedRemoteApproval((prev) => prev || buildApprovalFromRequest(latestApprovedRequest));
+    if (activeRemoteRequestId && currentRemoteDecision !== 'APPROVED') {
+      setActiveRemoteRequestId('');
+    }
+  }, [
+    shouldUseRemoteAuth,
+    needsApproval,
+    remoteAuthRequestById,
+    activeRemoteRequestId,
+    currentRemoteDecision,
+    reasonType,
+    reasonLabel,
+    comparableTotal,
+    comparablePaymentMode,
+    comparableClientName,
+    currentUser?.id,
+    authNote
+  ]);
 
   const buildAuthorizationMeta = () => {
     if (!needsApproval) return null;
@@ -285,6 +333,16 @@ export function PaymentSummary({
           action();
           return;
         }
+        const matchingRequests = getMatchingRemoteRequests();
+        const latestApprovedRequest = matchingRequests.find((request) => request?.status === 'APPROVED');
+        if (latestApprovedRequest) {
+          setResolvedRemoteApproval(buildApprovalFromRequest(latestApprovedRequest));
+          setActiveRemoteRequestId('');
+          setAuthNote(String(latestApprovedRequest?.note || authNote || '').trim());
+          playSound('success');
+          action();
+          return;
+        }
         if (activeRemoteRequestId) {
           if (currentRemoteDecision === 'APPROVED') {
             setResolvedRemoteApproval(buildResolvedRemoteApproval());
@@ -302,6 +360,15 @@ export function PaymentSummary({
           }
           playSound('notify');
           alert('La solicitud sigue pendiente de respuesta de Administracion.');
+          return;
+        }
+
+        const existingPendingRequest = matchingRequests.find((request) => request?.status === 'PENDING');
+        if (existingPendingRequest?.id) {
+          setActiveRemoteRequestId(existingPendingRequest.id);
+          setAuthNote(String(existingPendingRequest?.note || authNote || '').trim());
+          playSound('notify');
+          alert('Esta factura ya tiene una solicitud pendiente de respuesta de Administracion.');
           return;
         }
 
