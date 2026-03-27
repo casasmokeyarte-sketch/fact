@@ -142,3 +142,14 @@ export function printShiftClosure(shift, mode = '58mm') {
     mode
   });
 }
+
+export function printShiftOpening(shift, mode = '58mm') {
+  const shiftDate = shift?.startTime ? new Date(shift.startTime).toLocaleString() : new Date().toLocaleString();
+  const safeText = `<pre>${escapeHtml(shift?.openingReportText || 'Sin detalle de apertura.')}</pre>`;
+  printReportHtml({
+    title: `Apertura de Jornada #${String(shift?.id || 'N/A')}`,
+    subtitle: `Fecha de apertura: ${shiftDate}`,
+    contentHtml: safeText,
+    mode
+  });
+}

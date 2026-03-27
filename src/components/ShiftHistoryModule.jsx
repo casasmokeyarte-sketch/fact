@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { printShiftClosure } from '../lib/printReports';
+import { printShiftClosure, printShiftOpening } from '../lib/printReports';
 import { PaginationControls } from './PaginationControls';
 import { usePagination } from '../lib/usePagination';
 import { useTableSort } from '../lib/useTableSort';
@@ -23,6 +23,11 @@ export function ShiftHistoryModule({ shiftHistory, onLog }) {
     const handlePrint = (shift, mode = '58mm') => {
         printShiftClosure(shift, mode);
         onLog?.({ module: 'Cierres', action: 'Reimprimir Cierre', details: `Cierre #${shift.id} reimpreso (${mode.toUpperCase()}).` });
+    };
+
+    const handlePrintOpening = (shift, mode = '58mm') => {
+        printShiftOpening(shift, mode);
+        onLog?.({ module: 'Jornada', action: 'Reimprimir Apertura', details: `Apertura #${shift.id} reimpresa (${mode.toUpperCase()}).` });
     };
 
     return (
@@ -62,6 +67,7 @@ export function ShiftHistoryModule({ shiftHistory, onLog }) {
                                     </td>
                                     <td style={{ padding: '0.5rem', textAlign: 'center' }}>
                                         <button className="btn" onClick={() => setSelectedShift(shift)}>{'\uD83D\uDC41\uFE0F'} Ver</button>
+                                        <button className="btn" style={{ marginLeft: '5px' }} onClick={() => handlePrintOpening(shift, '58mm')}>{'\uD83D\uDDA8\uFE0F'} AP</button>
                                         <button className="btn" style={{ marginLeft: '5px' }} onClick={() => handlePrint(shift, '58mm')}>{'\uD83D\uDDA8\uFE0F'} 58mm</button>
                                         <button className="btn" style={{ marginLeft: '5px' }} onClick={() => handlePrint(shift, 'a4')}>{'\uD83D\uDDA8\uFE0F'} A4</button>
                                     </td>
@@ -85,7 +91,21 @@ export function ShiftHistoryModule({ shiftHistory, onLog }) {
                     backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
                 }}>
                     <div className="card" style={{ width: '350px', maxHeight: '80vh', overflowY: 'auto' }}>
-                        <h3>Detalle de Cierre</h3>
+                        <h3>Detalle de Jornada</h3>
+                        {!!selectedShift?.openingReportText && (
+                            <pre style={{
+                                backgroundColor: 'var(--surface-muted)',
+                                color: 'var(--text-primary)',
+                                padding: '1rem',
+                                borderRadius: '8px',
+                                whiteSpace: 'pre-wrap',
+                                fontFamily: 'monospace',
+                                fontSize: '0.9rem',
+                                marginBottom: '0.75rem'
+                            }}>
+                                {selectedShift.openingReportText}
+                            </pre>
+                        )}
                         <pre style={{
                             backgroundColor: 'var(--surface-muted)',
                             color: 'var(--text-primary)',
@@ -98,6 +118,7 @@ export function ShiftHistoryModule({ shiftHistory, onLog }) {
                             {selectedShift.reportText}
                         </pre>
                         <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
+                            <button className="btn" style={{ flex: 1 }} onClick={() => handlePrintOpening(selectedShift, '58mm')}>{'\uD83D\uDDA8\uFE0F'} AP</button>
                             <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => handlePrint(selectedShift, '58mm')}>{'\uD83D\uDDA8\uFE0F'} 58mm</button>
                             <button className="btn" style={{ flex: 1 }} onClick={() => handlePrint(selectedShift, 'a4')}>{'\uD83D\uDDA8\uFE0F'} A4</button>
                             <button className="btn" style={{ flex: 1 }} onClick={() => setSelectedShift(null)}>Cerrar</button>

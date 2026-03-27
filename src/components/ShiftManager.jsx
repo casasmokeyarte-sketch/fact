@@ -194,6 +194,9 @@ export function ShiftManager({
               <p style={{ marginTop: 0, color: 'var(--text-secondary)' }}>
                 Registre la base de caja y el inventario que se entrega al turno. Ese inventario sera el que el supervisor debera validar al cierre.
               </p>
+              <p style={{ marginTop: '-0.2rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+                No es obligatorio diligenciar todos los productos. Si no registra ninguno, la apertura pedira autorizacion del administrador.
+              </p>
 
               <div className="input-group" style={{ maxWidth: '320px' }}>
                 <label className="input-label">Base de Caja Inicial ($)</label>

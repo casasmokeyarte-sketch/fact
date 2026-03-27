@@ -27,7 +27,7 @@ import { ReportsModule } from './components/ReportsModule'
 import { ShiftHistoryModule } from './components/ShiftHistoryModule'
 import { SystemHelpBubble } from './components/SystemHelpBubble'
 import { OperationsBoardBubble } from './components/OperationsBoardBubble'
-import { printShiftClosure } from './lib/printReports'
+import { printShiftClosure, printShiftOpening } from './lib/printReports'
 
 import { dataService } from './lib/dataService'
 import { getProfile } from './lib/databaseService'
@@ -2229,6 +2229,18 @@ function App() {
       return;
     }
 
+    if (inventoryAssignments.length === 0) {
+      const pass = String(prompt('No registro inventario para la apertura. Ingrese clave Admin para autorizar apertura sin inventario declarado:') || '').trim();
+      if (!adminPass) {
+        alert('No hay clave Admin configurada para autorizar esta accion.');
+        return;
+      }
+      if (pass !== String(adminPass).trim()) {
+        alert('Clave incorrecta. No se autorizo la apertura sin inventario declarado.');
+        return;
+      }
+    }
+
     if (userKey && lastClosedDateKey && lastClosedDateKey === nowRealDateKey) {
       const isAdminUser = normalizeRole(currentUser?.role) === 'Administrador';
       const allowReopen = confirm(
@@ -2256,6 +2268,25 @@ function App() {
       });
     }
 
+    const openingReportLines = [
+      '--- REPORTE DE APERTURA DE JORNADA (AP) ---',
+      `Fecha apertura: ${new Date(nowIso).toLocaleString()}`,
+      `Asesor/Cajero: ${currentUser?.name || 'Sistema'}`,
+      `Base inicial: ${Number(startCash || 0).toLocaleString()}`,
+      '------------------------------------------',
+      'INVENTARIO ENTREGADO AL TURNO',
+      ...(inventoryAssignments.length > 0
+        ? inventoryAssignments.map((item) => `${item.productName} x${Number(item.quantity || 0)} | Disponible sistema: ${Number(item.availableInSystem || 0)}`)
+        : ['Sin inventario declarado. Apertura autorizada por administrador.']),
+      '------------------------------------------',
+      'FIRMAS',
+      'Firma Asesor/Cajero: ____________________________',
+      'Firma Supervisor/Admin: _________________________',
+      'Sello Empresa: __________________________________',
+      '------------------------------------------'
+    ];
+    const openingReportText = openingReportLines.join('\n');
+
     const openShift = {
       startTime: nowIso,
       initialCash: startCash,
@@ -2263,6 +2294,7 @@ function App() {
       user_name: currentUser?.name || currentUser?.email || 'Sistema',
       inventoryAssignments,
       inventoryAssignedAt: nowIso,
+      openingReportText,
     };
     setShift(openShift);
     setUserCashBalance(currentUser, startCash);
@@ -2284,6 +2316,7 @@ function App() {
         discrepancy: 0,
         authorized: false,
         reportText: '',
+        openingReportText,
         inventoryAssignment: inventoryAssignments,
         inventoryAssignedAt: nowIso,
         inventoryStatus: 'OPEN'
@@ -2293,9 +2326,25 @@ function App() {
         const persistedShift = { ...openShift, db_id: persistedRow.id };
         setShift(persistedShift);
         saveOpenShift(currentUser?.id, persistedShift);
+        try {
+          printShiftOpening(persistedShift, '58mm');
+        } catch (e) {
+          console.error('No se pudo abrir impresion automatica de la apertura:', e);
+        }
+        return;
+      }
+      try {
+        printShiftOpening(openShift, '58mm');
+      } catch (e) {
+        console.error('No se pudo abrir impresion automatica de la apertura:', e);
       }
     } catch (err) {
       console.error('Error persistiendo jornada abierta en nube:', err);
+      try {
+        printShiftOpening(openShift, '58mm');
+      } catch (e) {
+        console.error('No se pudo abrir impresion automatica de la apertura:', e);
+      }
     }
   };
 

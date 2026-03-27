@@ -2,6 +2,9 @@
 -- Ejecutar en Supabase SQL Editor
 
 alter table public.shift_history
+  add column if not exists opening_report_text text;
+
+alter table public.shift_history
   add column if not exists inventory_assignment jsonb not null default '[]'::jsonb;
 
 alter table public.shift_history

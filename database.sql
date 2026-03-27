@@ -164,6 +164,7 @@ CREATE TABLE shift_history (
     physical_cash DECIMAL(15,2),
     discrepancy DECIMAL(15,2),
     authorized BOOLEAN,
+    opening_report_text TEXT,
     inventory_assignment JSONB DEFAULT '[]'::jsonb,
     inventory_assigned_at TIMESTAMP WITH TIME ZONE,
     inventory_closure JSONB DEFAULT '{}'::jsonb,
