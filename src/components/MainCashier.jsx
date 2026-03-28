@@ -15,6 +15,9 @@ export function MainCashier({
     getCashUserKey,
     getUserCashBalance,
     adjustUserCashBalance,
+    inventoryTransferRequests,
+    onCreateInventoryTransfer,
+    onResolveInventoryTransfer,
     salesHistory,
     expenses,
     shopStock,
@@ -116,32 +119,42 @@ export function MainCashier({
     }, [users, currentUser, currentUserKey, getCashUserKey]);
 
     const selectedAsesor = asesorOptions.find((u) => u.cashKey === adminTransfer.userKey);
+    const selectedTransferReceiver = asesorOptions.find((u) => u.cashKey === transfer.target);
+    const pendingInventoryTransfers = useMemo(() => (
+        (inventoryTransferRequests || []).filter((request) => request?.status === 'PENDING')
+    ), [inventoryTransferRequests]);
+    const myPendingInventoryTransfers = useMemo(() => (
+        pendingInventoryTransfers.filter((request) => String(request?.targetUserKey || '') === String(currentUserKey || ''))
+    ), [pendingInventoryTransfers, currentUserKey]);
 
-    const handleInventoryTransfer = () => {
-        if (!transfer.productId || transfer.quantity <= 0 || !transfer.target) return alert('Complete los datos');
+    const handleInventoryTransfer = async () => {
+        try {
+            if (!transfer.productId || Number(transfer.quantity) <= 0 || !transfer.target) {
+                return alert('Complete los datos');
+            }
 
-        const available = warehouseStock[transfer.productId] || 0;
-        if (available < transfer.quantity) return alert('Stock insuficiente en Bodega (Caja Mayor)');
+            await onCreateInventoryTransfer?.({
+                productId: transfer.productId,
+                quantity: Number(transfer.quantity),
+                targetUserId: selectedTransferReceiver?.id || null,
+                targetUserKey: transfer.target,
+                targetUserName: selectedTransferReceiver?.name || selectedTransferReceiver?.username || selectedTransferReceiver?.email || transfer.target
+            });
 
-        setWarehouseStock((prev) => ({
-            ...prev,
-            [transfer.productId]: prev[transfer.productId] - transfer.quantity
-        }));
+            alert(`Traslado enviado a ${selectedTransferReceiver?.name || 'usuario'}. Debe recibirlo y confirmarlo.`);
+            setTransfer({ productId: '', quantity: 0, target: '' });
+        } catch (error) {
+            alert(error?.message || 'No se pudo registrar el traslado.');
+        }
+    };
 
-        setShopStock((prev) => ({
-            ...prev,
-            [transfer.productId]: (prev[transfer.productId] || 0) + transfer.quantity
-        }));
-
-        const product = (products || []).find((p) => String(p.id) === String(transfer.productId));
-        onLog?.({
-            module: 'Caja Principal',
-            action: 'Transferencia Inventario',
-            details: `Transferidas ${transfer.quantity} unidades de ${product?.name || `ID ${transfer.productId}`} desde Bodega hacia ${transfer.target}`
-        });
-
-        alert('Transferencia exitosa (Stock sumado a Ventas)');
-        setTransfer({ productId: '', quantity: 0, target: '' });
+    const handleResolveInventoryTransfer = async (requestId, decision) => {
+        try {
+            await onResolveInventoryTransfer?.(requestId, decision);
+            alert(decision === 'CONFIRMED' ? 'Traslado confirmado.' : 'Traslado rechazado y devuelto a bodega.');
+        } catch (error) {
+            alert(error?.message || 'No se pudo resolver el traslado.');
+        }
     };
 
     const moveCash = (from, to, amount) => {
@@ -343,34 +356,88 @@ export function MainCashier({
             )}
 
             {!isCajero && subTab === 'transferencias' && (
-                <div className="card">
-                    <h3>Distribuir Inventario (Desde Bodega)</h3>
-                    <p style={{ color: 'var(--text-secondary)' }}>La mercancia entra a <strong>Bodega</strong> y se asigna al inventario de ventas desde aqui.</p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                    <div className="card">
+                        <h3>Traslado de Inventario</h3>
+                        <p style={{ color: 'var(--text-secondary)' }}>
+                            El sistema descuenta de <strong>Bodega</strong> al crear el pase y deja la recepcion pendiente
+                            hasta que el usuario destino confirme la entrada a <strong>Ventas</strong>.
+                        </p>
 
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: '1rem', alignItems: 'end', marginTop: '1rem' }}>
-                        <div className="input-group">
-                            <label className="input-label">Producto</label>
-                            <select className="input-field" value={transfer.productId} onChange={(e) => setTransfer({ ...transfer, productId: e.target.value })}>
-                                <option value="">Seleccione...</option>
-                                {products.map((p, idx) => (
-                                    <option key={`${p.id}-${idx}`} value={p.id}>{p.name} (Bodega: {warehouseStock[p.id] || 0})</option>
-                                ))}
-                            </select>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 0.8fr 1fr auto', gap: '1rem', alignItems: 'end', marginTop: '1rem' }}>
+                            <div className="input-group">
+                                <label className="input-label">Producto</label>
+                                <select className="input-field" value={transfer.productId} onChange={(e) => setTransfer({ ...transfer, productId: e.target.value })}>
+                                    <option value="">Seleccione...</option>
+                                    {products.map((p, idx) => (
+                                        <option key={`${p.id}-${idx}`} value={p.id}>{p.name} (Bodega: {warehouseStock[p.id] || 0})</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div className="input-group">
+                                <label className="input-label">Cantidad</label>
+                                <input type="number" className="input-field" value={transfer.quantity} onChange={(e) => setTransfer({ ...transfer, quantity: Number(e.target.value) || 0 })} />
+                            </div>
+                            <div className="input-group">
+                                <label className="input-label">Usuario receptor</label>
+                                <select className="input-field" value={transfer.target} onChange={(e) => setTransfer({ ...transfer, target: e.target.value })}>
+                                    <option value="">Seleccione...</option>
+                                    {asesorOptions.map((u) => (
+                                        <option key={u.cashKey} value={u.cashKey}>
+                                            {u.name || u.username || u.email || u.cashKey}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                            <button className="btn btn-primary" onClick={handleInventoryTransfer}>Hacer Pase</button>
                         </div>
-                        <div className="input-group">
-                            <label className="input-label">Cantidad</label>
-                            <input type="number" className="input-field" value={transfer.quantity} onChange={(e) => setTransfer({ ...transfer, quantity: Number(e.target.value) })} />
-                        </div>
-                        <div className="input-group">
-                            <label className="input-label">Destino (Cajero/Punto)</label>
-                            <select className="input-field" value={transfer.target} onChange={(e) => setTransfer({ ...transfer, target: e.target.value })}>
-                                <option value="">Seleccione...</option>
-                                <option value="Cajero 1">Cajero 1 - Principal</option>
-                                <option value="Punto Norte">Punto Norte</option>
-                                <option value="Servicio Domicilios">Servicio Domicilios</option>
-                            </select>
-                        </div>
-                        <button className="btn btn-primary" onClick={handleInventoryTransfer}>Ejecutar Traspaso</button>
+                    </div>
+
+                    <div className="card">
+                        <h3 style={{ marginTop: 0 }}>Pases Pendientes</h3>
+                        {pendingInventoryTransfers.length === 0 ? (
+                            <p style={{ marginBottom: 0, color: 'var(--text-secondary)' }}>No hay pases de inventario pendientes.</p>
+                        ) : (
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Fecha</th>
+                                        <th>Producto</th>
+                                        <th>Cantidad</th>
+                                        <th>Receptor</th>
+                                        <th>Enviado por</th>
+                                        <th>Estado</th>
+                                        <th>Accion</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {pendingInventoryTransfers.map((request) => (
+                                        <tr key={request.id}>
+                                            <td>{new Date(request.createdAt).toLocaleString()}</td>
+                                            <td>{request.productName}</td>
+                                            <td>{request.quantity}</td>
+                                            <td>{request.targetUserName}</td>
+                                            <td>{request.createdBy?.name || 'Sistema'}</td>
+                                            <td>Pendiente</td>
+                                            <td>
+                                                {String(request?.targetUserKey || '') === String(currentUserKey || '') ? (
+                                                    <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                                                        <button className="btn btn-primary" onClick={() => handleResolveInventoryTransfer(request.id, 'CONFIRMED')}>
+                                                            Recibir
+                                                        </button>
+                                                        <button className="btn" style={{ backgroundColor: '#e2e8f0' }} onClick={() => handleResolveInventoryTransfer(request.id, 'REJECTED')}>
+                                                            Rechazar
+                                                        </button>
+                                                    </div>
+                                                ) : (
+                                                    <span style={{ color: 'var(--text-secondary)' }}>Esperando receptor</span>
+                                                )}
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        )}
                     </div>
                 </div>
             )}
@@ -420,6 +487,39 @@ export function MainCashier({
                                 Devolver a Boveda
                             </button>
                         </div>
+                    </div>
+
+                    <div className="card card--muted" style={{ marginTop: '2rem' }}>
+                        <h4>Pases de Inventario por Confirmar</h4>
+                        {myPendingInventoryTransfers.length === 0 ? (
+                            <p style={{ marginBottom: 0, color: 'var(--text-secondary)' }}>No tiene inventario pendiente por recibir.</p>
+                        ) : (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                                {myPendingInventoryTransfers.map((request) => (
+                                    <div key={request.id} className="card" style={{ margin: 0, border: '1px solid var(--border-soft)' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                                            <div>
+                                                <div style={{ fontWeight: 700 }}>{request.productName}</div>
+                                                <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+                                                    Cantidad: {request.quantity} | Enviado por: {request.createdBy?.name || 'Sistema'}
+                                                </div>
+                                                <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+                                                    Fecha: {new Date(request.createdAt).toLocaleString()}
+                                                </div>
+                                            </div>
+                                            <div style={{ display: 'flex', gap: '0.5rem' }}>
+                                                <button className="btn btn-primary" onClick={() => handleResolveInventoryTransfer(request.id, 'CONFIRMED')}>
+                                                    Recibir
+                                                </button>
+                                                <button className="btn" style={{ backgroundColor: '#e2e8f0' }} onClick={() => handleResolveInventoryTransfer(request.id, 'REJECTED')}>
+                                                    Rechazar
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                     </div>
                 </div>
             )}

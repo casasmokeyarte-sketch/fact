@@ -163,6 +163,62 @@ function normalizeShiftInventoryRows(value) {
     .filter(Boolean);
 }
 
+function normalizeInventoryTransferRequestRow(row) {
+  if (!row || typeof row !== 'object') return null;
+  return {
+    id: row.id,
+    companyId: row.company_id ?? null,
+    productId: row.product_id ?? '',
+    productName: row.product_name ?? 'Producto',
+    quantity: Number(row.quantity ?? 0),
+    targetUserId: row.target_user_id ?? null,
+    targetUserKey: row.target_user_key ?? '',
+    targetUserName: row.target_user_name ?? '',
+    status: row.status ?? 'PENDING',
+    source: row.source_location ?? 'bodega',
+    destination: row.destination_location ?? 'ventas',
+    createdAt: row.created_at ?? null,
+    createdBy: {
+      id: row.created_by ?? null,
+      name: row.created_by_name ?? null,
+    },
+    resolvedAt: row.resolved_at ?? null,
+    resolvedBy: {
+      id: row.resolved_by ?? null,
+      name: row.resolved_by_name ?? null,
+    },
+  };
+}
+
+function normalizeCommercialNoteRow(row) {
+  if (!row || typeof row !== 'object') return null;
+  return {
+    id: row.id,
+    companyId: row.company_id ?? null,
+    createdBy: {
+      id: row.user_id ?? null,
+      name: row.user_name ?? null,
+    },
+    date: row.date ?? null,
+    noteClass: row.note_class ?? 'AJUSTE',
+    scope: row.scope ?? 'CLIENTE',
+    reasonCode: row.reason_code ?? '',
+    reasonLabel: row.reason_label ?? '',
+    direction: row.direction ?? 'NEUTRO',
+    amount: Number(row.amount ?? 0),
+    quantity: Number(row.quantity ?? 0),
+    clientId: row.client_id ?? null,
+    clientName: row.client_name ?? '',
+    clientDocument: row.client_document ?? '',
+    invoiceId: row.invoice_id ?? null,
+    invoiceCode: row.invoice_code ?? '',
+    productId: row.product_id ?? null,
+    productName: row.product_name ?? '',
+    description: row.description ?? '',
+    status: row.status ?? 'ACTIVA',
+  };
+}
+
 function normalizeCreditLevel(value) {
   return String(value ?? '').trim().toUpperCase();
 }
@@ -1009,6 +1065,144 @@ export const dataService = {
         return null;
       }
       reportClientSyncIssue('user_cash_balances', payload, error);
+      throw error;
+    }
+  },
+
+  async getInventoryTransferRequests(companyId = null) {
+    try {
+      let query = supabase
+        .from('inventory_transfer_requests')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(200);
+
+      if (isUuid(companyId)) {
+        query = query.eq('company_id', companyId);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+
+      return (data || [])
+        .map(normalizeInventoryTransferRequestRow)
+        .filter(Boolean);
+    } catch (error) {
+      if (isMissingRelationError(error)) {
+        console.warn('Tabla inventory_transfer_requests no existe aun en Supabase. Se usa respaldo local.');
+        return null;
+      }
+      throw error;
+    }
+  },
+
+  async saveInventoryTransferRequest(request) {
+    const authUserId = await getAuthUserId();
+    const payload = {
+      id: request?.id,
+      company_id: isUuid(request?.companyId) ? request.companyId : null,
+      product_id: isUuid(request?.productId) ? request.productId : null,
+      product_name: request?.productName ?? 'Producto',
+      quantity: Number(request?.quantity ?? 0),
+      target_user_id: isUuid(request?.targetUserId) ? request.targetUserId : null,
+      target_user_key: String(request?.targetUserKey || '').trim(),
+      target_user_name: request?.targetUserName ?? null,
+      status: request?.status ?? 'PENDING',
+      source_location: request?.source ?? 'bodega',
+      destination_location: request?.destination ?? 'ventas',
+      created_at: request?.createdAt ?? new Date().toISOString(),
+      created_by: isUuid(request?.createdBy?.id) ? request.createdBy.id : authUserId,
+      created_by_name: request?.createdBy?.name ?? null,
+      resolved_at: request?.resolvedAt ?? null,
+      resolved_by: isUuid(request?.resolvedBy?.id) ? request.resolvedBy.id : null,
+      resolved_by_name: request?.resolvedBy?.name ?? null,
+      updated_at: new Date().toISOString(),
+    };
+
+    try {
+      const { data, error } = await supabase
+        .from('inventory_transfer_requests')
+        .upsert(payload, { onConflict: 'id' })
+        .select();
+
+      if (error) throw error;
+      return (data || []).map(normalizeInventoryTransferRequestRow).filter(Boolean);
+    } catch (error) {
+      if (isMissingRelationError(error)) {
+        console.warn('No se pudo sincronizar inventory_transfer_requests porque la tabla no existe aun.');
+        return null;
+      }
+      reportClientSyncIssue('inventory_transfer_requests', payload, error);
+      throw error;
+    }
+  },
+
+  async getCommercialNotes(companyId = null) {
+    try {
+      let query = supabase
+        .from('commercial_notes')
+        .select('*')
+        .order('date', { ascending: false })
+        .limit(300);
+
+      if (isUuid(companyId)) {
+        query = query.eq('company_id', companyId);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+
+      return (data || []).map(normalizeCommercialNoteRow).filter(Boolean);
+    } catch (error) {
+      if (isMissingRelationError(error)) {
+        console.warn('Tabla commercial_notes no existe aun en Supabase. Se usa respaldo local.');
+        return null;
+      }
+      throw error;
+    }
+  },
+
+  async saveCommercialNote(note) {
+    const authUserId = await getAuthUserId();
+    const payload = {
+      id: note?.id,
+      company_id: isUuid(note?.companyId) ? note.companyId : null,
+      user_id: isUuid(note?.createdBy?.id) ? note.createdBy.id : authUserId,
+      user_name: note?.createdBy?.name ?? null,
+      date: note?.date ?? new Date().toISOString(),
+      note_class: note?.noteClass ?? 'AJUSTE',
+      scope: note?.scope ?? 'CLIENTE',
+      reason_code: note?.reasonCode ?? '',
+      reason_label: note?.reasonLabel ?? '',
+      direction: note?.direction ?? 'NEUTRO',
+      amount: Number(note?.amount ?? 0),
+      quantity: Number(note?.quantity ?? 0),
+      client_id: note?.clientId ?? null,
+      client_name: note?.clientName ?? null,
+      client_document: note?.clientDocument ?? null,
+      invoice_id: note?.invoiceId ?? null,
+      invoice_code: note?.invoiceCode ?? null,
+      product_id: isUuid(note?.productId) ? note.productId : null,
+      product_name: note?.productName ?? null,
+      description: note?.description ?? null,
+      status: note?.status ?? 'ACTIVA',
+      updated_at: new Date().toISOString(),
+    };
+
+    try {
+      const { data, error } = await supabase
+        .from('commercial_notes')
+        .upsert(payload, { onConflict: 'id' })
+        .select();
+
+      if (error) throw error;
+      return (data || []).map(normalizeCommercialNoteRow).filter(Boolean);
+    } catch (error) {
+      if (isMissingRelationError(error)) {
+        console.warn('No se pudo sincronizar commercial_notes porque la tabla no existe aun.');
+        return null;
+      }
+      reportClientSyncIssue('commercial_notes', payload, error);
       throw error;
     }
   },

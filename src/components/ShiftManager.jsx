@@ -26,6 +26,12 @@ const normalizeInventoryDraftValue = (value) => {
   return String(Math.trunc(parsed));
 };
 
+const isSmokeCategory = (value) => String(value || '')
+  .trim()
+  .toLowerCase()
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '') === 'smoke';
+
 export function ShiftManager({
   shift,
   onStartShift,
@@ -51,10 +57,11 @@ export function ShiftManager({
       .map((product) => ({
         productId: String(product?.id || ''),
         name: product?.name || 'Producto',
+        category: product?.category || '',
         available: Number(stock?.ventas?.[product?.id] || 0),
         unit: product?.unit || 'un',
       }))
-      .filter((product) => product.productId && product.available > 0)
+      .filter((product) => product.productId && product.available > 0 && isSmokeCategory(product.category))
       .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')))
   ), [products, stock]);
 
@@ -213,7 +220,7 @@ export function ShiftManager({
                 <div style={{ fontWeight: 700, marginBottom: '0.5rem' }}>Inventario entregado al turno</div>
                 {availableShiftProducts.length === 0 ? (
                   <div className="badge" style={{ backgroundColor: 'var(--surface-muted)' }}>
-                    No hay inventario disponible en ventas para asignar.
+                    No hay inventario disponible en ventas para la categoria Smoke.
                   </div>
                 ) : (
                   <table>
@@ -302,24 +309,6 @@ export function ShiftManager({
               El <strong>efectivo</strong> debe ser el dinero que realmente quedo en caja al final.
               Si ya registro un <strong>gasto</strong> o una <strong>inversion</strong>, ese valor normalmente ya salio del efectivo y no debe sumarse otra vez.
             </div>
-            {!hideSystemResults && reconciliationPreview?.systemAccounts && (
-              <div style={{ marginBottom: '0.9rem', padding: '10px', borderRadius: '6px', backgroundColor: 'var(--surface-muted)', border: '1px solid var(--border-soft)' }}>
-                <div style={{ fontWeight: 700, marginBottom: '0.45rem' }}>Desglose sistema</div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '0.35rem 0.75rem', fontSize: '0.92rem' }}>
-                  {ACCOUNT_FIELDS.map((field) => (
-                    <React.Fragment key={field.key}>
-                      <span>{field.label}</span>
-                      <strong>{formatSignedMoney(field.key, reconciliationPreview.systemAccounts[field.key])}</strong>
-                    </React.Fragment>
-                  ))}
-                </div>
-                <p style={{ margin: '0.55rem 0 0', color: 'var(--text-secondary)', fontSize: '0.84rem' }}>
-                  <strong>Gastos</strong> e <strong>inversion</strong> se reportan aparte y no descuentan de nuevo el total,
-                  porque ya impactan el efectivo real del cierre.
-                </p>
-              </div>
-            )}
-
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
               {ACCOUNT_FIELDS.map((f) => (
                 <div key={f.key} className="input-group" style={{ marginBottom: 0 }}>

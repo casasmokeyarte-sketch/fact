@@ -237,6 +237,8 @@ const NOTIFICATIONS_SEEN_AT_STORAGE_KEY = 'fact_notifications_seen_at';
 const BOARD_NOTES_SEEN_AT_STORAGE_KEY = 'fact_board_notes_seen_at';
 const OPERATIONAL_DATE_SETTINGS_STORAGE_KEY = 'fact_operational_date_settings';
 const LAST_SHIFT_CLOSE_BY_USER_STORAGE_KEY = 'fact_last_shift_close_by_user';
+const INVENTORY_TRANSFER_REQUESTS_STORAGE_KEY = 'fact_inventory_transfer_requests';
+const COMMERCIAL_NOTES_STORAGE_KEY = 'fact_commercial_notes';
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_OPEN_SHIFT_HOURS = 24;
 const MAX_OPEN_SHIFT_MS = MAX_OPEN_SHIFT_HOURS * 60 * 60 * 1000;
@@ -515,6 +517,22 @@ const normalizeShiftInventoryAssignments = (items, products = [], stockVentas = 
     .filter(Boolean)
 );
 
+const normalizeCategoryKey = (value) => String(value || '')
+  .trim()
+  .toLowerCase()
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '');
+
+const isSmokeCategory = (value) => normalizeCategoryKey(value) === 'smoke';
+
+const filterSmokeShiftInventoryAssignments = (items, products = []) => {
+  const productById = new Map((products || []).map((product) => [String(product?.id || ''), product]));
+  return (Array.isArray(items) ? items : []).filter((item) => {
+    const product = productById.get(String(item?.productId || '').trim());
+    return isSmokeCategory(product?.category);
+  });
+};
+
 const extractInvoiceItems = (invoice) => {
   if (Array.isArray(invoice?.items)) return invoice.items;
   if (Array.isArray(invoice?.mixedDetails?.items)) return invoice.mixedDetails.items;
@@ -679,6 +697,24 @@ function App() {
   const [remoteAuthRequests, setRemoteAuthRequests] = useState(() => {
     try {
       const raw = localStorage.getItem(REMOTE_AUTH_REQUESTS_STORAGE_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  });
+  const [inventoryTransferRequests, setInventoryTransferRequests] = useState(() => {
+    try {
+      const raw = localStorage.getItem(INVENTORY_TRANSFER_REQUESTS_STORAGE_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  });
+  const [commercialNotes, setCommercialNotes] = useState(() => {
+    try {
+      const raw = localStorage.getItem(COMMERCIAL_NOTES_STORAGE_KEY);
       const parsed = raw ? JSON.parse(raw) : [];
       return Array.isArray(parsed) ? parsed : [];
     } catch {
@@ -1225,10 +1261,50 @@ function App() {
     return true;
   }, [companyId, currentUser?.id, isAdminAuth]);
 
+  const loadInventoryTransferRequests = useCallback(async ({ silent = false } = {}) => {
+    if (!companyId || !currentUser?.id) return;
+
+    try {
+      const rows = await dataService.getInventoryTransferRequests(companyId);
+      if (Array.isArray(rows)) {
+        setInventoryTransferRequests(rows);
+      }
+    } catch (error) {
+      if (!silent) {
+        console.error('No se pudo cargar inventory_transfer_requests:', error);
+      }
+    }
+  }, [companyId, currentUser?.id]);
+
+  const loadCommercialNotes = useCallback(async ({ silent = false } = {}) => {
+    if (!companyId || !currentUser?.id) return;
+
+    try {
+      const rows = await dataService.getCommercialNotes(companyId);
+      if (Array.isArray(rows)) {
+        setCommercialNotes(rows);
+      }
+    } catch (error) {
+      if (!silent) {
+        console.error('No se pudo cargar commercial_notes:', error);
+      }
+    }
+  }, [companyId, currentUser?.id]);
+
   useEffect(() => {
     if (!companyId || !currentUser?.id) return;
     loadCompanySettings({ silent: true });
   }, [companyId, currentUser?.id, loadCompanySettings]);
+
+  useEffect(() => {
+    if (!companyId || !currentUser?.id) return;
+    loadInventoryTransferRequests({ silent: true });
+  }, [companyId, currentUser?.id, loadInventoryTransferRequests]);
+
+  useEffect(() => {
+    if (!companyId || !currentUser?.id) return;
+    loadCommercialNotes({ silent: true });
+  }, [companyId, currentUser?.id, loadCommercialNotes]);
 
   useEffect(() => {
     if (!companyId || !currentUser?.id) return;
@@ -1471,6 +1547,12 @@ function App() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'external_cash_receipts' }, scheduleRealtimeRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'purchases' }, scheduleRealtimeRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'shift_history' }, scheduleRealtimeRefresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'inventory_transfer_requests' }, () => {
+        loadInventoryTransferRequests({ silent: true });
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'commercial_notes' }, () => {
+        loadCommercialNotes({ silent: true });
+      })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'user_cash_balances' }, scheduleRealtimeRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'audit_logs' }, scheduleRealtimeRefresh)
       .subscribe();
@@ -1484,7 +1566,7 @@ function App() {
       realtimeRefreshInFlightRef.current = false;
       supabase.removeChannel(channel);
     };
-  }, [isLoggedIn, currentUser?.id, refreshCloudData]);
+  }, [isLoggedIn, currentUser?.id, refreshCloudData, loadInventoryTransferRequests, loadCommercialNotes]);
 
   useEffect(() => {
     if (!currentUser?.id) return;
@@ -1582,6 +1664,14 @@ function App() {
   useEffect(() => {
     localStorage.setItem(REMOTE_AUTH_REQUESTS_STORAGE_KEY, JSON.stringify(remoteAuthRequests.slice(0, 120)));
   }, [remoteAuthRequests]);
+
+  useEffect(() => {
+    localStorage.setItem(INVENTORY_TRANSFER_REQUESTS_STORAGE_KEY, JSON.stringify(inventoryTransferRequests.slice(0, 200)));
+  }, [inventoryTransferRequests]);
+
+  useEffect(() => {
+    localStorage.setItem(COMMERCIAL_NOTES_STORAGE_KEY, JSON.stringify(commercialNotes.slice(0, 300)));
+  }, [commercialNotes]);
 
   useEffect(() => {
     localStorage.setItem(INVOICE_DRAFTS_STORAGE_KEY, JSON.stringify((invoiceDrafts || []).slice(0, 120)));
@@ -1738,6 +1828,212 @@ function App() {
       const next = Math.max(0, current + (Number(delta) || 0));
       return { ...prev, [key]: next };
     });
+  };
+
+  const createInventoryTransferRequest = async ({ productId, quantity, targetUserId, targetUserKey, targetUserName }) => {
+    const normalizedProductId = String(productId || '').trim();
+    const normalizedTargetUserKey = String(targetUserKey || '').trim();
+    const safeQuantity = Math.max(0, Math.trunc(Number(quantity) || 0));
+    if (!normalizedProductId || safeQuantity <= 0 || !normalizedTargetUserKey) {
+      throw new Error('Complete producto, cantidad y usuario receptor.');
+    }
+
+    const product = products.find((item) => String(item?.id || '') === normalizedProductId);
+    if (!product) {
+      throw new Error('No se encontro el producto seleccionado.');
+    }
+
+    const availableInWarehouse = Number(stock?.bodega?.[normalizedProductId] || 0);
+    if (availableInWarehouse < safeQuantity) {
+      throw new Error(`Stock insuficiente en bodega. Disponible: ${availableInWarehouse}.`);
+    }
+
+    const nowIso = new Date().toISOString();
+    const request = {
+      id: `inv-transfer-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      companyId: companyId || null,
+      productId: normalizedProductId,
+      productName: product?.name || 'Producto',
+      quantity: safeQuantity,
+      targetUserId: targetUserId || null,
+      targetUserKey: normalizedTargetUserKey,
+      targetUserName: targetUserName || normalizedTargetUserKey,
+      status: 'PENDING',
+      source: 'bodega',
+      destination: 'ventas',
+      createdAt: nowIso,
+      createdBy: {
+        id: currentUser?.id || null,
+        name: currentUser?.name || currentUser?.email || 'Sistema'
+      }
+    };
+
+    const nextWarehouseStock = availableInWarehouse - safeQuantity;
+
+    try {
+      setStock((prev) => ({
+        ...prev,
+        bodega: {
+          ...prev.bodega,
+          [normalizedProductId]: nextWarehouseStock
+        }
+      }));
+      await updateStockInDB('bodega', normalizedProductId, nextWarehouseStock);
+
+      setInventoryTransferRequests((prev) => [request, ...prev].slice(0, 200));
+      const savedRows = await dataService.saveInventoryTransferRequest(request);
+      if (Array.isArray(savedRows) && savedRows.length > 0) {
+        setInventoryTransferRequests((prev) => {
+          const others = prev.filter((item) => item.id !== request.id);
+          return [savedRows[0], ...others].slice(0, 200);
+        });
+      }
+
+      await addLog({
+        module: 'Inventario',
+        action: 'Solicitud traslado inventario',
+        details: `${request.createdBy.name} envio ${safeQuantity} unidad(es) de ${request.productName} desde bodega para ${request.targetUserName}. Pendiente confirmacion del receptor.`
+      });
+      return request;
+    } catch (error) {
+      setStock((prev) => ({
+        ...prev,
+        bodega: {
+          ...prev.bodega,
+          [normalizedProductId]: availableInWarehouse
+        }
+      }));
+      await updateStockInDB('bodega', normalizedProductId, availableInWarehouse);
+      setInventoryTransferRequests((prev) => prev.filter((item) => item.id !== request.id));
+      throw error;
+    }
+  };
+
+  const resolveInventoryTransferRequest = async (requestId, decision) => {
+    const normalizedDecision = String(decision || '').trim().toUpperCase();
+    const targetRequest = (inventoryTransferRequests || []).find((request) => request?.id === requestId);
+    if (!targetRequest || targetRequest.status !== 'PENDING') {
+      throw new Error('La solicitud ya no esta disponible.');
+    }
+
+    const currentUserKey = String(getCashUserKey(currentUser) || '').trim();
+    const requestTargetKey = String(targetRequest.targetUserKey || '').trim();
+    const requestTargetId = String(targetRequest.targetUserId || '').trim();
+    const isAdminUser = normalizeRole(currentUser?.role) === 'Administrador';
+    if (!isAdminUser && currentUserKey !== requestTargetKey && String(currentUser?.id || '').trim() !== requestTargetId) {
+      throw new Error('Solo el usuario receptor puede confirmar este traslado.');
+    }
+
+    const updatedRequest = {
+      ...targetRequest,
+      status: normalizedDecision,
+      resolvedAt: new Date().toISOString(),
+      resolvedBy: {
+        id: currentUser?.id || null,
+        name: currentUser?.name || currentUser?.email || 'Sistema'
+      }
+    };
+
+    if (normalizedDecision !== 'CONFIRMED' && normalizedDecision !== 'REJECTED') {
+      throw new Error('Decision invalida para el traslado.');
+    }
+
+    const currentSalesStock = Number(stock?.ventas?.[targetRequest.productId] || 0);
+    const currentWarehouseStock = Number(stock?.bodega?.[targetRequest.productId] || 0);
+    const nextSalesStock = currentSalesStock + Number(targetRequest.quantity || 0);
+    const nextWarehouseStock = currentWarehouseStock + Number(targetRequest.quantity || 0);
+    const resolvedByName = updatedRequest.resolvedBy.name;
+
+    try {
+      if (normalizedDecision === 'CONFIRMED') {
+        setStock((prev) => ({
+          ...prev,
+          ventas: {
+            ...prev.ventas,
+            [targetRequest.productId]: nextSalesStock
+          }
+        }));
+        await updateStockInDB('ventas', targetRequest.productId, nextSalesStock);
+      } else {
+        setStock((prev) => ({
+          ...prev,
+          bodega: {
+            ...prev.bodega,
+            [targetRequest.productId]: nextWarehouseStock
+          }
+        }));
+        await updateStockInDB('bodega', targetRequest.productId, nextWarehouseStock);
+      }
+
+      setInventoryTransferRequests((prev) => prev.map((request) => (
+        request?.id === requestId ? updatedRequest : request
+      )));
+      const savedRows = await dataService.saveInventoryTransferRequest(updatedRequest);
+      if (Array.isArray(savedRows) && savedRows.length > 0) {
+        setInventoryTransferRequests((prev) => prev.map((request) => (
+          request?.id === requestId ? savedRows[0] : request
+        )));
+      }
+
+      await addLog({
+        module: 'Inventario',
+        action: normalizedDecision === 'CONFIRMED' ? 'Traslado inventario confirmado' : 'Traslado inventario rechazado',
+        details: normalizedDecision === 'CONFIRMED'
+          ? `${resolvedByName} confirmo ${Number(targetRequest.quantity || 0)} unidad(es) de ${targetRequest.productName}. El inventario quedo recibido en ventas para ${targetRequest.targetUserName}.`
+          : `${resolvedByName} rechazo ${Number(targetRequest.quantity || 0)} unidad(es) de ${targetRequest.productName}. El stock regreso a bodega.`
+      });
+    } catch (error) {
+      if (normalizedDecision === 'CONFIRMED') {
+        setStock((prev) => ({
+          ...prev,
+          ventas: {
+            ...prev.ventas,
+            [targetRequest.productId]: currentSalesStock
+          }
+        }));
+        await updateStockInDB('ventas', targetRequest.productId, currentSalesStock);
+      } else {
+        setStock((prev) => ({
+          ...prev,
+          bodega: {
+            ...prev.bodega,
+            [targetRequest.productId]: currentWarehouseStock
+          }
+        }));
+        await updateStockInDB('bodega', targetRequest.productId, currentWarehouseStock);
+      }
+      setInventoryTransferRequests((prev) => prev.map((request) => (
+        request?.id === requestId ? targetRequest : request
+      )));
+      throw error;
+    }
+  };
+
+  const saveCommercialNote = async (note) => {
+    const record = {
+      ...note,
+      companyId: companyId || null,
+      createdBy: {
+        id: currentUser?.id || null,
+        name: currentUser?.name || currentUser?.email || 'Sistema'
+      }
+    };
+
+    setCommercialNotes((prev) => [record, ...prev].slice(0, 300));
+    try {
+      const savedRows = await dataService.saveCommercialNote(record);
+      if (Array.isArray(savedRows) && savedRows.length > 0) {
+        setCommercialNotes((prev) => {
+          const others = prev.filter((item) => item.id !== record.id);
+          return [savedRows[0], ...others].slice(0, 300);
+        });
+        return savedRows[0];
+      }
+      return record;
+    } catch (error) {
+      setCommercialNotes((prev) => prev.filter((item) => item.id !== record.id));
+      throw error;
+    }
   };
 
   const getOperationalNow = useCallback(() => {
@@ -2284,10 +2580,13 @@ function App() {
     const closeMap = readLastShiftCloseByUser();
     const userKey = String(currentUser?.id || '');
     const lastClosedDateKey = String(closeMap[userKey] || '');
-    const inventoryAssignments = normalizeShiftInventoryAssignments(
-      options?.inventoryAssignments,
-      products,
-      stock?.ventas || {}
+    const inventoryAssignments = filterSmokeShiftInventoryAssignments(
+      normalizeShiftInventoryAssignments(
+        options?.inventoryAssignments,
+        products,
+        stock?.ventas || {}
+      ),
+      products
     );
 
     const invalidAssignment = inventoryAssignments.find((item) => Number(item.quantity || 0) > Number(stock?.ventas?.[item.productId] || 0));
@@ -2332,8 +2631,8 @@ function App() {
       '------------------------------------------',
       'INVENTARIO ENTREGADO AL TURNO',
       ...(inventoryAssignments.length > 0
-        ? inventoryAssignments.map((item) => `${item.productName} x${Number(item.quantity || 0)} | Disponible sistema: ${Number(item.availableInSystem || 0)}`)
-        : ['Sin inventario declarado. Apertura autorizada por administrador.']),
+        ? inventoryAssignments.map((item) => `${item.productName} x${Number(item.quantity || 0)}`)
+        : ['Sin inventario smoke declarado. Apertura autorizada por administrador.']),
       '------------------------------------------',
       'FIRMAS',
       'Firma Asesor/Cajero: ____________________________',
@@ -2948,50 +3247,14 @@ function App() {
       `Cierre con autorizacion admin: ${authorizedMismatch ? 'SI' : 'NO'}`,
       `Cierre sin movimientos: ${hasAnyUserMovement ? 'NO' : 'SI'}`,
       ...(hasAnyUserMovement ? [] : [`Motivo cierre sin movimientos: ${emptyCloseReason}`]),
-      ...(accountDiffs.map((row) => `Diff ${String(row.key).toUpperCase()}: ${Number(row.diff || 0).toLocaleString()}`)),
       '------------------------------------------',
       'CONTROL DE INVENTARIO POR TURNO',
       ...(inventoryClosureRows.length > 0
-        ? inventoryClosureRows.flatMap((row) => ([
-            `${row.productName} | Entregado: ${Number(row.assignedQty || 0)} | Vendido: ${Number(row.soldQty || 0)} | Esperado: ${Number(row.expectedQty || 0)} | Recibido fisico: ${Number(row.returnedQty || 0)} | Diferencia: ${Number(row.differenceQty || 0)}`,
-          ]))
-        : ['Sin inventario asignado al turno.']),
-      `Nota supervisor: ${String(data?.inventoryClosure?.supervisorNote || '').trim() || 'Sin nota'}`,
-      '------------------------------------------',
-      'MOVIMIENTOS DE CAJA INTERNOS (INFO)',
-      `Mayor -> Menor: ${summary.cashMovements.majorToMinor.toLocaleString()}`,
-      `Menor -> Mayor: ${summary.cashMovements.minorToMajor.toLocaleString()}`,
-      `Recibido de Boveda (Cajero): ${summary.cashMovements.receivedFromVault.toLocaleString()}`,
-      `Devuelto a Boveda (Cajero): ${summary.cashMovements.returnedToVault.toLocaleString()}`,
-      ...(summary.shiftCashLogs.length > 0
-        ? summary.shiftCashLogs.map((log) => `${new Date(log.timestamp).toLocaleString()} | ${log.action} | ${log.details || ''}`)
-        : ['Sin movimientos internos de caja en la jornada.']),
-      '------------------------------------------',
-      'DETALLE DE VENTAS',
-      ...(summary.shiftSales.length > 0
-        ? summary.shiftSales.map((sale) => `#${sale.id} | ${new Date(sale.date).toLocaleString()} | ${sale.clientName} | ${sale.paymentMode} | ${Number(sale.total || 0).toLocaleString()}`)
-        : ['Sin ventas en la jornada.']),
-      '------------------------------------------',
-      'DETALLE RECIBOS DE CAJA EXTERNOS',
-      ...(summary.shiftExternalCashReceipts.length > 0
-        ? summary.shiftExternalCashReceipts.map((receipt) => (
-            `${receipt.receiptCode} | ${new Date(receipt.date).toLocaleString()} | ${receipt.thirdPartyName || 'Tercero'} | ${receipt.paymentMethod} | +${Number(receipt.amount || 0).toLocaleString()} | ${receipt.concept || 'Sin concepto'}`
+        ? inventoryClosureRows.map((row) => (
+            `${row.productName} | Entregado: ${Number(row.assignedQty || 0)} | Vendido: ${Number(row.soldQty || 0)} | Recibido: ${Number(row.returnedQty || 0)} | Diferencia: ${Number(row.differenceQty || 0)}`
           ))
-        : ['Sin recibos externos en la jornada.']),
-      '------------------------------------------',
-      'DETALLE DE GASTOS',
-      ...(summary.shiftExpenses.length > 0
-        ? summary.shiftExpenses.map((gasto) => `${new Date(gasto.date).toLocaleString()} | ${gasto.type || 'Gasto'} | ${gasto.description || 'Sin descripcion'} | -${Number(gasto.amount || 0).toLocaleString()}`)
-        : ['Sin gastos en la jornada.']),
-      '------------------------------------------',
-      'DETALLE DE COMPRAS / INVERSION',
-      ...(summary.shiftPurchases.length > 0
-        ? summary.shiftPurchases.map((compra) => {
-            const qty = Number(compra.quantity) || 0;
-            const unitCost = Number(compra.unitCost) || 0;
-            return `${new Date(compra.date).toLocaleString()} | Fact. ${compra.invoiceNumber || 'N/A'} | ${compra.productName || 'Producto'} x${qty} | -${(qty * unitCost).toLocaleString()}`;
-          })
-        : ['Sin compras/inversion en la jornada.']),
+        : ['Sin inventario smoke asignado al turno.']),
+      `Nota supervisor: ${String(data?.inventoryClosure?.supervisorNote || '').trim() || 'Sin nota'}`,
       '------------------------------------------',
       'FIRMAS',
       'Firma Asesor/Cajero: ____________________________',
@@ -4438,6 +4701,9 @@ function App() {
               getUserCashBalance={getUserCashBalance}
               setUserCashBalance={setUserCashBalance}
               adjustUserCashBalance={adjustUserCashBalance}
+              inventoryTransferRequests={inventoryTransferRequests}
+              onCreateInventoryTransfer={createInventoryTransferRequest}
+              onResolveInventoryTransfer={resolveInventoryTransferRequest}
               salesHistory={salesHistory}
               expenses={expenses}
               // Added missing shop stock sync
@@ -4695,19 +4961,29 @@ function App() {
           )}
           {activeTab === 'notas' && (
             <NotasModule
+              currentUser={currentUser}
               clients={registeredClients}
               sales={salesHistory}
+              products={products}
+              notes={commercialNotes}
               onLog={addLog}
+              onSaveNote={saveCommercialNote}
               onCreateNote={async (note) => {
                 await syncFactMovement('note.created', {
                   noteId: note.id,
                   date: note.date,
-                  noteType: note.type,
+                  noteType: note.noteClass,
+                  noteScope: note.scope,
                   invoiceId: note.invoiceId || null,
+                  productId: note.productId || null,
+                  productName: note.productName || null,
                   customerName: note.clientName,
                   customerDoc: note.clientDocument || null,
                   total: note.amount,
-                  reason: note.reason,
+                  quantity: note.quantity || 0,
+                  direction: note.direction,
+                  reason: note.reasonLabel || note.description,
+                  description: note.description,
                   userName: currentUser?.name || currentUser?.email || 'Sistema',
                 });
               }}
