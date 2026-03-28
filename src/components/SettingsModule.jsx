@@ -117,16 +117,17 @@ export function SettingsModule({
         Administrador: {
             facturacion: true, cartera: true, compras: true, clientes: true, caja: true,
             inventario: true, codigos: true, reportes: true, bitacora: true, config: true,
-            trueque: true, gastos: true, notas: true, historial: true
+            trueque: true, gastos: true, recibosCajaExternos: true, notas: true, historial: true
         },
         Supervisor: {
             facturacion: true, cartera: true, compras: true, clientes: true, caja: true,
             inventario: true, codigos: true, reportes: true, bitacora: true, config: false,
-            trueque: true, gastos: true, notas: true, historial: true
+            trueque: true, gastos: true, recibosCajaExternos: true, notas: true, historial: true
         },
         Cajero: {
             facturacion: true, cartera: false, compras: false, clientes: false, caja: false,
             inventario: false, codigos: false, reportes: false, bitacora: false, config: false,
+            recibosCajaExternos: false,
             trueque: false, gastos: false, notas: false, historial: false
         }
     };

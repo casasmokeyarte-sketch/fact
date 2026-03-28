@@ -21,6 +21,7 @@ import { InventoryModule } from './components/InventoryModule'
 import { ShiftManager } from './components/ShiftManager'
 import { TruequeModule } from './components/TruequeModule'
 import { GastosModule } from './components/GastosModule'
+import { ExternalCashReceiptModule } from './components/ExternalCashReceiptModule'
 import { NotasModule } from './components/NotasModule'
 import { HistorialModule } from './components/HistorialModule'
 import { ReportsModule } from './components/ReportsModule'
@@ -36,6 +37,13 @@ import { playSound, setSoundEnabled as setAppSoundEnabled, setSoundVolume as set
 import { supabase } from './lib/supabaseClient'
 import { useProfile } from './lib/useSupabase'
 import { syncFactMovement } from './lib/crmSyncService'
+import {
+  buildExternalCashReceiptDetails,
+  getExternalCashReceiptBreakdown,
+  collectExternalCashReceipts,
+  mergeExternalCashReceipts,
+  normalizeExternalCashReceiptRecord,
+} from './lib/externalCashReceipts'
 import modulesBg from './assets/modules-bg.png'
 
 const DEFAULT_PERMISSIONS = {
@@ -51,6 +59,7 @@ const DEFAULT_PERMISSIONS = {
   config: true,
   trueque: true,
   gastos: true,
+  recibosCajaExternos: true,
   notas: true,
   historial: true,
   cierres: true
@@ -156,6 +165,7 @@ const normalizePermissionsForRole = (role, permissions) => {
       compras: true,
       historial: true,
       gastos: true,
+      recibosCajaExternos: true,
       notas: true,
       config: false
     };
@@ -176,6 +186,7 @@ const MENU_ITEMS = [
   { id: 'codigos', label: 'Codigos', icon: '\uD83C\uDFF7\uFE0F', tab: 'codigos' },
   { id: 'trueque', label: 'Trueque', icon: '\uD83D\uDD04', tab: 'trueque' },
   { id: 'gastos', label: 'Gastos', icon: '\uD83D\uDCB8', tab: 'gastos' },
+  { id: 'recibosCajaExternos', label: 'Recibo Caja externos', icon: '\uD83E\uDDFE', tab: 'recibosCajaExternos' },
   { id: 'notas', label: 'Notas', icon: '\uD83D\uDCD2', tab: 'notas' },
   { id: 'historial', label: 'Historial', icon: '\u23F3', tab: 'historial' },
   { id: 'cierres', label: 'Cierres', icon: '\uD83D\uDD12', tab: 'cierres' },
@@ -191,7 +202,7 @@ const getAllowedMenuItemsForUser = (user) => {
 
   if (isCashierRole) {
     return MENU_ITEMS.filter((item) => (
-      ['facturacion', 'inventario', 'codigos', 'clientes', 'cartera', 'historial', 'caja', 'trueque', 'gastos', 'notas']
+      ['facturacion', 'inventario', 'codigos', 'clientes', 'cartera', 'historial', 'caja', 'trueque', 'gastos', 'recibosCajaExternos', 'notas']
         .includes(item.tab)
     ));
   }
@@ -577,6 +588,7 @@ function App() {
   const [preselectedProductId, setPreselectedProductId] = useState('');
   const [categories, setCategories] = useState(['General', 'Alimentos', 'Limpieza', 'Otros']);
   const [expenses, setExpenses] = useState([]);
+  const [externalCashReceipts, setExternalCashReceipts] = useState([]);
   const [purchases, setPurchases] = useState([]);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [soundVolume, setSoundVolume] = useState(0.08);
@@ -648,6 +660,7 @@ function App() {
         config: true,
         trueque: true,
         gastos: true,
+        recibosCajaExternos: true,
         notas: true,
         historial: true,
         cierres: true
@@ -1309,11 +1322,12 @@ function App() {
   const refreshCloudData = useCallback(async ({ showLoader = false, silent = false } = {}) => {
     try {
       if (showLoader) setLoading(true);
-      const [dbProducts, dbClients, dbSales, dbExpenses, dbPurchases, dbLogs, dbShiftHistory, dbUserCashBalances] = await Promise.all([
+      const [dbProducts, dbClients, dbSales, dbExpenses, dbExternalCashReceipts, dbPurchases, dbLogs, dbShiftHistory, dbUserCashBalances] = await Promise.all([
         dataService.getProducts(),
         dataService.getClients(),
         dataService.getInvoices(),
         dataService.getExpenses(),
+        dataService.getExternalCashReceipts(),
         dataService.getPurchases(),
         dataService.getAuditLogs(),
         dataService.getShiftHistory(),
@@ -1360,6 +1374,13 @@ function App() {
         user_name: expense?.user_name || expense?.user || userNameById[String(expense?.user_id || '')] || null,
       }));
 
+      const enrichedExternalCashReceipts = (dbExternalCashReceipts || [])
+        .map((receipt) => normalizeExternalCashReceiptRecord({
+          ...receipt,
+          user_name: receipt?.user_name || receipt?.user || userNameById[String(receipt?.user_id || '')] || null,
+        }))
+        .filter(Boolean);
+
       const enrichedPurchases = (dbPurchases || []).map((purchase) => ({
         ...purchase,
         user_name: purchase?.user_name || purchase?.user || userNameById[String(purchase?.user_id || '')] || null,
@@ -1383,6 +1404,7 @@ function App() {
       }
       setSalesHistory(enrichedSales);
       setExpenses(enrichedExpenses);
+      setExternalCashReceipts(enrichedExternalCashReceipts);
       setPurchases(enrichedPurchases);
       setAuditLogs(dbLogs || []);
       setShiftHistory(enrichedShiftHistory);
@@ -1446,6 +1468,7 @@ function App() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'invoices' }, scheduleRealtimeRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'invoice_items' }, scheduleRealtimeRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'expenses' }, scheduleRealtimeRefresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'external_cash_receipts' }, scheduleRealtimeRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'purchases' }, scheduleRealtimeRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'shift_history' }, scheduleRealtimeRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'user_cash_balances' }, scheduleRealtimeRefresh)
@@ -2135,6 +2158,10 @@ function App() {
   }, {});
 
   const boardNotes = useMemo(() => buildBoardNotesFromLogs(auditLogs || []), [auditLogs]);
+  const allExternalCashReceipts = useMemo(
+    () => mergeExternalCashReceipts(externalCashReceipts, collectExternalCashReceipts(auditLogs)),
+    [externalCashReceipts, auditLogs]
+  );
   const latestBoardNoteAt = Number(new Date(boardNotes?.[0]?.createdAt || 0).getTime() || 0);
   const hasBoardAttention = latestBoardNoteAt > Number(boardNotesSeenAt || 0);
 
@@ -2597,6 +2624,10 @@ function App() {
       isRecordOwnedByUser(log, userRef) &&
       ['Movimiento Efectivo', 'Recibir Dinero', 'Devolver Dinero'].includes(log.action)
     );
+    const shiftExternalCashReceipts = allExternalCashReceipts.filter((receipt) =>
+      isDateInRange(receipt.date, startIso, endIso) &&
+      isRecordOwnedByUser(receipt, userRef)
+    );
     const shiftCarteraAbonos = (salesHistory || [])
       .flatMap((sale) => {
         const abonos = Array.isArray(sale?.abonos)
@@ -2650,14 +2681,26 @@ function App() {
       return acc;
     }, { total: 0, cash: 0, transfer: 0, card: 0, credit: 0, other: 0 });
 
+    const externalCashReceiptsBreakdown = shiftExternalCashReceipts.reduce((acc, receipt) => {
+      const breakdown = getExternalCashReceiptBreakdown(receipt);
+      acc.total += Number(breakdown.total || 0);
+      acc.cash += Number(breakdown.cash || 0);
+      acc.transfer += Number(breakdown.transfer || 0);
+      acc.card += Number(breakdown.card || 0);
+      acc.other += Number(breakdown.other || 0);
+      return acc;
+    }, { total: 0, cash: 0, transfer: 0, card: 0, other: 0 });
+
     return {
       shiftSales,
       shiftExpenses,
       shiftPurchases,
       shiftCashLogs,
+      shiftExternalCashReceipts,
       shiftCarteraAbonos,
       salesBreakdown,
       abonosBreakdown,
+      externalCashReceiptsBreakdown,
       expensesTotal,
       purchasesTotal,
       cashMovements
@@ -2672,6 +2715,7 @@ function App() {
         expenses: [],
         purchases: [],
         cashLogs: [],
+        externalCashReceipts: [],
         carteraAbonos: [],
       };
     }
@@ -2697,6 +2741,10 @@ function App() {
       isRecordOwnedByUser(log, userRef) &&
       ['Movimiento Efectivo', 'Recibir Dinero', 'Devolver Dinero'].includes(log.action)
     );
+    const externalCashReceipts = allExternalCashReceipts.filter((receipt) =>
+      hasSameOperationalDay(receipt?.date) &&
+      isRecordOwnedByUser(receipt, userRef)
+    );
     const carteraAbonos = (salesHistory || [])
       .flatMap((sale) => {
         const abonos = Array.isArray(sale?.abonos)
@@ -2714,7 +2762,7 @@ function App() {
         isRecordOwnedByUser(abono, userRef)
       );
 
-    return { sales, expenses: expensesForDay, purchases: purchasesForDay, cashLogs, carteraAbonos };
+    return { sales, expenses: expensesForDay, purchases: purchasesForDay, cashLogs, externalCashReceipts, carteraAbonos };
   };
 
   const buildShiftSystemAccounts = (summary) => ({
@@ -2722,16 +2770,26 @@ function App() {
       Number(shift?.initialCash || 0) +
       Number(summary?.salesBreakdown?.cash || 0) +
       Number(summary?.abonosBreakdown?.cash || 0) +
+      Number(summary?.externalCashReceiptsBreakdown?.cash || 0) +
       Number(summary?.cashMovements?.receivedFromVault || 0) +
       Number(summary?.cashMovements?.majorToMinor || 0) -
       Number(summary?.cashMovements?.returnedToVault || 0) -
       Number(summary?.cashMovements?.minorToMajor || 0) -
       Number(summary?.expensesTotal || 0) -
       Number(summary?.purchasesTotal || 0),
-    transferencia: Number(summary?.salesBreakdown?.transfer || 0) + Number(summary?.abonosBreakdown?.transfer || 0),
-    tarjeta: Number(summary?.salesBreakdown?.card || 0) + Number(summary?.abonosBreakdown?.card || 0),
+    transferencia:
+      Number(summary?.salesBreakdown?.transfer || 0) +
+      Number(summary?.abonosBreakdown?.transfer || 0) +
+      Number(summary?.externalCashReceiptsBreakdown?.transfer || 0),
+    tarjeta:
+      Number(summary?.salesBreakdown?.card || 0) +
+      Number(summary?.abonosBreakdown?.card || 0) +
+      Number(summary?.externalCashReceiptsBreakdown?.card || 0),
     credito: Number(summary?.salesBreakdown?.credit || 0) + Number(summary?.abonosBreakdown?.credit || 0),
-    otros: Number(summary?.salesBreakdown?.other || 0) + Number(summary?.abonosBreakdown?.other || 0),
+    otros:
+      Number(summary?.salesBreakdown?.other || 0) +
+      Number(summary?.abonosBreakdown?.other || 0) +
+      Number(summary?.externalCashReceiptsBreakdown?.other || 0),
     gastos: Number(summary?.expensesTotal || 0),
     inversion: Number(summary?.purchasesTotal || 0),
   });
@@ -2760,11 +2818,13 @@ function App() {
       summary.shiftExpenses.length > 0 ||
       summary.shiftPurchases.length > 0 ||
       summary.shiftCashLogs.length > 0 ||
+      summary.shiftExternalCashReceipts.length > 0 ||
       summary.shiftCarteraAbonos.length > 0 ||
       sameDayFallback.sales.length > 0 ||
       sameDayFallback.expenses.length > 0 ||
       sameDayFallback.purchases.length > 0 ||
       sameDayFallback.cashLogs.length > 0 ||
+      sameDayFallback.externalCashReceipts.length > 0 ||
       sameDayFallback.carteraAbonos.length > 0;
     const isAdminUser = normalizeRole(currentUser?.role) === 'Administrador';
     let emptyCloseReason = '';
@@ -2874,6 +2934,7 @@ function App() {
       'RESUMEN MONETARIO',
       `Ventas Brutas: ${salesTotal.toLocaleString()} (${summary.shiftSales.length} facturas)`,
       `Abonos Cartera: ${Number(summary.abonosBreakdown.total || 0).toLocaleString()} (${summary.shiftCarteraAbonos.length} abono(s))`,
+      `Recibos Caja Externos: ${Number(summary.externalCashReceiptsBreakdown.total || 0).toLocaleString()} (${summary.shiftExternalCashReceipts.length} recibo(s))`,
       `Cuenta EFECTIVO: Sistema ${Number(systemAccounts.efectivo || 0).toLocaleString()} | Declarado ${Number(enteredAccounts.efectivo || 0).toLocaleString()}`,
       `Cuenta TRANSFERENCIA: Sistema ${Number(systemAccounts.transferencia || 0).toLocaleString()} | Declarado ${Number(enteredAccounts.transferencia || 0).toLocaleString()}`,
       `Cuenta TARJETA: Sistema ${Number(systemAccounts.tarjeta || 0).toLocaleString()} | Declarado ${Number(enteredAccounts.tarjeta || 0).toLocaleString()}`,
@@ -2910,6 +2971,13 @@ function App() {
       ...(summary.shiftSales.length > 0
         ? summary.shiftSales.map((sale) => `#${sale.id} | ${new Date(sale.date).toLocaleString()} | ${sale.clientName} | ${sale.paymentMode} | ${Number(sale.total || 0).toLocaleString()}`)
         : ['Sin ventas en la jornada.']),
+      '------------------------------------------',
+      'DETALLE RECIBOS DE CAJA EXTERNOS',
+      ...(summary.shiftExternalCashReceipts.length > 0
+        ? summary.shiftExternalCashReceipts.map((receipt) => (
+            `${receipt.receiptCode} | ${new Date(receipt.date).toLocaleString()} | ${receipt.thirdPartyName || 'Tercero'} | ${receipt.paymentMethod} | +${Number(receipt.amount || 0).toLocaleString()} | ${receipt.concept || 'Sin concepto'}`
+          ))
+        : ['Sin recibos externos en la jornada.']),
       '------------------------------------------',
       'DETALLE DE GASTOS',
       ...(summary.shiftExpenses.length > 0
@@ -3727,7 +3795,7 @@ function App() {
       Number(systemAccounts.otros || 0);
 
     return { systemAccounts, netSystemTotal };
-  }, [shift, activeShiftOwnerRef, salesHistory, expenses, purchases, auditLogs, getOperationalNowIso]);
+  }, [shift, activeShiftOwnerRef, salesHistory, expenses, purchases, auditLogs, allExternalCashReceipts, getOperationalNowIso]);
 
   const activeShiftInventorySummary = useMemo(() => {
     if (!shift?.startTime) return { rows: [], totals: { assignedQty: 0, soldQty: 0, expectedQty: 0 } };
@@ -3747,13 +3815,14 @@ function App() {
     return initialCash
       + Number(summary.salesBreakdown.cash || 0)
       + Number(summary.abonosBreakdown.cash || 0)
+      + Number(summary.externalCashReceiptsBreakdown.cash || 0)
       + Number(summary.cashMovements.receivedFromVault || 0)
       + Number(summary.cashMovements.majorToMinor || 0)
       - Number(summary.cashMovements.returnedToVault || 0)
       - Number(summary.cashMovements.minorToMajor || 0)
       - Number(summary.expensesTotal || 0)
       - Number(summary.purchasesTotal || 0);
-  }, [shift, currentUser, activeShiftOwnerRef, salesHistory, expenses, purchases, auditLogs, getOperationalNowIso, userCashBalances]);
+  }, [shift, currentUser, activeShiftOwnerRef, salesHistory, expenses, purchases, auditLogs, allExternalCashReceipts, getOperationalNowIso, userCashBalances]);
 
   const selectedClientPendingBalance = selectedClient
     ? (cartera || [])
@@ -4571,6 +4640,57 @@ function App() {
               }}
               onLog={addLog}
               setActiveTab={setActiveTab}
+            />
+          )}
+          {activeTab === 'recibosCajaExternos' && (
+            <ExternalCashReceiptModule
+              receipts={allExternalCashReceipts}
+              currentUser={currentUser}
+              setActiveTab={setActiveTab}
+              onCreateReceipt={async (receipt) => {
+                const amount = Number(receipt?.amount || 0);
+                const paymentMethod = String(receipt?.paymentMethod || '');
+
+                if (paymentMethod === 'Efectivo') {
+                  adjustUserCashBalance(currentUser, amount);
+                }
+
+                try {
+                  let storedInTable = false;
+                  try {
+                    await dataService.saveExternalCashReceipt(receipt);
+                    setExternalCashReceipts((prev) => mergeExternalCashReceipts([receipt], prev));
+                    storedInTable = true;
+                  } catch (saveError) {
+                    console.warn('No se pudo guardar en external_cash_receipts; se usa respaldo en audit_logs.', saveError);
+                  }
+
+                  if (!storedInTable) {
+                    await addLog({
+                      module: 'Recibo de Caja externos',
+                      action: 'Crear Recibo de Caja Externo',
+                      details: buildExternalCashReceiptDetails(receipt),
+                    });
+                  }
+                  await syncFactMovement('external_cash_receipt.created', {
+                    receiptCode: receipt.receiptCode,
+                    date: receipt.date,
+                    customerName: receipt.thirdPartyName,
+                    customerDoc: receipt.thirdPartyDocument || null,
+                    total: amount,
+                    paymentMode: paymentMethod,
+                    notes: receipt.concept,
+                    reference: receipt.paymentReference || '',
+                    userName: currentUser?.name || currentUser?.email || 'Sistema',
+                  });
+                } catch (err) {
+                  if (paymentMethod === 'Efectivo') {
+                    adjustUserCashBalance(currentUser, -amount);
+                  }
+                  console.error('Error creando recibo de caja externo:', err);
+                  throw err;
+                }
+              }}
             />
           )}
           {activeTab === 'notas' && (

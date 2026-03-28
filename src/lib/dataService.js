@@ -64,6 +64,10 @@ function isMissingRelationError(error) {
   return code === '42P01' || blob.includes('relation') || blob.includes('does not exist');
 }
 
+function isMissingTableOrColumnError(error) {
+  return isMissingRelationError(error) || isUndefinedColumnError(error);
+}
+
 function reportClientSyncIssue(scope, payload, error) {
   const details = {
     scope,
@@ -670,6 +674,49 @@ export const dataService = {
     if (error && isUndefinedColumnError(error)) {
       const { user_name, ...fallbackPayload } = insertPayload;
       const retry = await supabase.from('expenses').insert(fallbackPayload).select();
+      data = retry.data;
+      error = retry.error;
+    }
+    if (error) throw error;
+    return data;
+  },
+
+  async getExternalCashReceipts() {
+    const { data, error } = await supabase
+      .from('external_cash_receipts')
+      .select('*')
+      .order('date', { ascending: false });
+
+    if (error) {
+      if (isMissingTableOrColumnError(error)) return [];
+      throw error;
+    }
+
+    return data || [];
+  },
+
+  async saveExternalCashReceipt(receipt) {
+    const userId = receipt?.user_id || await getAuthUserId();
+    const payload = {
+      id: receipt?.id,
+      user_id: receipt?.user_id || userId,
+      user_name: receipt?.user_name ?? receipt?.user ?? null,
+      date: receipt?.date || new Date().toISOString(),
+      receipt_code: receipt?.receipt_code ?? receipt?.receiptCode ?? null,
+      third_party_name: receipt?.third_party_name ?? receipt?.thirdPartyName ?? null,
+      third_party_document: receipt?.third_party_document ?? receipt?.thirdPartyDocument ?? null,
+      amount: Number(receipt?.amount ?? 0),
+      payment_method: receipt?.payment_method ?? receipt?.paymentMethod ?? null,
+      payment_reference: receipt?.payment_reference ?? receipt?.paymentReference ?? null,
+      concept: receipt?.concept ?? null,
+      notes: receipt?.notes ?? null,
+    };
+
+    const insertPayload = removeInvalidUuidId(payload);
+    let { data, error } = await supabase.from('external_cash_receipts').insert(insertPayload).select();
+    if (error && isUndefinedColumnError(error)) {
+      const { user_name, ...fallbackPayload } = insertPayload;
+      const retry = await supabase.from('external_cash_receipts').insert(fallbackPayload).select();
       data = retry.data;
       error = retry.error;
     }

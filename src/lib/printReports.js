@@ -153,3 +153,37 @@ export function printShiftOpening(shift, mode = '58mm') {
     mode
   });
 }
+
+export function printExternalCashReceipt(receipt, mode = 'a4') {
+  const receiptDate = receipt?.date ? new Date(receipt.date).toLocaleString() : new Date().toLocaleString();
+  const contentHtml = `
+    <div style="display:grid;grid-template-columns:1.1fr 0.9fr;gap:16px;margin-bottom:18px;">
+      <div style="border:1px solid #cbd5e1;padding:14px;">
+        <div><strong>Recibido de:</strong> ${escapeHtml(receipt?.thirdPartyName || 'N/A')}</div>
+        <div style="margin-top:8px;"><strong>Documento:</strong> ${escapeHtml(receipt?.thirdPartyDocument || 'No informado')}</div>
+        <div style="margin-top:8px;"><strong>Concepto:</strong> ${escapeHtml(receipt?.concept || 'Sin concepto')}</div>
+      </div>
+      <div style="border:1px solid #cbd5e1;padding:14px;">
+        <div><strong>Consecutivo:</strong> ${escapeHtml(receipt?.receiptCode || 'N/A')}</div>
+        <div style="margin-top:8px;"><strong>Valor:</strong> $${Number(receipt?.amount || 0).toLocaleString('es-CO')}</div>
+        <div style="margin-top:8px;"><strong>Forma de pago:</strong> ${escapeHtml(receipt?.paymentMethod || 'N/A')}</div>
+        <div style="margin-top:8px;"><strong>Referencia:</strong> ${escapeHtml(receipt?.paymentReference || 'No aplica')}</div>
+      </div>
+    </div>
+    <div style="border:1px solid #cbd5e1;padding:14px;min-height:110px;">
+      <strong>Observaciones:</strong>
+      <p style="margin:10px 0 0 0;">${escapeHtml(receipt?.notes || 'Sin observaciones adicionales.')}</p>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:26px;margin-top:58px;">
+      <div style="border-top:1px solid #111827;padding-top:10px;text-align:center;"><strong>Firma quien entrega</strong></div>
+      <div style="border-top:1px solid #111827;padding-top:10px;text-align:center;"><strong>Firma tercero</strong></div>
+    </div>
+  `;
+
+  printReportHtml({
+    title: 'Recibo de Caja Externo',
+    subtitle: `${String(receipt?.receiptCode || 'N/A')} | Fecha: ${receiptDate}`,
+    contentHtml,
+    mode
+  });
+}
