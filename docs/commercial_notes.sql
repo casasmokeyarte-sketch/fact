@@ -31,6 +31,9 @@ create table if not exists public.commercial_notes (
   constraint commercial_notes_direction_chk check (direction in ('SUMA', 'RESTA', 'NEUTRO'))
 );
 
+grant usage on schema public to authenticated;
+grant select, insert, update on table public.commercial_notes to authenticated;
+
 alter table public.commercial_notes enable row level security;
 
 create index if not exists idx_commercial_notes_company_date

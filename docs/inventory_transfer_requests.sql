@@ -25,6 +25,9 @@ create table if not exists public.inventory_transfer_requests (
   constraint inventory_transfer_requests_status_chk check (status in ('PENDING', 'CONFIRMED', 'REJECTED'))
 );
 
+grant usage on schema public to authenticated;
+grant select, insert, update on table public.inventory_transfer_requests to authenticated;
+
 alter table public.inventory_transfer_requests
   add column if not exists company_id uuid not null default public.current_company_id(),
   add column if not exists product_id uuid references public.products(id) on delete set null,

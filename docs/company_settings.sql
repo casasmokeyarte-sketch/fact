@@ -33,6 +33,9 @@ create table if not exists public.company_settings (
   updated_at timestamptz not null default now()
 );
 
+grant usage on schema public to authenticated;
+grant select, insert, update on table public.company_settings to authenticated;
+
 -- Migracion segura si la tabla ya existia sin la columna promotions
 alter table public.company_settings
   add column if not exists promotions jsonb not null default '[]'::jsonb;

@@ -1120,10 +1120,27 @@ export const dataService = {
     };
 
     try {
-      const { data, error } = await supabase
-        .from('inventory_transfer_requests')
-        .upsert(payload, { onConflict: 'id' })
-        .select();
+      const hasResolution =
+        payload.status !== 'PENDING' ||
+        !!payload.resolved_at ||
+        !!payload.resolved_by;
+
+      const mutation = hasResolution
+        ? supabase
+            .from('inventory_transfer_requests')
+            .update({
+              status: payload.status,
+              resolved_at: payload.resolved_at,
+              resolved_by: payload.resolved_by,
+              resolved_by_name: payload.resolved_by_name,
+              updated_at: payload.updated_at,
+            })
+            .eq('id', payload.id)
+        : supabase
+            .from('inventory_transfer_requests')
+            .insert(payload);
+
+      const { data, error } = await mutation.select();
 
       if (error) throw error;
       return (data || []).map(normalizeInventoryTransferRequestRow).filter(Boolean);
