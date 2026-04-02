@@ -52,6 +52,22 @@ export function SettingsModule({
     const [newCategory, setNewCategory] = useState('');
     const [dayOffsetInput, setDayOffsetInput] = useState(() => Number(operationalDateSettings?.daysOffset || 0));
     const [dayOffsetReason, setDayOffsetReason] = useState('');
+    const [printerSettings, setPrinterSettings] = useState(() => {
+        try {
+            const raw = localStorage.getItem('fact_printer_settings');
+            if (raw) return JSON.parse(raw);
+        } catch {}
+        return {
+            preferredPrinter: '',
+            connectionType: 'USB / Red',
+            defaultPaper: 'A4',
+            autoPrintReports: false,
+        };
+    });
+    const [detectedPrinters, setDetectedPrinters] = useState([]);
+    const [printersLoading, setPrintersLoading] = useState(false);
+    const [printersMessage, setPrintersMessage] = useState('');
+    const [nfcMessage, setNfcMessage] = useState('Sin verificar');
     const { sortedRows: sortedUsers, sortConfig: usersSort, setSortKey: setUsersSortKey } = useTableSort(
         users,
         {
@@ -71,6 +87,39 @@ export function SettingsModule({
     React.useEffect(() => {
         setDayOffsetInput(Number(operationalDateSettings?.daysOffset || 0));
     }, [operationalDateSettings?.daysOffset]);
+
+    React.useEffect(() => {
+        try {
+            localStorage.setItem('fact_printer_settings', JSON.stringify(printerSettings));
+        } catch {}
+    }, [printerSettings]);
+
+    const detectPrinters = async () => {
+        setPrintersLoading(true);
+        setPrintersMessage('');
+        try {
+            const result = await window.systemIntegrations?.listPrinters?.();
+            if (!result?.ok) {
+                throw new Error(result?.error || 'No se pudieron consultar impresoras.');
+            }
+            setDetectedPrinters(Array.isArray(result?.printers) ? result.printers : []);
+            setPrintersMessage(`Impresoras detectadas: ${Array.isArray(result?.printers) ? result.printers.length : 0}`);
+        } catch (err) {
+            setDetectedPrinters([]);
+            setPrintersMessage(err?.message || 'Deteccion no disponible en esta ejecucion.');
+        } finally {
+            setPrintersLoading(false);
+        }
+    };
+
+    const detectNfcStatus = async () => {
+        try {
+            const result = await window.systemIntegrations?.getNfcStatus?.();
+            setNfcMessage(result?.message || (result?.available ? 'Lector NFC disponible.' : 'Lector NFC no disponible.'));
+        } catch (err) {
+            setNfcMessage(err?.message || 'No fue posible consultar el lector NFC.');
+        }
+    };
 
     const refreshUsersFromSupabase = React.useCallback(async () => {
         setUsersError('');
@@ -647,6 +696,96 @@ export function SettingsModule({
                                 />
                             </div>
                             <button className="btn" onClick={() => playSound('notify')}>Probar sonido</button>
+                        </div>
+                    </div>
+
+                    <div className="card">
+                        <h3 style={{ marginTop: 0 }}>Impresoras y NFC</h3>
+                        <div style={{ display: 'grid', gap: '1rem' }}>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '0.75rem' }}>
+                                <div className="input-group" style={{ marginBottom: 0 }}>
+                                    <label className="input-label">Impresora preferida</label>
+                                    <select
+                                        className="input-field"
+                                        value={String(printerSettings?.preferredPrinter || '')}
+                                        onChange={(e) => setPrinterSettings((prev) => ({ ...(prev || {}), preferredPrinter: e.target.value }))}
+                                    >
+                                        <option value="">Seleccionar...</option>
+                                        {detectedPrinters.map((printer) => (
+                                            <option key={printer.name} value={printer.name}>
+                                                {printer.displayName || printer.name}{printer.isDefault ? ' (Predeterminada)' : ''}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div className="input-group" style={{ marginBottom: 0 }}>
+                                    <label className="input-label">Conexion esperada</label>
+                                    <select
+                                        className="input-field"
+                                        value={String(printerSettings?.connectionType || 'USB / Red')}
+                                        onChange={(e) => setPrinterSettings((prev) => ({ ...(prev || {}), connectionType: e.target.value }))}
+                                    >
+                                        <option value="USB / Red">USB / Red</option>
+                                        <option value="WiFi / LAN">WiFi / LAN</option>
+                                        <option value="Bluetooth">Bluetooth</option>
+                                    </select>
+                                </div>
+                                <div className="input-group" style={{ marginBottom: 0 }}>
+                                    <label className="input-label">Formato por defecto</label>
+                                    <select
+                                        className="input-field"
+                                        value={String(printerSettings?.defaultPaper || 'A4')}
+                                        onChange={(e) => setPrinterSettings((prev) => ({ ...(prev || {}), defaultPaper: e.target.value }))}
+                                    >
+                                        <option value="A4">A4</option>
+                                        <option value="58mm">58mm</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                                <input
+                                    type="checkbox"
+                                    checked={printerSettings?.autoPrintReports === true}
+                                    onChange={(e) => setPrinterSettings((prev) => ({ ...(prev || {}), autoPrintReports: e.target.checked }))}
+                                />
+                                Guardar preferencia para reportes e impresiones administrativas
+                            </label>
+
+                            <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+                                <button className="btn btn-primary" onClick={detectPrinters} disabled={printersLoading}>
+                                    {printersLoading ? 'Buscando impresoras...' : 'Detectar impresoras'}
+                                </button>
+                                <button className="btn" onClick={detectNfcStatus}>Consultar NFC</button>
+                            </div>
+
+                            <div style={{ color: 'var(--text-secondary)', fontSize: '0.9em' }}>
+                                {printersMessage || 'El sistema puede listar las impresoras instaladas en Windows cuando se ejecuta en Electron.'}
+                            </div>
+
+                            {detectedPrinters.length > 0 && (
+                                <div className="card card--muted">
+                                    <strong>Impresoras disponibles</strong>
+                                    <div style={{ marginTop: '0.75rem', display: 'grid', gap: '0.5rem' }}>
+                                        {detectedPrinters.map((printer) => (
+                                            <div key={printer.name} style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap', borderBottom: '1px solid rgba(148,163,184,0.25)', paddingBottom: '0.45rem' }}>
+                                                <span>{printer.displayName || printer.name}</span>
+                                                <span style={{ color: 'var(--text-secondary)' }}>
+                                                    {printer.isDefault ? 'Predeterminada' : 'Instalada'} | {printer.description || printer.name}
+                                                </span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            <div className="card card--muted">
+                                <strong>Estado NFC</strong>
+                                <p style={{ margin: '0.6rem 0 0 0', color: 'var(--text-secondary)' }}>{nfcMessage}</p>
+                                <p style={{ margin: '0.6rem 0 0 0', color: 'var(--text-secondary)', fontSize: '0.9em' }}>
+                                    Nota: para lectura NFC real se necesita un lector compatible y un puente nativo adicional. Esta pantalla deja la base de configuracion y diagnostico.
+                                </p>
+                            </div>
                         </div>
                     </div>
 

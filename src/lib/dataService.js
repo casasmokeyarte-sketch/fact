@@ -707,29 +707,87 @@ export const dataService = {
 
     return (data || []).map((e) => ({
       ...e,
-      type: e.category ?? 'Otros',
-      beneficiary: '',
-      docId: '',
+      type: e.category ?? e.type ?? 'Otros',
+      beneficiary: e.beneficiary ?? '',
+      docId: e.doc_id ?? e.docId ?? '',
+      status: e.status ?? 'Pagado',
+      paidAmount: Number(e.paid_amount ?? e.paidAmount ?? e.amount ?? 0),
+      paymentMethod: e.payment_method ?? e.paymentMethod ?? '',
+      paymentReference: e.payment_reference ?? e.paymentReference ?? '',
+      balance: Math.max(0, Number(e.amount ?? 0) - Number(e.paid_amount ?? e.paidAmount ?? e.amount ?? 0)),
     }));
   },
 
   async saveExpense(expense) {
     const userId = expense?.user_id || await getAuthUserId();
+    const amount = Number(expense.amount ?? 0);
+    const paidAmount = Math.max(0, Number(expense.paid_amount ?? expense.paidAmount ?? amount));
     const payload = {
       id: expense.id,
       user_id: expense.user_id || userId,
       user_name: expense.user_name ?? expense.user ?? null,
       date: expense.date || new Date().toISOString(),
       category: expense.category ?? expense.type ?? 'Otros',
-      amount: Number(expense.amount ?? 0),
+      amount,
       description: expense.description ?? null,
+      beneficiary: expense.beneficiary ?? null,
+      doc_id: expense.doc_id ?? expense.docId ?? null,
+      status: expense.status ?? 'Pagado',
+      paid_amount: paidAmount,
+      payment_method: expense.payment_method ?? expense.paymentMethod ?? null,
+      payment_reference: expense.payment_reference ?? expense.paymentReference ?? null,
     };
 
     const insertPayload = removeInvalidUuidId(payload);
     let { data, error } = await supabase.from('expenses').insert(insertPayload).select();
     if (error && isUndefinedColumnError(error)) {
-      const { user_name, ...fallbackPayload } = insertPayload;
+      const {
+        user_name,
+        beneficiary,
+        doc_id,
+        status,
+        paid_amount,
+        payment_method,
+        payment_reference,
+        ...fallbackPayload
+      } = insertPayload;
       const retry = await supabase.from('expenses').insert(fallbackPayload).select();
+      data = retry.data;
+      error = retry.error;
+    }
+    if (error) throw error;
+    return data;
+  },
+
+  async updateExpense(expenseId, expense) {
+    if (!expenseId) throw new Error('expenseId requerido');
+    const amount = Number(expense.amount ?? 0);
+    const paidAmount = Math.max(0, Number(expense.paid_amount ?? expense.paidAmount ?? amount));
+    const payload = {
+      date: expense.date || new Date().toISOString(),
+      category: expense.category ?? expense.type ?? 'Otros',
+      amount,
+      description: expense.description ?? null,
+      beneficiary: expense.beneficiary ?? null,
+      doc_id: expense.doc_id ?? expense.docId ?? null,
+      status: expense.status ?? 'Pagado',
+      paid_amount: paidAmount,
+      payment_method: expense.payment_method ?? expense.paymentMethod ?? null,
+      payment_reference: expense.payment_reference ?? expense.paymentReference ?? null,
+    };
+
+    let { data, error } = await supabase.from('expenses').update(payload).eq('id', expenseId).select();
+    if (error && isUndefinedColumnError(error)) {
+      const {
+        beneficiary,
+        doc_id,
+        status,
+        paid_amount,
+        payment_method,
+        payment_reference,
+        ...fallbackPayload
+      } = payload;
+      const retry = await supabase.from('expenses').update(fallbackPayload).eq('id', expenseId).select();
       data = retry.data;
       error = retry.error;
     }

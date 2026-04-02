@@ -4,6 +4,8 @@ const fs = require('fs');
 
 let mainWindow = null;
 const ASK_CHANNEL = 'company-ai:ask';
+const PRINTERS_CHANNEL = 'system-printers:list';
+const NFC_CHANNEL = 'system-nfc:status';
 
 const SCOPE_KEYWORDS = [
   'sistema', 'modulo', 'facturacion', 'factura', 'inventario', 'stock', 'compras', 'clientes',
@@ -212,6 +214,38 @@ ipcMain.handle(ASK_CHANNEL, async (_event, payload) => {
     console.error('[main] ASK_CHANNEL error:', error);
     return { ok: false, answer: 'Error interno consultando el asistente.' };
   }
+});
+
+ipcMain.handle(PRINTERS_CHANNEL, async () => {
+  try {
+    if (!mainWindow?.webContents?.getPrintersAsync) {
+      return { ok: false, printers: [], error: 'Electron no expone getPrintersAsync en esta version.' };
+    }
+
+    const printers = await mainWindow.webContents.getPrintersAsync();
+    return {
+      ok: true,
+      printers: (printers || []).map((printer) => ({
+        name: printer.name || '',
+        displayName: printer.displayName || printer.name || '',
+        description: printer.description || '',
+        status: Number(printer.status || 0),
+        isDefault: printer.isDefault === true,
+        options: printer.options || {},
+      })),
+    };
+  } catch (error) {
+    console.error('[main] PRINTERS_CHANNEL error:', error);
+    return { ok: false, printers: [], error: error?.message || 'No se pudieron consultar impresoras.' };
+  }
+});
+
+ipcMain.handle(NFC_CHANNEL, async () => {
+  return {
+    ok: false,
+    available: false,
+    message: 'La lectura NFC requiere integracion nativa o hardware compatible. Aun no esta enlazada a este instalador.',
+  };
 });
 
 app.whenReady().then(createWindow);

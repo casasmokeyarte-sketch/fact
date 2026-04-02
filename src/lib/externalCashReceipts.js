@@ -129,7 +129,7 @@ export function getNextExternalCashReceiptCode(logs = [], prefix = 'SSOT-RC') {
   const safePrefix = String(prefix || 'SSOT-RC').trim().toUpperCase();
   const matcher = new RegExp(`^${safePrefix}-(\\d+)$`, 'i');
 
-  const maxNumber = collectExternalCashReceipts(logs).reduce((max, receipt) => {
+  const maxNumber = mergeExternalCashReceipts(logs).reduce((max, receipt) => {
     const match = String(receipt?.receiptCode || '').match(matcher);
     const current = match ? Number(match[1] || 0) : 0;
     return Math.max(max, current);

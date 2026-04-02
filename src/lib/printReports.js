@@ -187,3 +187,38 @@ export function printExternalCashReceipt(receipt, mode = 'a4') {
     mode
   });
 }
+
+export function printExpenseReceipt(expense, mode = 'a4') {
+  const expenseDate = expense?.date ? new Date(expense.date).toLocaleString() : new Date().toLocaleString();
+  const amount = Number(expense?.amount || 0);
+  const paidAmount = Math.max(0, Number(expense?.paidAmount ?? expense?.paid_amount ?? amount));
+  const balance = Math.max(0, amount - paidAmount);
+  const contentHtml = `
+    <div style="display:grid;grid-template-columns:1.1fr 0.9fr;gap:16px;margin-bottom:18px;">
+      <div style="border:1px solid #cbd5e1;padding:14px;">
+        <div><strong>Beneficiario:</strong> ${escapeHtml(expense?.beneficiary || 'No informado')}</div>
+        <div style="margin-top:8px;"><strong>Documento:</strong> ${escapeHtml(expense?.docId || expense?.doc_id || 'No informado')}</div>
+        <div style="margin-top:8px;"><strong>Tipo:</strong> ${escapeHtml(expense?.type || expense?.category || 'Gasto')}</div>
+        <div style="margin-top:8px;"><strong>Descripcion:</strong> ${escapeHtml(expense?.description || 'Sin descripcion')}</div>
+      </div>
+      <div style="border:1px solid #cbd5e1;padding:14px;">
+        <div><strong>Estado:</strong> ${escapeHtml(expense?.status || 'Pagado')}</div>
+        <div style="margin-top:8px;"><strong>Total:</strong> $${amount.toLocaleString('es-CO')}</div>
+        <div style="margin-top:8px;"><strong>Abonado:</strong> $${paidAmount.toLocaleString('es-CO')}</div>
+        <div style="margin-top:8px;"><strong>Saldo:</strong> $${balance.toLocaleString('es-CO')}</div>
+        <div style="margin-top:8px;"><strong>Pago:</strong> ${escapeHtml(expense?.paymentMethod || expense?.payment_method || 'No aplica')}</div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:26px;margin-top:58px;">
+      <div style="border-top:1px solid #111827;padding-top:10px;text-align:center;"><strong>Firma beneficiario</strong></div>
+      <div style="border-top:1px solid #111827;padding-top:10px;text-align:center;"><strong>Autorizado por</strong></div>
+    </div>
+  `;
+
+  printReportHtml({
+    title: 'Comprobante de Gasto / Cuenta por Pagar',
+    subtitle: `Fecha: ${expenseDate}`,
+    contentHtml,
+    mode
+  });
+}

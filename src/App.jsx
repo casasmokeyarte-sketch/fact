@@ -233,6 +233,7 @@ const SOUND_SETTINGS_STORAGE_KEY = 'fact_sound_settings';
 const AUTH_REQUEST_LOG_PREFIX = 'AUTH_REQUEST_EVENT::';
 const BOARD_NOTE_LOG_PREFIX = 'BOARD_NOTE_EVENT::';
 const INVOICE_DRAFTS_STORAGE_KEY = 'fact_invoice_drafts';
+const INVOICE_COMPOSER_STORAGE_KEY = 'fact_invoice_composer';
 const NOTIFICATIONS_SEEN_AT_STORAGE_KEY = 'fact_notifications_seen_at';
 const BOARD_NOTES_SEEN_AT_STORAGE_KEY = 'fact_board_notes_seen_at';
 const OPERATIONAL_DATE_SETTINGS_STORAGE_KEY = 'fact_operational_date_settings';
@@ -731,6 +732,7 @@ function App() {
     }
   });
   const [loadedDraftState, setLoadedDraftState] = useState(null);
+  const [invoiceComposerMeta, setInvoiceComposerMeta] = useState(null);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notificationsSeenAt, setNotificationsSeenAt] = useState(() => {
     const raw = Number(localStorage.getItem(NOTIFICATIONS_SEEN_AT_STORAGE_KEY) || 0);
@@ -777,6 +779,7 @@ function App() {
   const getClientsCacheStorageKey = (userId) => `${CLIENTS_CACHE_STORAGE_KEY}_${userId || 'anon'}`;
   const getSoundSettingsStorageKey = (userId) => `${SOUND_SETTINGS_STORAGE_KEY}_${userId || 'anon'}`;
   const getCompanyPromotionsStorageKey = (cid) => `fact_company_promotions_${cid || 'local'}`;
+  const getInvoiceComposerStorageKey = (userId) => `${INVOICE_COMPOSER_STORAGE_KEY}_${userId || 'anon'}`;
 
   const saveOpenShift = (userId, openShift) => {
     if (!userId || !openShift) return;
@@ -964,6 +967,64 @@ function App() {
     }
   };
 
+  const clearInvoiceComposerCache = (userId = currentUser?.id) => {
+    if (!userId) return;
+    try {
+      localStorage.removeItem(getInvoiceComposerStorageKey(userId));
+    } catch (e) {
+      console.error('Error limpiando borrador automatico de facturacion:', e);
+    }
+  };
+
+  const restoreInvoiceComposer = (userId) => {
+    if (!userId) return;
+
+    try {
+      const raw = localStorage.getItem(getInvoiceComposerStorageKey(userId));
+      if (!raw) return;
+
+      const parsed = JSON.parse(raw);
+      const savedItems = Array.isArray(parsed?.items) ? parsed.items : [];
+      const savedClientName = String(parsed?.clientName || '').trim();
+      const savedSelectedClient = parsed?.selectedClient && typeof parsed.selectedClient === 'object'
+        ? normalizeClientDraft(parsed.selectedClient)
+        : null;
+      const savedDeliveryFee = Number(parsed?.deliveryFee || 0);
+      const savedPaymentMode = String(parsed?.paymentMode || '').trim();
+      const savedPaymentRef = String(parsed?.paymentRef || '');
+      const savedSummaryState = parsed?.summaryState && typeof parsed.summaryState === 'object'
+        ? parsed.summaryState
+        : null;
+
+      const hasComposerState = (
+        savedItems.length > 0 ||
+        savedClientName ||
+        savedSelectedClient ||
+        savedDeliveryFee > 0 ||
+        savedPaymentRef ||
+        Number(savedSummaryState?.extraDiscount || 0) > 0 ||
+        !!savedSummaryState?.isMixed
+      );
+
+      if (!hasComposerState) return;
+
+      setClientName(savedClientName || CLIENT_OCASIONAL);
+      setSelectedClient(savedSelectedClient);
+      setItems(savedItems);
+      setDeliveryFee(savedDeliveryFee);
+      setPaymentMode(savedPaymentMode || PAYMENT_MODES.CONTADO);
+      setPaymentRef(savedPaymentRef);
+      setComposerExtraDiscount(Number(savedSummaryState?.extraDiscount || 0));
+      setLoadedDraftState(savedSummaryState ? {
+        ...savedSummaryState,
+        restoreKey: `autosave-${userId}-${parsed?.savedAt || Date.now()}`,
+      } : null);
+      setInvoiceComposerMeta(savedSummaryState);
+    } catch (e) {
+      console.error('Error restaurando borrador automatico de facturacion:', e);
+    }
+  };
+
   // Initialize EmailJS and Auth on app load
   useEffect(() => {
     initEmailJS();
@@ -1037,6 +1098,7 @@ function App() {
       restoreFloatingPanelPosition(user.id, 'quick');
       restoreFloatingPanelPosition(user.id, 'promo');
       restoreCloudCache(user.id);
+      restoreInvoiceComposer(user.id);
     } catch (err) {
       console.error('Error loading profile:', err);
       setIsLoggedIn(true);
@@ -1056,6 +1118,7 @@ function App() {
       restoreFloatingPanelPosition(user.id, 'quick');
       restoreFloatingPanelPosition(user.id, 'promo');
       restoreCloudCache(user.id);
+      restoreInvoiceComposer(user.id);
     } finally {
       setShiftRestored(true);
     }
@@ -1662,6 +1725,62 @@ function App() {
   }, [registeredClients, currentUser?.id]);
 
   useEffect(() => {
+    if (!currentUser?.id) return;
+
+    const safeClientName = String(clientName || '').trim();
+    const safePaymentRef = String(paymentRef || '').trim();
+    const summaryState = invoiceComposerMeta && typeof invoiceComposerMeta === 'object'
+      ? {
+          extraDiscount: Number(invoiceComposerMeta.extraDiscount || 0),
+          authNote: String(invoiceComposerMeta.authNote || ''),
+          activeRemoteRequestId: String(invoiceComposerMeta.activeRemoteRequestId || ''),
+          isMixed: !!invoiceComposerMeta.isMixed,
+          mixedData: invoiceComposerMeta.mixedData || null,
+          otherPaymentDetail: String(invoiceComposerMeta.otherPaymentDetail || ''),
+        }
+      : null;
+
+    const hasComposerState = (
+      (items || []).length > 0 ||
+      safeClientName !== CLIENT_OCASIONAL ||
+      !!selectedClient ||
+      Number(deliveryFee || 0) > 0 ||
+      safePaymentRef.length > 0 ||
+      Number(summaryState?.extraDiscount || 0) > 0 ||
+      !!summaryState?.isMixed
+    );
+
+    if (!hasComposerState) {
+      clearInvoiceComposerCache(currentUser.id);
+      return;
+    }
+
+    try {
+      localStorage.setItem(getInvoiceComposerStorageKey(currentUser.id), JSON.stringify({
+        savedAt: new Date().toISOString(),
+        clientName: safeClientName || CLIENT_OCASIONAL,
+        selectedClient: selectedClient ? normalizeClientDraft(selectedClient) : null,
+        items: Array.isArray(items) ? items : [],
+        deliveryFee: Number(deliveryFee || 0),
+        paymentMode: String(paymentMode || PAYMENT_MODES.CONTADO),
+        paymentRef: safePaymentRef,
+        summaryState,
+      }));
+    } catch (e) {
+      console.error('Error guardando borrador automatico de facturacion:', e);
+    }
+  }, [
+    currentUser?.id,
+    clientName,
+    selectedClient,
+    items,
+    deliveryFee,
+    paymentMode,
+    paymentRef,
+    invoiceComposerMeta,
+  ]);
+
+  useEffect(() => {
     localStorage.setItem(REMOTE_AUTH_REQUESTS_STORAGE_KEY, JSON.stringify(remoteAuthRequests.slice(0, 120)));
   }, [remoteAuthRequests]);
 
@@ -1822,6 +1941,16 @@ function App() {
 
   const adjustUserCashBalance = (user, delta) => {
     const key = getCashUserKey(user);
+    if (!key) return;
+    setUserCashBalances((prev) => {
+      const current = Number(prev[key] || 0);
+      const next = Math.max(0, current + (Number(delta) || 0));
+      return { ...prev, [key]: next };
+    });
+  };
+
+  const adjustUserCashBalanceByKey = (userKey, delta) => {
+    const key = String(userKey || '').trim();
     if (!key) return;
     setUserCashBalances((prev) => {
       const current = Number(prev[key] || 0);
@@ -2352,6 +2481,8 @@ function App() {
     setPaymentMode(PAYMENT_MODES.CONTADO);
     setPaymentRef('');
     setLoadedDraftState(null);
+    setInvoiceComposerMeta(null);
+    clearInvoiceComposerCache();
   };
 
   const onSaveInvoiceDraft = async (draftExtra = {}) => {
@@ -2414,6 +2545,14 @@ function App() {
     setPaymentRef(draft.paymentRef || '');
     setLoadedDraftState({
       draftId: draft.id,
+      extraDiscount: Number(draft.extraDiscount || 0),
+      authNote: String(draft.authNote || ''),
+      activeRemoteRequestId: String(draft.authRequestId || ''),
+      isMixed: !!draft.mixedData,
+      mixedData: draft.mixedData || null,
+      otherPaymentDetail: String(draft.otherPaymentDetail || ''),
+    });
+    setInvoiceComposerMeta({
       extraDiscount: Number(draft.extraDiscount || 0),
       authNote: String(draft.authNote || ''),
       activeRemoteRequestId: String(draft.authRequestId || ''),
@@ -4462,6 +4601,7 @@ function App() {
                   remoteAuthRequestById={remoteAuthRequestById}
                   buildApprovalAttachments={(payload) => buildApprovalPreviewAttachments(payload)}
                   loadedDraftState={loadedDraftState}
+                  onDraftStateChange={setInvoiceComposerMeta}
                   onSaveDraft={onSaveInvoiceDraft}
                   onFacturarCero={onFacturarCero}
                 />
@@ -4882,7 +5022,8 @@ function App() {
               userCashBalance={getUserCashBalance(currentUser)}
               onRegisterExpense={async (expense) => {
                 const amount = Number(expense?.amount || 0);
-                adjustUserCashBalance(currentUser, -amount);
+                const paidAmount = Math.max(0, Number(expense?.paidAmount ?? expense?.paid_amount ?? amount));
+                adjustUserCashBalance(currentUser, -paidAmount);
                 try {
                   await dataService.saveExpense({
                     ...expense,
@@ -4896,11 +5037,50 @@ function App() {
                     beneficiary: expense.beneficiary || null,
                     description: expense.description || null,
                     total: amount,
+                    paidAmount,
+                    balance: Math.max(0, amount - paidAmount),
+                    status: expense.status || 'Pagado',
                     userName: currentUser?.name || currentUser?.email || 'Sistema',
                   });
                 } catch (err) {
-                  adjustUserCashBalance(currentUser, amount);
+                  adjustUserCashBalance(currentUser, paidAmount);
                   console.error("Error persistiendo gasto en Supabase:", err);
+                  throw err;
+                }
+              }}
+              onUpdateExpense={async (previousExpense, updatedExpense) => {
+                const previousPaid = Math.max(0, Number(previousExpense?.paidAmount ?? previousExpense?.paid_amount ?? previousExpense?.amount ?? 0));
+                const nextPaid = Math.max(0, Number(updatedExpense?.paidAmount ?? updatedExpense?.paid_amount ?? updatedExpense?.amount ?? 0));
+                const deltaPaid = nextPaid - previousPaid;
+                const targetCashKey = String(previousExpense?.user_id || updatedExpense?.user_id || '').trim() || getCashUserKey(currentUser);
+
+                if (deltaPaid !== 0) {
+                  adjustUserCashBalanceByKey(targetCashKey, -deltaPaid);
+                }
+
+                try {
+                  await dataService.updateExpense(previousExpense?.id, {
+                    ...updatedExpense,
+                    user_id: previousExpense?.user_id || updatedExpense?.user_id || currentUser?.id,
+                    user_name: previousExpense?.user_name || updatedExpense?.user_name || currentUser?.name || currentUser?.email || 'Sistema',
+                  });
+                  await syncFactMovement('expense.updated', {
+                    expenseId: previousExpense?.id || updatedExpense?.id,
+                    date: updatedExpense?.date,
+                    expenseType: updatedExpense?.type || updatedExpense?.category || 'Gasto',
+                    beneficiary: updatedExpense?.beneficiary || null,
+                    description: updatedExpense?.description || null,
+                    total: Number(updatedExpense?.amount || 0),
+                    paidAmount: nextPaid,
+                    balance: Math.max(0, Number(updatedExpense?.amount || 0) - nextPaid),
+                    status: updatedExpense?.status || 'Pagado',
+                    userName: previousExpense?.user_name || updatedExpense?.user_name || currentUser?.name || currentUser?.email || 'Sistema',
+                  });
+                } catch (err) {
+                  if (deltaPaid !== 0) {
+                    adjustUserCashBalanceByKey(targetCashKey, deltaPaid);
+                  }
+                  console.error("Error actualizando gasto en Supabase:", err);
                   throw err;
                 }
               }}
