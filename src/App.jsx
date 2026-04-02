@@ -5064,18 +5064,22 @@ function App() {
                     user_id: previousExpense?.user_id || updatedExpense?.user_id || currentUser?.id,
                     user_name: previousExpense?.user_name || updatedExpense?.user_name || currentUser?.name || currentUser?.email || 'Sistema',
                   });
-                  await syncFactMovement('expense.updated', {
-                    expenseId: previousExpense?.id || updatedExpense?.id,
-                    date: updatedExpense?.date,
-                    expenseType: updatedExpense?.type || updatedExpense?.category || 'Gasto',
-                    beneficiary: updatedExpense?.beneficiary || null,
-                    description: updatedExpense?.description || null,
-                    total: Number(updatedExpense?.amount || 0),
-                    paidAmount: nextPaid,
-                    balance: Math.max(0, Number(updatedExpense?.amount || 0) - nextPaid),
-                    status: updatedExpense?.status || 'Pagado',
-                    userName: previousExpense?.user_name || updatedExpense?.user_name || currentUser?.name || currentUser?.email || 'Sistema',
-                  });
+                  try {
+                    await syncFactMovement('expense.updated', {
+                      expenseId: previousExpense?.id || updatedExpense?.id,
+                      date: updatedExpense?.date,
+                      expenseType: updatedExpense?.type || updatedExpense?.category || 'Gasto',
+                      beneficiary: updatedExpense?.beneficiary || null,
+                      description: updatedExpense?.description || null,
+                      total: Number(updatedExpense?.amount || 0),
+                      paidAmount: nextPaid,
+                      balance: Math.max(0, Number(updatedExpense?.amount || 0) - nextPaid),
+                      status: updatedExpense?.status || 'Pagado',
+                      userName: previousExpense?.user_name || updatedExpense?.user_name || currentUser?.name || currentUser?.email || 'Sistema',
+                    });
+                  } catch (syncErr) {
+                    console.warn('CRM sync no disponible para expense.updated. El gasto ya fue actualizado en Supabase.', syncErr);
+                  }
                 } catch (err) {
                   if (deltaPaid !== 0) {
                     adjustUserCashBalanceByKey(targetCashKey, deltaPaid);
