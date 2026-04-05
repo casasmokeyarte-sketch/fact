@@ -1,6 +1,13 @@
 ﻿import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import './design-system.css'
-import { CLIENT_OCASIONAL, PAYMENT_MODES, COMPANY_INFO } from './constants'
+import {
+  CLIENT_OCASIONAL,
+  PAYMENT_MODES,
+  COMPANY_INFO,
+  REFERRAL_DISCOUNT_PERCENT,
+  REFERRED_CLIENT_DISCOUNT_PERCENT,
+  REFERRAL_POINTS_PER_SUCCESS,
+} from './constants'
 import { AuthPage } from './components/AuthPage'
 import { onAuthStateChange, getCurrentUser, signOut } from './lib/authService'
 import { ClientSelector } from './components/ClientSelector'
@@ -292,10 +299,17 @@ const normalizeClientDraft = (client) => ({
   ...client,
   document: String(client?.document || '').trim(),
   name: String(client?.name || '').trim(),
+  email: String(client?.email || '').trim(),
   creditLevel: String(client?.creditLevel || client?.credit_level || 'ESTANDAR').trim() || 'ESTANDAR',
   creditLimit: Number(client?.creditLimit ?? client?.credit_limit ?? 0),
   approvedTerm: Number(client?.approvedTerm ?? client?.approved_term ?? 30),
   discount: Number(client?.discount ?? 0),
+  referrerDocument: String(client?.referrerDocument ?? client?.referrer_document ?? '').trim(),
+  referrerName: String(client?.referrerName ?? client?.referrer_name ?? '').trim(),
+  referralRewardGranted: client?.referralRewardGranted === true || client?.referral_reward_granted === true,
+  referralCreditsAvailable: Math.max(0, Number(client?.referralCreditsAvailable ?? client?.referral_credits_available ?? 0) || 0),
+  referralPoints: Math.max(0, Number(client?.referralPoints ?? client?.referral_points ?? 0) || 0),
+  successfulReferralCount: Math.max(0, Number(client?.successfulReferralCount ?? client?.successful_referral_count ?? 0) || 0),
 });
 
 const dedupeClients = (rows) => {
@@ -638,6 +652,7 @@ function App() {
   // Shared State
   const [clientName, setClientName] = useState(CLIENT_OCASIONAL);
   const [selectedClient, setSelectedClient] = useState(null); // Full client object if registered
+  const [selectedReferrerDocument, setSelectedReferrerDocument] = useState('');
   const [items, setItems] = useState([]);
   const [deliveryFee, setDeliveryFee] = useState(0);
   const [composerExtraDiscount, setComposerExtraDiscount] = useState(0);
@@ -2546,6 +2561,7 @@ function App() {
     setItems([]);
     setClientName(CLIENT_OCASIONAL);
     setSelectedClient(null);
+    setSelectedReferrerDocument('');
     setDeliveryFee(0);
     setComposerExtraDiscount(0);
     setPaymentMode(PAYMENT_MODES.CONTADO);
@@ -2565,6 +2581,8 @@ function App() {
       items,
       deliveryFee,
       selectedClientDiscountPercent: Number(selectedClient?.discount || 0),
+      referralCreditsAvailable: Number(selectedClient?.referralCreditsAvailable || 0),
+      referredClientDiscountEligible,
       extraDiscount: Number(draftExtra?.extraDiscount || 0),
       promotions: companyPromotions,
       now: getOperationalNow(),
@@ -2577,6 +2595,8 @@ function App() {
       clientName,
       clientDoc: selectedClient?.document || 'N/A',
       selectedClient,
+      referrerDocument: selectedReferrer?.document || '',
+      referrerName: selectedReferrer?.name || '',
       items,
       subtotal,
       deliveryFee,
@@ -2609,6 +2629,7 @@ function App() {
     const draftDoc = String(draft?.selectedClient?.document || draft?.clientDoc || '').trim();
     const matchedClient = (registeredClients || []).find((c) => String(c?.document || '').trim() === draftDoc) || draft.selectedClient || null;
     setSelectedClient(matchedClient);
+    setSelectedReferrerDocument(String(draft?.referrerDocument || matchedClient?.referrerDocument || '').trim());
     setItems(Array.isArray(draft.items) ? draft.items : []);
     setDeliveryFee(Number(draft.deliveryFee || 0));
     setPaymentMode(draft.paymentMode || PAYMENT_MODES.CONTADO);
@@ -3730,6 +3751,8 @@ function App() {
     items,
     deliveryFee,
     selectedClientDiscountPercent: Number(selectedClient?.discount || 0),
+    referralCreditsAvailable: Number(selectedClient?.referralCreditsAvailable || 0),
+    referredClientDiscountEligible,
     extraDiscount: composerExtraDiscount,
     promotions: companyPromotions,
     now: getOperationalNow(),
@@ -3764,6 +3787,9 @@ function App() {
 
   const handleFacturar = async (mixedData = null, extraDiscount = 0, invoiceMeta = {}) => {
     if (items.length === 0) return alert("Agregue productos primero");
+    if (String(selectedReferrerDocument || '').trim() && !selectedClient?.document) {
+      return alert("Los referidos solo aplican para clientes creados desde el modulo de Clientes. No use Cliente Ocasional ni clientes digitados manualmente.");
+    }
     if (selectedClient?.blocked) {
       return alert("Este cliente esta bloqueado por Administracion. No puede facturar hasta ser desbloqueado.");
     }
@@ -3794,6 +3820,8 @@ function App() {
       items,
       deliveryFee,
       selectedClientDiscountPercent: Number(selectedClient?.discount || 0),
+      referralCreditsAvailable: Number(selectedClient?.referralCreditsAvailable || 0),
+      referredClientDiscountEligible,
       extraDiscount,
       promotions: companyPromotions,
       now: getOperationalNow(),
@@ -3802,6 +3830,9 @@ function App() {
     const automaticDiscountAmount = totals.automaticDiscountAmount;
     const promoDiscountAmount = totals.promoDiscountAmount;
     const promotion = totals.promotion;
+    const automaticDiscountSource = totals.automaticDiscountSource;
+    const referralDiscountApplied = totals.referralDiscountApplied;
+    const referredClientDiscountApplied = totals.referredClientDiscountApplied;
     const effectiveExtraDiscount = totals.effectiveExtraDiscount;
     const totalDiscount = totals.totalDiscount;
     const totalAfterDiscounts = totals.total;
@@ -3835,6 +3866,7 @@ function App() {
     const newInvoice = {
       id: invoiceCode,
       invoiceCode,
+      client_id: selectedClient?.id || null,
       clientName: clientName,
       clientDoc: selectedClient?.document || 'N/A',
       items,
@@ -3852,6 +3884,17 @@ function App() {
       mixedDetails: {
         ...(mixedData || {}),
         invoiceCode,
+        referral: {
+          discountPercent: referralDiscountApplied ? REFERRAL_DISCOUNT_PERCENT : 0,
+          referredClientDiscountPercent: referredClientDiscountApplied ? REFERRED_CLIENT_DISCOUNT_PERCENT : 0,
+          discountSource: automaticDiscountSource || null,
+          discountApplied: referralDiscountApplied,
+          referredClientDiscountApplied,
+          referredByDocument: selectedReferrer?.document || selectedClient?.referrerDocument || '',
+          referredByName: selectedReferrer?.name || selectedClient?.referrerName || '',
+          referredClientDocument: selectedClient?.document || '',
+          referredClientName: selectedClient?.name || clientName || '',
+        },
         discount: {
           promotion,
           promoAmount: Number(promoDiscountAmount || 0),
@@ -3914,6 +3957,63 @@ function App() {
       setCartera((prev) => [...prev, { ...finalInvoice, balance: debtAmount }]);
     }
 
+    const safeSelectedClientDoc = String(selectedClient?.document || '').trim();
+    const safeReferrerDoc = String(selectedReferrer?.document || selectedClient?.referrerDocument || '').trim();
+    const safeReferrerName = String(selectedReferrer?.name || selectedClient?.referrerName || '').trim();
+    const shouldAssignReferrer =
+      !!safeSelectedClientDoc &&
+      !!safeReferrerDoc &&
+      safeReferrerDoc !== safeSelectedClientDoc;
+    const shouldRewardReferrer =
+      shouldAssignReferrer &&
+      selectedClient?.referralRewardGranted !== true;
+    const shouldConsumeReferralCredit =
+      !!safeSelectedClientDoc &&
+      referralDiscountApplied === true;
+
+    const updatedRegisteredClients = dedupeClients((registeredClients || []).map((client) => {
+      const clientDoc = String(client?.document || '').trim();
+      if (!clientDoc) return client;
+
+      if (clientDoc === safeSelectedClientDoc) {
+        const nextClient = normalizeClientDraft({
+          ...client,
+          referrerDocument: shouldAssignReferrer ? safeReferrerDoc : (client?.referrerDocument || ''),
+          referrerName: shouldAssignReferrer ? safeReferrerName : (client?.referrerName || ''),
+          referralRewardGranted: shouldRewardReferrer ? true : (client?.referralRewardGranted === true),
+          referralCreditsAvailable: shouldConsumeReferralCredit
+            ? Math.max(0, Number(client?.referralCreditsAvailable || 0) - 1)
+            : Number(client?.referralCreditsAvailable || 0),
+        });
+        return nextClient;
+      }
+
+      if (shouldRewardReferrer && clientDoc === safeReferrerDoc) {
+        return normalizeClientDraft({
+          ...client,
+          referralCreditsAvailable: Number(client?.referralCreditsAvailable || 0) + 1,
+          referralPoints: Number(client?.referralPoints || 0) + REFERRAL_POINTS_PER_SUCCESS,
+          successfulReferralCount: Number(client?.successfulReferralCount || 0) + 1,
+        });
+      }
+
+      return client;
+    }));
+
+    const changedClients = updatedRegisteredClients.filter((nextClient) => {
+      const previousClient = (registeredClients || []).find((client) => String(client?.document || '').trim() === String(nextClient?.document || '').trim());
+      return !previousClient || JSON.stringify(normalizeClientDraft(previousClient)) !== JSON.stringify(normalizeClientDraft(nextClient));
+    });
+
+    if (changedClients.length > 0) {
+      setRegisteredClients(updatedRegisteredClients);
+      changedClients.forEach((client) => {
+        if (safeSelectedClientDoc && String(client?.document || '').trim() === safeSelectedClientDoc) {
+          setSelectedClient(client);
+        }
+      });
+    }
+
     setSalesHistory((prev) => [...prev, finalInvoice]);
 
     // Actualiza caja del usuario en tiempo real para reflejar facturacion en el circulo central.
@@ -3927,6 +4027,9 @@ function App() {
     const persistInvoice = async () => {
       try {
         await dataService.saveInvoice(finalInvoice, items);
+        for (const client of changedClients) {
+          await dataService.saveClient({ ...client, user_id: currentUser?.id });
+        }
         await syncFactMovement('invoice.created', {
           invoiceId: finalInvoice.id,
           date: finalInvoice.date,
@@ -3936,6 +4039,7 @@ function App() {
           paymentMode: finalInvoice.paymentMode,
           userName: finalInvoice.user_name,
           notes: finalInvoice.mixedDetails?.internalZeroReason || '',
+          referral: finalInvoice.mixedDetails?.referral || null,
           items: (finalInvoice.items || []).map((item) => ({
             productId: item.productId || item.product_id || item.id || null,
             quantity: Number(item.quantity || 0),
@@ -4418,6 +4522,26 @@ function App() {
   const selectedClientAvailableCredit = selectedClient
     ? Math.max(0, Number(selectedClient?.creditLimit || 0) - selectedClientPendingBalance)
     : 0;
+  const selectedClientReferralCredits = Math.max(0, Number(selectedClient?.referralCreditsAvailable || 0) || 0);
+  const referredClientDiscountEligible = !!selectedClient?.document &&
+    !!String(selectedClient?.referrerDocument || '').trim() &&
+    selectedClient?.referralRewardGranted !== true;
+  const selectedReferrer = useMemo(() => {
+    const safeDoc = String(selectedReferrerDocument || '').trim();
+    if (!safeDoc) return null;
+    return (registeredClients || []).find((client) => String(client?.document || '').trim() === safeDoc) || null;
+  }, [registeredClients, selectedReferrerDocument]);
+
+  useEffect(() => {
+    const existingReferrer = String(selectedClient?.referrerDocument || '').trim();
+    if (!selectedClient?.document) {
+      setSelectedReferrerDocument('');
+      return;
+    }
+    if (existingReferrer) {
+      setSelectedReferrerDocument(existingReferrer);
+    }
+  }, [selectedClient?.document, selectedClient?.referrerDocument]);
 
   if (loading) {
     return (
@@ -4696,6 +4820,8 @@ function App() {
                   registeredClients={registeredClients}
                   setSelectedClient={setSelectedClient}
                   selectedClient={selectedClient}
+                  selectedReferrerDocument={selectedReferrerDocument}
+                  setSelectedReferrerDocument={setSelectedReferrerDocument}
                   selectedClientPendingBalance={selectedClientPendingBalance}
                   selectedClientAvailableCredit={selectedClientAvailableCredit}
                 />
@@ -4767,6 +4893,8 @@ function App() {
                   setPaymentRef={setPaymentRef}
                   paymentMethods={paymentMethods}
                   selectedClientDiscount={Number(selectedClient?.discount || 0)}
+                  selectedClientReferralCredits={selectedClientReferralCredits}
+                  referredClientDiscountEligible={referredClientDiscountEligible}
                   onFacturar={handleFacturar}
                   selectedClient={selectedClient}
                   selectedClientPendingBalance={selectedClientPendingBalance}

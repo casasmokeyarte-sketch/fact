@@ -5,7 +5,13 @@ import './index.css'
 import App from './App.jsx'
 import { bindAuthProfileInvalidation } from './lib/useSupabase'
 
-const queryClient = new QueryClient()
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      refetchOnWindowFocus: false,
+    },
+  },
+})
 
 function AppRoot() {
   useEffect(() => {

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
-import { INITIAL_REGISTERED_CLIENT, CREDIT_LEVELS, COMPANY_INFO } from '../constants';
+import { INITIAL_REGISTERED_CLIENT, CREDIT_LEVELS, COMPANY_INFO, REFERRAL_DISCOUNT_PERCENT } from '../constants';
 import { PaginationControls } from './PaginationControls';
 import { usePagination } from '../lib/usePagination';
 import { useTableSort } from '../lib/useTableSort';
@@ -24,6 +24,12 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
     const canImport = !isCajero && (currentUser?.permissions?.clientes?.importar !== false);
     const onlyStandard = isCajero || currentUser?.permissions?.clientes?.solo_estandar;
     const canBlockClient = isAdmin;
+    const resolveReferralCardTier = (points) => {
+        const safePoints = Math.max(0, Number(points || 0) || 0);
+        if (safePoints >= 100) return 'Black';
+        if (safePoints >= 50) return 'Gold';
+        return 'Clasica';
+    };
     const filteredClients = clients.filter(c =>
         (
             c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -40,6 +46,8 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
             blocked: { getValue: (c) => (c?.blocked ? 1 : 0), type: 'number' },
             discount: { getValue: (c) => Number(c?.discount ?? 0), type: 'number' },
             creditLimit: { getValue: (c) => Number(c?.creditLimit ?? c?.credit_limit ?? 0), type: 'number' },
+            referralPoints: { getValue: (c) => Number(c?.referralPoints ?? c?.referral_points ?? 0), type: 'number' },
+            referralCreditsAvailable: { getValue: (c) => Number(c?.referralCreditsAvailable ?? c?.referral_credits_available ?? 0), type: 'number' },
         },
         'name'
     );
@@ -254,6 +262,9 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
                             <p style={{ fontSize: '1.5rem', margin: '0.5rem 0' }}>Saldo Pendiente: <strong style={{ color: '#e11d48' }}>${currentBalance.toLocaleString()}</strong></p>
                             <p>Limite de Credito: ${selectedClientReport.creditLimit.toLocaleString()}</p>
                             <p>Cupo Disponible: ${(selectedClientReport.creditLimit - currentBalance).toLocaleString()}</p>
+                            <p>Bonos Referidos: {Number(selectedClientReport.referralCreditsAvailable || 0)} x {REFERRAL_DISCOUNT_PERCENT}%</p>
+                            <p>Puntos CRM: {Number(selectedClientReport.referralPoints || 0)}</p>
+                            <p>Tarjeta Sugerida: {resolveReferralCardTier(selectedClientReport.referralPoints || 0)}</p>
                         </div>
                     </div>
 
@@ -439,6 +450,13 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
                                 <th style={{ padding: '0.5rem', textAlign: 'center' }}>
                                     <SortButton label="Desc." sortKey="discount" sortConfig={clientsSort} onChange={setClientsSortKey} />
                                 </th>
+                                <th style={{ padding: '0.5rem', textAlign: 'center' }}>
+                                    <SortButton label="Bonos" sortKey="referralCreditsAvailable" sortConfig={clientsSort} onChange={setClientsSortKey} />
+                                </th>
+                                <th style={{ padding: '0.5rem', textAlign: 'center' }}>
+                                    <SortButton label="Puntos CRM" sortKey="referralPoints" sortConfig={clientsSort} onChange={setClientsSortKey} />
+                                </th>
+                                <th style={{ padding: '0.5rem', textAlign: 'center' }}>Tarjeta</th>
                                 <th style={{ padding: '0.5rem', textAlign: 'right' }}>
                                     <SortButton label="Cupo" sortKey="creditLimit" sortConfig={clientsSort} onChange={setClientsSortKey} />
                                 </th>
@@ -456,6 +474,9 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
                                         </span>
                                     </td>
                                     <td style={{ padding: '0.5rem', textAlign: 'center' }}>{c.discount}%</td>
+                                    <td style={{ padding: '0.5rem', textAlign: 'center' }}>{Number(c.referralCreditsAvailable || 0)} x {REFERRAL_DISCOUNT_PERCENT}%</td>
+                                    <td style={{ padding: '0.5rem', textAlign: 'center' }}>{Number(c.referralPoints || 0)}</td>
+                                    <td style={{ padding: '0.5rem', textAlign: 'center' }}>{resolveReferralCardTier(c.referralPoints || 0)}</td>
                                     <td style={{ padding: '0.5rem', textAlign: 'right' }}>${c.creditLimit.toLocaleString()}</td>
                                     <td style={{ padding: '0.5rem', textAlign: 'right', display: 'flex', gap: '0.3rem', justifyContent: 'flex-end' }}>
                                         {canEdit && (

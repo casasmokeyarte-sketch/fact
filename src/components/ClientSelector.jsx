@@ -1,5 +1,5 @@
 import React from 'react';
-import { CLIENT_OCASIONAL } from '../constants';
+import { CLIENT_OCASIONAL, REFERRAL_DISCOUNT_PERCENT } from '../constants';
 
 export function ClientSelector({
     clientName,
@@ -7,6 +7,8 @@ export function ClientSelector({
     registeredClients,
     setSelectedClient,
     selectedClient,
+    selectedReferrerDocument = '',
+    setSelectedReferrerDocument,
     selectedClientPendingBalance = 0,
     selectedClientAvailableCredit = 0
 }) {
@@ -40,6 +42,12 @@ export function ClientSelector({
     };
 
     const isOcasional = clientName === CLIENT_OCASIONAL;
+    const selectedClientReferrerDocument = String(selectedClient?.referrerDocument || '').trim();
+    const selectedClientReferralCredits = Math.max(0, Number(selectedClient?.referralCreditsAvailable || 0) || 0);
+    const referralCandidates = registeredClients.filter((client) => (
+        String(client?.document || '').trim() &&
+        String(client?.document || '').trim() !== String(selectedClient?.document || '').trim()
+    ));
 
     return (
         <div className="card">
@@ -88,6 +96,32 @@ export function ClientSelector({
                         <div>
                             <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Disponible</div>
                             <strong style={{ color: '#10b981' }}>${Number(selectedClientAvailableCredit || 0).toLocaleString()}</strong>
+                        </div>
+                    </div>
+
+                    <div style={{ marginTop: '0.85rem', paddingTop: '0.85rem', borderTop: '1px solid var(--border-soft)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', marginBottom: '0.45rem' }}>
+                            <strong style={{ fontSize: '0.92rem' }}>Referidos</strong>
+                            <span className="badge">{selectedClientReferralCredits} bonos de {REFERRAL_DISCOUNT_PERCENT}%</span>
+                        </div>
+                        <label className="input-label" style={{ marginBottom: '0.35rem' }}>Cliente que lo refirio</label>
+                        <select
+                            className="input-field"
+                            value={selectedClientReferrerDocument || selectedReferrerDocument}
+                            onChange={(e) => setSelectedReferrerDocument?.(e.target.value)}
+                            disabled={!!selectedClientReferrerDocument}
+                        >
+                            <option value="">Sin registrar</option>
+                            {referralCandidates.map((client) => (
+                                <option key={client.document} value={client.document}>
+                                    {client.name} | {client.document}
+                                </option>
+                            ))}
+                        </select>
+                        <div style={{ marginTop: '0.35rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                            {selectedClientReferrerDocument
+                                ? 'Este cliente ya tiene referido asociado. La recompensa no se repetira en compras futuras del mismo referido.'
+                                : 'Solo aplica para clientes registrados en el modulo Clientes. En la primera compra valida, el cliente referido recibe 5% y quien refirio gana 1 bono acumulable del 10% mas puntos CRM.'}
                         </div>
                     </div>
                 </div>

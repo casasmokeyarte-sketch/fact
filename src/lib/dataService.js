@@ -447,6 +447,12 @@ export const dataService = {
       creditLimit: Number(c.credit_limit ?? 0),
       approvedTerm: Number(c.approved_term ?? 30),
       discount: Number(c.discount ?? 0),
+      referrerDocument: c.referrer_document ?? '',
+      referrerName: c.referrer_name ?? '',
+      referralRewardGranted: c.referral_reward_granted === true,
+      referralCreditsAvailable: Math.max(0, Number(c.referral_credits_available ?? 0) || 0),
+      referralPoints: Math.max(0, Number(c.referral_points ?? 0) || 0),
+      successfulReferralCount: Math.max(0, Number(c.successful_referral_count ?? 0) || 0),
       active: c.active ?? true,
     }));
   },
@@ -513,19 +519,55 @@ export const dataService = {
       credit_limit: resolvedCreditLimit,
       approved_term: resolvedApprovedTerm,
       discount: resolvedDiscount,
+      referrer_document: client.referrerDocument ?? existingByDocument?.referrer_document ?? '',
+      referrer_name: client.referrerName ?? existingByDocument?.referrer_name ?? '',
+      referral_reward_granted: client.referralRewardGranted ?? existingByDocument?.referral_reward_granted ?? false,
+      referral_credits_available: Math.max(0, Number(client.referralCreditsAvailable ?? existingByDocument?.referral_credits_available ?? 0) || 0),
+      referral_points: Math.max(0, Number(client.referralPoints ?? existingByDocument?.referral_points ?? 0) || 0),
+      successful_referral_count: Math.max(0, Number(client.successfulReferralCount ?? existingByDocument?.successful_referral_count ?? 0) || 0),
       active: client.active ?? existingByDocument?.active ?? true,
     };
 
     if (isUuid(payload.id)) {
-      const { data, error } = await withRetry(() => supabase.from('clients').upsert(payload).select());
+      let { data, error } = await withRetry(() => supabase.from('clients').upsert(payload).select());
+      if (error && isUndefinedColumnError(error)) {
+        const {
+          referrer_document,
+          referrer_name,
+          referral_reward_granted,
+          referral_credits_available,
+          referral_points,
+          successful_referral_count,
+          ...fallbackPayload
+        } = payload;
+        const retry = await withRetry(() => supabase.from('clients').upsert(fallbackPayload).select());
+        data = retry.data;
+        error = retry.error;
+      }
       if (!error) return data;
 
       if (!isClientDocumentUniqueError(error) || !payload.document) throw error;
 
       const fallbackUpdatePayload = removeInvalidUuidId(payload);
-      const { data: byDocData, error: byDocError } = await withRetry(() =>
+      let { data: byDocData, error: byDocError } = await withRetry(() =>
         supabase.from('clients').update(fallbackUpdatePayload).eq('document', payload.document).select()
       );
+      if (byDocError && isUndefinedColumnError(byDocError)) {
+        const {
+          referrer_document,
+          referrer_name,
+          referral_reward_granted,
+          referral_credits_available,
+          referral_points,
+          successful_referral_count,
+          ...legacyPayload
+        } = fallbackUpdatePayload;
+        const retry = await withRetry(() =>
+          supabase.from('clients').update(legacyPayload).eq('document', payload.document).select()
+        );
+        byDocData = retry.data;
+        byDocError = retry.error;
+      }
       if (byDocError) throw byDocError;
       return byDocData;
     }
@@ -539,11 +581,44 @@ export const dataService = {
     const { data, error } = await withRetry(() => query);
     if (!error) return data;
 
+    if (isUndefinedColumnError(error)) {
+      const {
+        referrer_document,
+        referrer_name,
+        referral_reward_granted,
+        referral_credits_available,
+        referral_points,
+        successful_referral_count,
+        ...fallbackPayload
+      } = insertPayload;
+      const fallbackQuery = hasDocument
+        ? supabase.from('clients').upsert(fallbackPayload, { onConflict: 'document' }).select()
+        : supabase.from('clients').insert(fallbackPayload).select();
+      const retry = await withRetry(() => fallbackQuery);
+      if (!retry.error) return retry.data;
+    }
+
     if (!isClientDocumentUniqueError(error) || !insertPayload.document) throw error;
 
-    const { data: byDocData, error: byDocError } = await withRetry(() =>
+    let { data: byDocData, error: byDocError } = await withRetry(() =>
       supabase.from('clients').update(insertPayload).eq('document', insertPayload.document).select()
     );
+    if (byDocError && isUndefinedColumnError(byDocError)) {
+      const {
+        referrer_document,
+        referrer_name,
+        referral_reward_granted,
+        referral_credits_available,
+        referral_points,
+        successful_referral_count,
+        ...legacyPayload
+      } = insertPayload;
+      const retry = await withRetry(() =>
+        supabase.from('clients').update(legacyPayload).eq('document', insertPayload.document).select()
+      );
+      byDocData = retry.data;
+      byDocError = retry.error;
+    }
     if (byDocError) throw byDocError;
     return byDocData;
   },

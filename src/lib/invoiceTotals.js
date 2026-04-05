@@ -1,3 +1,5 @@
+import { REFERRAL_DISCOUNT_PERCENT, REFERRED_CLIENT_DISCOUNT_PERCENT } from '../constants';
+
 const DISCOUNT_MIN_UNIT_PRICE = 50000;
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
@@ -113,6 +115,8 @@ export function computeInvoiceTotals({
   items = [],
   deliveryFee = 0,
   selectedClientDiscountPercent = 0,
+  referralCreditsAvailable = 0,
+  referredClientDiscountEligible = false,
   extraDiscount = 0,
   promotions = [],
   now = new Date(),
@@ -120,7 +124,18 @@ export function computeInvoiceTotals({
   const safeItems = Array.isArray(items) ? items : [];
   const subtotal = safeItems.reduce((sum, item) => sum + (Number(item?.total || 0) || 0), 0);
   const safeDeliveryFee = Number(deliveryFee || 0) || 0;
-  const automaticPercent = Math.max(0, Number(selectedClientDiscountPercent || 0) || 0);
+  const clientDiscountPercent = Math.max(0, Number(selectedClientDiscountPercent || 0) || 0);
+  const safeReferralCreditsAvailable = Math.max(0, Number(referralCreditsAvailable || 0) || 0);
+  const referredCurrentPurchasePercent = referredClientDiscountEligible ? REFERRED_CLIENT_DISCOUNT_PERCENT : 0;
+  const referralDiscountPercent = safeReferralCreditsAvailable > 0 ? REFERRAL_DISCOUNT_PERCENT : 0;
+  const automaticPercent = Math.max(clientDiscountPercent, referralDiscountPercent, referredCurrentPurchasePercent);
+  const automaticDiscountSource = automaticPercent <= 0
+    ? ''
+    : (
+      clientDiscountPercent >= referralDiscountPercent && clientDiscountPercent >= referredCurrentPurchasePercent
+        ? 'client'
+        : (referralDiscountPercent >= referredCurrentPurchasePercent ? 'referral_credit' : 'referred_purchase')
+    );
   const allowPromotion = automaticPercent <= 0;
 
   const { promotion, eligibleSubtotal: promoEligibleSubtotal, discountAmount: promoDiscountAmount } =
@@ -173,9 +188,18 @@ export function computeInvoiceTotals({
       includeFullPriceOnly: promotion.includeFullPriceOnly === true,
     } : null,
     promotionsBlockedByClientDiscount: !allowPromotion,
+    promotionBlockedReason: !allowPromotion ? automaticDiscountSource : '',
     promoEligibleSubtotal,
     promoDiscountAmount: Math.max(0, promoDiscountAmount || 0),
     promoDiscountOnDiscountableItems: Math.max(0, promoDiscountOnDiscountableItems || 0),
+    clientDiscountPercent,
+    referralCreditsAvailable: safeReferralCreditsAvailable,
+    referredClientDiscountEligible: referredClientDiscountEligible === true,
+    referredCurrentPurchasePercent,
+    referralDiscountPercent,
+    automaticDiscountSource,
+    referralDiscountApplied: automaticDiscountSource === 'referral_credit' && automaticDiscountAmount > 0,
+    referredClientDiscountApplied: automaticDiscountSource === 'referred_purchase' && automaticDiscountAmount > 0,
     automaticDiscountPercent: automaticPercent,
     automaticDiscountAmount,
     requestedExtraDiscount,

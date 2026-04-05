@@ -17,6 +17,10 @@ export const PAYMENT_MODES = {
     OTROS: 'Otros'
 };
 
+export const REFERRAL_DISCOUNT_PERCENT = 10;
+export const REFERRED_CLIENT_DISCOUNT_PERCENT = 5;
+export const REFERRAL_POINTS_PER_SUCCESS = 10;
+
 export const CREDIT_LEVELS = {
     ESTANDAR: { label: 'EstAndar (Sin Credito)', discount: 0, maxInvoice: 0 },
     CREDITO_SIN_DESCUENTO: { label: 'Credito Sin Descuento', discount: 0, maxInvoice: 0 },
@@ -32,10 +36,17 @@ export const INITIAL_REGISTERED_CLIENT = {
     document: '',
     address: '',
     phone: '',
+    email: '',
     creditLimit: 0,
     creditLevel: 'ESTANDAR',
     approvedTerm: 30, // days
-    discount: 0 // percentage
+    discount: 0, // percentage
+    referrerDocument: '',
+    referrerName: '',
+    referralRewardGranted: false,
+    referralCreditsAvailable: 0,
+    referralPoints: 0,
+    successfulReferralCount: 0
 };
 
 export const INITIAL_INVOICE_STATE = {

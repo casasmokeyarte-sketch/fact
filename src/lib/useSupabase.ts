@@ -220,7 +220,7 @@ export function useProfile(userId?: UID) {
       return (data as Profile) ?? null
     },
     staleTime: 0,
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: false,
   })
 
   React.useEffect(() => {

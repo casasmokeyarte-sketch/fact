@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { CLIENT_OCASIONAL, PAYMENT_MODES } from '../constants';
+import { CLIENT_OCASIONAL, PAYMENT_MODES, REFERRAL_DISCOUNT_PERCENT, REFERRED_CLIENT_DISCOUNT_PERCENT } from '../constants';
 import { printInvoiceDocument } from '../lib/printInvoice.js';
 import { playSound } from '../lib/soundService';
 import { computeInvoiceTotals } from '../lib/invoiceTotals.js';
@@ -37,6 +37,8 @@ export function PaymentSummary({
   onFacturar,
   selectedClient,
   selectedClientDiscount = 0,
+  selectedClientReferralCredits = 0,
+  referredClientDiscountEligible = false,
   selectedClientPendingBalance = 0,
   selectedClientAvailableCredit = 0,
   items,
@@ -95,6 +97,8 @@ export function PaymentSummary({
     items,
     deliveryFee,
     selectedClientDiscountPercent: Number(selectedClientDiscount || 0),
+    referralCreditsAvailable: Number(selectedClientReferralCredits || 0),
+    referredClientDiscountEligible,
     extraDiscount: resolvedExtraDiscount,
     promotions,
     now: operationalNow instanceof Date ? operationalNow : new Date(),
@@ -110,6 +114,10 @@ export function PaymentSummary({
   const effectiveExtraDiscount = totals.effectiveExtraDiscount;
   const totalDiscount = totals.totalDiscount;
   const promotionsBlockedByClientDiscount = totals.promotionsBlockedByClientDiscount;
+  const promotionBlockedReason = String(totals.promotionBlockedReason || '').trim();
+  const automaticDiscountSource = String(totals.automaticDiscountSource || '').trim();
+  const referralDiscountApplied = totals.referralDiscountApplied === true;
+  const referredClientDiscountApplied = totals.referredClientDiscountApplied === true;
   const safeMixedAmountA = clamp(Number(mixedAmountA) || 0, 0, Math.max(0, total));
   const mixedAmountB = Math.max(0, total - safeMixedAmountA);
 
@@ -667,7 +675,12 @@ export function PaymentSummary({
 	      {automaticDiscountAmount > 0 && (
 	        <div className="card card--muted" style={{ marginBottom: '1rem' }}>
 	          <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-	            Descuento por nivel cliente ({automaticDiscountPercent}%): <strong>-${automaticDiscountAmount.toLocaleString()}</strong>
+	            {automaticDiscountSource === 'referral_credit'
+                ? `Descuento por referido (${REFERRAL_DISCOUNT_PERCENT}%): `
+                : automaticDiscountSource === 'referred_purchase'
+                  ? `Descuento cliente referido (${REFERRED_CLIENT_DISCOUNT_PERCENT}%): `
+                : `Descuento por nivel cliente (${automaticDiscountPercent}%): `}
+              <strong>-${automaticDiscountAmount.toLocaleString()}</strong>
 	          </div>
 	          {Number(discountableSubtotal || 0) < Number(subtotal || 0) && (
 	            <div style={{ marginTop: '0.35rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
@@ -686,10 +699,14 @@ export function PaymentSummary({
           </div>
         )}
 
-        {promotionsBlockedByClientDiscount && Number(selectedClientDiscount || 0) > 0 && (
+        {promotionsBlockedByClientDiscount && (
           <div className="card card--muted" style={{ marginBottom: '1rem', borderColor: '#f59e0b' }}>
             <div style={{ fontSize: '0.9rem', color: '#92400e' }}>
-              Este cliente ya tiene descuento fijo en su registro. La promocion automatica no aplica para evitar doble descuento.
+              {promotionBlockedReason === 'referral_credit'
+                ? 'Hay saldo de referido disponible. La promocion del dia no se suma y el sistema usa un solo descuento por factura.'
+                : promotionBlockedReason === 'referred_purchase'
+                  ? 'Este cliente viene referido y en esta primera compra valida recibe 5%. La promocion del dia no se suma.'
+                : 'Este cliente ya tiene descuento fijo en su registro. La promocion automatica no aplica para evitar doble descuento.'}
             </div>
           </div>
         )}
@@ -718,6 +735,20 @@ export function PaymentSummary({
             <div>
               <div style={{ color: 'var(--text-secondary)' }}>Cupo Disponible</div>
               <strong style={{ color: '#10b981' }}>${Number(selectedClientAvailableCredit || 0).toLocaleString()}</strong>
+            </div>
+            <div>
+              <div style={{ color: 'var(--text-secondary)' }}>Saldo Referidos</div>
+              <strong>{Number(selectedClientReferralCredits || 0)} x {REFERRAL_DISCOUNT_PERCENT}%</strong>
+            </div>
+            <div>
+              <div style={{ color: 'var(--text-secondary)' }}>Uso Factura Actual</div>
+              <strong style={{ color: referralDiscountApplied || referredClientDiscountApplied ? '#0f766e' : 'inherit' }}>
+                {referralDiscountApplied
+                  ? `1 bono ${REFERRAL_DISCOUNT_PERCENT}%`
+                  : referredClientDiscountApplied
+                    ? `${REFERRED_CLIENT_DISCOUNT_PERCENT}% primera compra`
+                    : 'No aplica'}
+              </strong>
             </div>
           </div>
         </div>
