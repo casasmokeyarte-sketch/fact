@@ -1,18 +1,27 @@
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { PaginationControls } from './PaginationControls';
 import { usePagination } from '../lib/usePagination';
 import { useTableSort } from '../lib/useTableSort';
 import { SortButton } from './SortButton';
+import { printReportHtml } from '../lib/printReports';
 
-export function InventoryModule({ currentUser, products, setProducts, onDeleteProduct, onAdjustStock, stock, categories, onLog, setActiveTab, setPreselectedProductId, shift }) {
+export function InventoryModule({ currentUser, products, setProducts, onDeleteProduct, onAdjustStock, onApplyInventoryCount, stock, categories, onLog, setActiveTab, setPreselectedProductId, shift }) {
     const [view, setView] = useState('list'); // 'list', 'edit', 'count'
     const [editingProduct, setEditingProduct] = useState(null);
     const [physicalCounts, setPhysicalCounts] = useState({});
+    const [countSessionRows, setCountSessionRows] = useState([]);
+    const [countScanCode, setCountScanCode] = useState('');
+    const [activeCountProductId, setActiveCountProductId] = useState('');
+    const [activeCountValue, setActiveCountValue] = useState('');
+    const [countSearchTerm, setCountSearchTerm] = useState('');
+    const [countReportPrinted, setCountReportPrinted] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [categoryFilter, setCategoryFilter] = useState('');
     const [statusFilter, setStatusFilter] = useState('');
     const [openActionMenuId, setOpenActionMenuId] = useState(null);
+    const countScanInputRef = useRef(null);
+    const countedQtyInputRef = useRef(null);
     const filterStorageKey = `fact_filter_inventory_${currentUser?.id || 'anon'}`;
     
     // Check if user is Cajero (read-only mode)
@@ -167,6 +176,65 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
         },
         'name'
     );
+
+    const productsByBarcode = useMemo(() => {
+        const map = new Map();
+        (products || []).forEach((product) => {
+            const barcode = normalizeBarcode(product?.barcode);
+            if (barcode) {
+                map.set(barcode, product);
+            }
+        });
+        return map;
+    }, [products]);
+
+    const countedProducts = useMemo(() => {
+        const q = String(countSearchTerm || '').trim().toLowerCase();
+        const rowsById = new Map((countSessionRows || []).map((row) => [String(row.productId), row]));
+        return sortedCountProducts
+            .map((product) => ({
+                product,
+                countRow: rowsById.get(String(product?.id || '')) || null,
+            }))
+            .filter(({ product, countRow }) => {
+                if (!q) return true;
+                const haystack = [
+                    product?.name || '',
+                    product?.barcode || '',
+                    product?.category || '',
+                    countRow?.countedAt ? new Date(countRow.countedAt).toLocaleString() : ''
+                ].join(' ').toLowerCase();
+                return haystack.includes(q);
+            });
+    }, [sortedCountProducts, countSessionRows, countSearchTerm]);
+
+    const countSummary = useMemo(() => {
+        const rows = countedProducts.map(({ product, countRow }) => {
+            const systemQty = Number(stock?.ventas?.[product?.id] || 0);
+            const countedQty = countRow
+                ? Number(countRow.countedQty ?? physicalCounts?.[product?.id] ?? 0)
+                : Number(physicalCounts?.[product?.id] ?? 0);
+            const diff = countedQty - systemQty;
+            return {
+                productId: product?.id,
+                productName: product?.name || 'Producto',
+                barcode: normalizeBarcode(product?.barcode),
+                systemQty,
+                countedQty,
+                diff,
+            };
+        });
+
+        return {
+            rows,
+            adjustedRows: rows.filter((row) => Number(row.diff || 0) !== 0),
+            totals: {
+                systemQty: rows.reduce((sum, row) => sum + Number(row.systemQty || 0), 0),
+                countedQty: rows.reduce((sum, row) => sum + Number(row.countedQty || 0), 0),
+                diff: rows.reduce((sum, row) => sum + Number(row.diff || 0), 0),
+            }
+        };
+    }, [countedProducts, physicalCounts, stock]);
 
     useEffect(() => {
         const handleOutsideClick = (event) => {
@@ -345,15 +413,170 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
     // Physical Count Logic
     const handleStartCount = () => {
         const initialCounts = {};
-        products.forEach(p => initialCounts[p.id] = (stock.ventas[p.id] || 0));
+        products.forEach(p => initialCounts[p.id] = Number(stock?.ventas?.[p.id] || 0));
         setPhysicalCounts(initialCounts);
+        setCountSessionRows([]);
+        setCountScanCode('');
+        setActiveCountProductId('');
+        setActiveCountValue('');
+        setCountSearchTerm('');
+        setCountReportPrinted(false);
         setView('count');
     };
 
-    const handleFinishCount = () => {
-        onLog?.({ module: 'Inventario', action: 'Conteo Fisicoco', details: 'Realizado inventario de control' });
-        window.print();
-        setView('list');
+    useEffect(() => {
+        if (view !== 'count') return;
+        setTimeout(() => countScanInputRef.current?.focus(), 80);
+    }, [view]);
+
+    useEffect(() => {
+        if (!activeCountProductId) return;
+        setTimeout(() => countedQtyInputRef.current?.focus(), 50);
+    }, [activeCountProductId]);
+
+    const upsertCountSessionRow = (product, countedQty) => {
+        const systemQty = Number(stock?.ventas?.[product?.id] || 0);
+        const nextRow = {
+            productId: product?.id,
+            productName: product?.name || 'Producto',
+            barcode: normalizeBarcode(product?.barcode),
+            systemQty,
+            countedQty: Number(countedQty || 0),
+            diff: Number(countedQty || 0) - systemQty,
+            countedAt: new Date().toISOString(),
+        };
+
+        setCountSessionRows((prev) => {
+            const others = (prev || []).filter((row) => String(row.productId || '') !== String(product?.id || ''));
+            return [nextRow, ...others];
+        });
+    };
+
+    const handleScanCountProduct = (rawCode) => {
+        const barcode = normalizeBarcode(rawCode);
+        if (!barcode) {
+            alert('Escanee un codigo de barras valido.');
+            return;
+        }
+
+        const product = productsByBarcode.get(barcode);
+        if (!product) {
+            alert(`No se encontro producto para el codigo ${barcode}.`);
+            setCountScanCode('');
+            return;
+        }
+
+        setActiveCountProductId(String(product.id));
+        setActiveCountValue(String(Number(physicalCounts?.[product.id] ?? stock?.ventas?.[product.id] ?? 0)));
+        setCountScanCode('');
+    };
+
+    const handleSaveCountForActiveProduct = () => {
+        const product = (products || []).find((row) => String(row?.id || '') === String(activeCountProductId || ''));
+        if (!product) return;
+        const countedQty = Math.max(0, Number(activeCountValue || 0));
+        setPhysicalCounts((prev) => ({ ...prev, [product.id]: countedQty }));
+        upsertCountSessionRow(product, countedQty);
+        onLog?.({
+            module: 'Inventario',
+            action: 'Conteo Producto',
+            details: `Conteo por escaner: ${product?.name || product?.id} | Sistema ${Number(stock?.ventas?.[product.id] || 0)} | Contado ${countedQty}`
+        });
+        setActiveCountProductId('');
+        setActiveCountValue('');
+        setCountReportPrinted(false);
+        setTimeout(() => countScanInputRef.current?.focus(), 50);
+    };
+
+    const buildInventoryCountReportHtml = (rows, title) => `
+        <div style="margin-bottom:12px;">
+            <strong>Usuario:</strong> ${String(currentUser?.name || 'Sistema')}<br/>
+            <strong>Fecha:</strong> ${new Date().toLocaleString()}<br/>
+            <strong>Total productos:</strong> ${Number(rows.length || 0).toLocaleString()}
+        </div>
+        <table>
+            <thead>
+                <tr>
+                    <th>Producto</th>
+                    <th>Codigo</th>
+                    <th>Sistema</th>
+                    <th>Contado</th>
+                    <th>Diferencia</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${rows.map((row) => `
+                    <tr>
+                        <td>${String(row.productName || 'Producto')}</td>
+                        <td>${String(row.barcode || 'N/A')}</td>
+                        <td>${Number(row.systemQty || 0).toLocaleString()}</td>
+                        <td>${Number(row.countedQty || 0).toLocaleString()}</td>
+                        <td>${Number(row.diff || 0).toLocaleString()}</td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>
+    `;
+
+    const handlePrintCountReport = () => {
+        const rows = countSummary.rows;
+        if (rows.length === 0) {
+            return alert('No hay productos para imprimir en el conteo.');
+        }
+        printReportHtml({
+            title: 'Reporte de Conteo de Inventario',
+            subtitle: `Usuario: ${currentUser?.name || 'Sistema'}`,
+            contentHtml: buildInventoryCountReportHtml(rows, 'Reporte de Conteo de Inventario'),
+            mode: 'a4'
+        });
+        setCountReportPrinted(true);
+        onLog?.({
+            module: 'Inventario',
+            action: 'Imprimir Conteo',
+            details: `Conteo de inventario impreso. Productos: ${rows.length}. Diferencias: ${countSummary.adjustedRows.length}.`
+        });
+    };
+
+    const handleApplyCountAdjustments = async () => {
+        const rowsToAdjust = countSummary.adjustedRows;
+        if (rowsToAdjust.length === 0) {
+            return alert('No hay diferencias para ajustar.');
+        }
+
+        const reason = String(prompt('Motivo obligatorio del ajuste masivo de inventario:') || '').trim();
+        if (reason.length < 10) {
+            return alert('Debe ingresar un motivo claro (minimo 10 caracteres).');
+        }
+
+        try {
+            if (typeof onApplyInventoryCount === 'function') {
+                await onApplyInventoryCount(rowsToAdjust, reason);
+            } else {
+                for (const row of rowsToAdjust) {
+                    const product = (products || []).find((item) => String(item?.id || '') === String(row.productId || ''));
+                    if (!product) continue;
+                    await onAdjustStock?.(product, 'ventas', Number(row.diff || 0), reason);
+                }
+            }
+
+            printReportHtml({
+                title: 'Reporte de Ajuste de Inventario',
+                subtitle: `Usuario: ${currentUser?.name || 'Sistema'}`,
+                contentHtml: buildInventoryCountReportHtml(rowsToAdjust, 'Reporte de Ajuste de Inventario'),
+                mode: 'a4'
+            });
+
+            onLog?.({
+                module: 'Inventario',
+                action: 'Ajuste Inventario Conteo',
+                details: `Ajuste masivo desde conteo. Productos ajustados: ${rowsToAdjust.length}. Motivo: ${reason}`
+            });
+
+            alert(`Ajuste aplicado en ${rowsToAdjust.length} producto(s).`);
+            setView('list');
+        } catch (err) {
+            alert(`No se pudo aplicar el ajuste masivo.\n\nDetalle: ${err?.message || 'Error desconocido'}`);
+        }
     };
 
     const handleAdjustStock = async (product) => {
@@ -501,40 +724,143 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
             )}
 
 	            {view === 'count' && (
-	                <div className="card printable-area">
-	                    <h3>Hacer Inventario (Conteo Fisicoco)</h3>
-	                    <p>Ingrese las cantidades reales encontradas en el punto de venta.</p>
+	                <div className="card">
+	                    <h3>Hacer Inventario por Escaner</h3>
+	                    <p>Escanee el codigo de barras, revise la informacion del producto y registre la cantidad contada.</p>
+
+                        <div className="card card--muted" style={{ marginBottom: '1rem' }}>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: '1rem' }}>
+                                <div className="input-group" style={{ marginBottom: 0 }}>
+                                    <label className="input-label">Escanear codigo de barras</label>
+                                    <input
+                                        ref={countScanInputRef}
+                                        type="text"
+                                        className="input-field"
+                                        value={countScanCode}
+                                        onChange={(e) => setCountScanCode(e.target.value)}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                                e.preventDefault();
+                                                handleScanCountProduct(countScanCode);
+                                            }
+                                        }}
+                                        placeholder="Escanee y presione Enter"
+                                    />
+                                </div>
+                                <div className="input-group" style={{ marginBottom: 0 }}>
+                                    <label className="input-label">Filtrar lista del conteo</label>
+                                    <input
+                                        type="text"
+                                        className="input-field"
+                                        value={countSearchTerm}
+                                        onChange={(e) => setCountSearchTerm(e.target.value)}
+                                        placeholder="Nombre o codigo"
+                                    />
+                                </div>
+                            </div>
+
+                            {activeCountProductId && (
+                                (() => {
+                                    const product = (products || []).find((row) => String(row?.id || '') === String(activeCountProductId || ''));
+                                    if (!product) return null;
+                                    const systemQty = Number(stock?.ventas?.[product.id] || 0);
+                                    return (
+                                        <div className="card" style={{ marginTop: '0.75rem' }}>
+                                            <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr 1fr', gap: '0.75rem', alignItems: 'end' }}>
+                                                <div>
+                                                    <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Producto</div>
+                                                    <strong>{product?.name || 'Producto'}</strong>
+                                                    <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.2rem' }}>
+                                                        Codigo: {product?.barcode || 'N/A'} | Categoria: {product?.category || 'General'}
+                                                    </div>
+                                                </div>
+                                                <div>
+                                                    <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Sistema</div>
+                                                    <strong>{systemQty.toLocaleString()}</strong>
+                                                </div>
+                                                <div className="input-group" style={{ marginBottom: 0 }}>
+                                                    <label className="input-label">Cantidad contada</label>
+                                                    <input
+                                                        ref={countedQtyInputRef}
+                                                        type="number"
+                                                        className="input-field"
+                                                        min="0"
+                                                        value={activeCountValue}
+                                                        onChange={(e) => setActiveCountValue(e.target.value)}
+                                                        onKeyDown={(e) => {
+                                                            if (e.key === 'Enter') {
+                                                                e.preventDefault();
+                                                                handleSaveCountForActiveProduct();
+                                                            }
+                                                        }}
+                                                    />
+                                                </div>
+                                                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                                                    <button className="btn btn-primary" onClick={handleSaveCountForActiveProduct}>Guardar conteo</button>
+                                                    <button className="btn" onClick={() => {
+                                                        setActiveCountProductId('');
+                                                        setActiveCountValue('');
+                                                        countScanInputRef.current?.focus();
+                                                    }}>Cancelar</button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                })()
+                            )}
+                        </div>
+
 	                    <table>
 	                        <thead>
 	                            <tr>
 	                                <th><SortButton label="Producto" sortKey="name" sortConfig={countSort} onChange={setCountSortKey} /></th>
+                                    <th>Codigo</th>
 	                                <th><SortButton label="Saldo Sistema" sortKey="sys" sortConfig={countSort} onChange={setCountSortKey} /></th>
 	                                <th><SortButton label="Conteo Real" sortKey="real" sortConfig={countSort} onChange={setCountSortKey} /></th>
 	                                <th><SortButton label="Diferencia" sortKey="diff" sortConfig={countSort} onChange={setCountSortKey} /></th>
+                                    <th>Ultimo conteo</th>
 	                            </tr>
 	                        </thead>
 	                        <tbody>
-	                            {sortedCountProducts.map((p, idx) => {
-	                                const sys = stock.ventas[p.id] || 0;
-	                                const real = physicalCounts[p.id] || 0;
+	                            {countedProducts.map(({ product, countRow }, idx) => {
+	                                const sys = Number(stock?.ventas?.[product.id] || 0);
+	                                const real = Number(physicalCounts?.[product.id] ?? sys);
+                                    const diff = real - sys;
 	                                return (
-	                                    <tr key={`${p.id}-${idx}`}>
-                                        <td>{p.name}</td>
+	                                    <tr key={`${product.id}-${idx}`}>
+                                        <td>{product.name}</td>
+                                        <td>{product.barcode || 'N/A'}</td>
                                         <td>{sys}</td>
-                                        <td>
-                                            <input
-                                                type="number" className="input-field" style={{ width: '80px' }}
-                                                value={real} onChange={e => setPhysicalCounts({ ...physicalCounts, [p.id]: Number(e.target.value) })}
-                                            />
-                                        </td>
-                                        <td style={{ color: (real - sys) === 0 ? 'green' : 'red' }}>{real - sys}</td>
+                                        <td>{real}</td>
+                                        <td style={{ color: diff === 0 ? 'green' : 'red', fontWeight: 700 }}>{diff}</td>
+                                        <td>{countRow?.countedAt ? new Date(countRow.countedAt).toLocaleString() : 'Sin contar'}</td>
                                     </tr>
                                 );
                             })}
                         </tbody>
                     </table>
-                    <div style={{ marginTop: '1rem', display: 'flex', gap: '0.5rem' }} className="no-print">
-                        <button className="btn btn-primary" onClick={handleFinishCount}>Imprimir y Finalizar</button>
+
+                    <div className="card card--muted" style={{ marginTop: '1rem' }}>
+                        <strong>Resumen</strong>
+                        <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', marginTop: '0.5rem' }}>
+                            <span>Productos: {Number(countSummary.rows.length || 0).toLocaleString()}</span>
+                            <span>Sistema: {Number(countSummary.totals.systemQty || 0).toLocaleString()}</span>
+                            <span>Contado: {Number(countSummary.totals.countedQty || 0).toLocaleString()}</span>
+                            <span>Diferencia total: {Number(countSummary.totals.diff || 0).toLocaleString()}</span>
+                            <span>Con ajuste: {Number(countSummary.adjustedRows.length || 0).toLocaleString()}</span>
+                        </div>
+                    </div>
+
+                    <div style={{ marginTop: '1rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }} className="no-print">
+                        <button className="btn btn-primary" onClick={handlePrintCountReport}>Imprimir reporte de conteo</button>
+                        <button className="btn" onClick={handleApplyCountAdjustments}>
+                            Ajustar inventario e imprimir reporte
+                        </button>
+                        {!countReportPrinted && (
+                            <div className="alert alert-info" style={{ margin: 0, padding: '0.5rem 0.75rem' }}>
+                                Recomendado: imprima primero el conteo y luego aplique el ajuste.
+                            </div>
+                        )}
                         <button className="btn" onClick={() => setView('list')}>Cancelar</button>
                     </div>
                 </div>

@@ -5062,6 +5062,30 @@ function App() {
                   details: `${currentUser?.name || 'Usuario'} ajusto ${product?.name || productId} en ${normalizedTarget}: ${currentValue} -> ${nextValue}. Motivo: ${reason}`
                 });
               }}
+              onApplyInventoryCount={async (rows, reason) => {
+                const safeRows = Array.isArray(rows) ? rows : [];
+                for (const row of safeRows) {
+                  const productId = String(row?.productId || '').trim();
+                  if (!productId) continue;
+                  const nextValue = Math.max(0, Number(row?.countedQty || 0));
+                  const currentValue = Number(stock?.ventas?.[productId] || 0);
+
+                  setStock((prev) => ({
+                    ...prev,
+                    ventas: {
+                      ...prev.ventas,
+                      [productId]: nextValue
+                    }
+                  }));
+
+                  await updateStockInDB('ventas', productId, nextValue);
+                  await addLog({
+                    module: 'Inventario',
+                    action: 'Ajuste Stock Conteo',
+                    details: `${currentUser?.name || 'Usuario'} ajusto por conteo ${row?.productName || productId} en ventas: ${currentValue} -> ${nextValue}. Diferencia: ${Number(row?.diff || 0)}. Motivo: ${reason}`
+                  });
+                }
+              }}
               stock={stock}
               setStock={setStock}
               categories={categories}
