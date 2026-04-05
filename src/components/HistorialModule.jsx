@@ -466,11 +466,13 @@ export function HistorialModule({
   };
 
   const getDiscountInfo = (invoice) => {
+    const promotion = invoice?.promotion ?? invoice?.mixedDetails?.discount?.promotion ?? null;
+    const promoAmount = Number(invoice?.promoDiscountAmount ?? invoice?.mixedDetails?.discount?.promoAmount ?? 0);
     const automaticPercent = Number(invoice?.automaticDiscountPercent ?? invoice?.mixedDetails?.discount?.automaticPercent ?? 0);
     const automaticAmount = Number(invoice?.automaticDiscountAmount ?? invoice?.mixedDetails?.discount?.automaticAmount ?? 0);
     const extraAmount = Number(invoice?.extraDiscount ?? invoice?.mixedDetails?.discount?.extraAmount ?? 0);
-    const totalAmount = Number(invoice?.totalDiscount ?? invoice?.mixedDetails?.discount?.totalAmount ?? (automaticAmount + extraAmount));
-    return { automaticPercent, automaticAmount, extraAmount, totalAmount };
+    const totalAmount = Number(invoice?.totalDiscount ?? invoice?.mixedDetails?.discount?.totalAmount ?? (promoAmount + automaticAmount + extraAmount));
+    return { promotion, promoAmount, automaticPercent, automaticAmount, extraAmount, totalAmount };
   };
 
   const getAuthorizationInfo = (invoice) => (

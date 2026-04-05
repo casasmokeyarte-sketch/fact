@@ -13,6 +13,7 @@ export function SettingsModule({
     categories, setCategories,
     onSaveCategories,
     products = [],
+    sales = [],
     promotions = [],
     setPromotions,
     onSavePromotions,
@@ -21,7 +22,8 @@ export function SettingsModule({
     soundVolume, setSoundVolume,
     soundPreset, setSoundPreset,
     operationalDateSettings,
-    onApplyOperationalDateOffset
+    onApplyOperationalDateOffset,
+    onApplyUserShiftCloseOverride
 }) {
     const [subTab, setSubTab] = useState('usuarios');
 
@@ -40,6 +42,7 @@ export function SettingsModule({
     const [promoSaveBusy, setPromoSaveBusy] = useState(false);
     const [promoProductsOpenId, setPromoProductsOpenId] = useState('');
     const [promoProductSearch, setPromoProductSearch] = useState('');
+    const [promoHistoryOpen, setPromoHistoryOpen] = useState(false);
 
     // New User State
     const [newUser, setNewUser] = useState({ name: '', username: '', password: '', role: 'Cajero' });
@@ -51,7 +54,9 @@ export function SettingsModule({
     // New Category State
     const [newCategory, setNewCategory] = useState('');
     const [dayOffsetInput, setDayOffsetInput] = useState(() => Number(operationalDateSettings?.daysOffset || 0));
+    const [userDayOffsetInput, setUserDayOffsetInput] = useState(0);
     const [dayOffsetReason, setDayOffsetReason] = useState('');
+    const [targetUserIdForDayOffset, setTargetUserIdForDayOffset] = useState('');
     const [printerSettings, setPrinterSettings] = useState(() => {
         try {
             const raw = localStorage.getItem('fact_printer_settings');
@@ -87,6 +92,14 @@ export function SettingsModule({
     React.useEffect(() => {
         setDayOffsetInput(Number(operationalDateSettings?.daysOffset || 0));
     }, [operationalDateSettings?.daysOffset]);
+
+    React.useEffect(() => {
+        if (targetUserIdForDayOffset) return;
+        const firstNonAdmin = (users || []).find((user) => String(user?.role || '') !== 'Administrador');
+        if (firstNonAdmin?.id) {
+            setTargetUserIdForDayOffset(String(firstNonAdmin.id));
+        }
+    }, [users, targetUserIdForDayOffset]);
 
     React.useEffect(() => {
         try {
@@ -424,6 +437,67 @@ export function SettingsModule({
         }
     };
 
+    const getInvoicePromotionInfo = React.useCallback((invoice) => {
+        const discount = invoice?.mixedDetails?.discount || invoice?.mixed_details?.discount || {};
+        const promotion = invoice?.promotion || discount?.promotion || null;
+        const promoAmount = Number(invoice?.promoDiscountAmount ?? discount?.promoAmount ?? 0);
+        if (!promotion || promoAmount <= 0) return null;
+        return {
+            promotion,
+            promoAmount,
+        };
+    }, []);
+
+    const promotionHistory = React.useMemo(() => {
+        const summaryByPromo = new Map();
+        const invoiceRows = [];
+
+        (Array.isArray(sales) ? sales : []).forEach((invoice) => {
+            const promoInfo = getInvoicePromotionInfo(invoice);
+            if (!promoInfo) return;
+
+            const promoId = String(promoInfo.promotion?.id || promoInfo.promotion?.name || 'PROMO-SIN-ID');
+            const promoName = String(promoInfo.promotion?.name || promoId);
+            const promoAmount = Number(promoInfo.promoAmount || 0);
+            const invoiceCode = String(
+                invoice?.invoiceCode ||
+                invoice?.mixedDetails?.invoiceCode ||
+                invoice?.mixedDetails?.invoice_code ||
+                invoice?.id ||
+                'N/A'
+            );
+            const row = {
+                promoId,
+                promoName,
+                invoiceCode,
+                clientName: invoice?.clientName || 'Cliente Ocasional',
+                userName: invoice?.user_name || invoice?.user || invoice?.mixedDetails?.user_name || invoice?.mixedDetails?.user || 'Sistema',
+                date: invoice?.date || '',
+                promoAmount,
+                invoiceTotal: Number(invoice?.total || 0),
+            };
+
+            invoiceRows.push(row);
+            const existing = summaryByPromo.get(promoId) || {
+                promoId,
+                promoName,
+                uses: 0,
+                totalDiscount: 0,
+                invoices: [],
+            };
+            existing.uses += 1;
+            existing.totalDiscount += promoAmount;
+            existing.invoices.push(row);
+            summaryByPromo.set(promoId, existing);
+        });
+
+        return {
+            totals: Array.from(summaryByPromo.values()).sort((a, b) => b.totalDiscount - a.totalDiscount),
+            invoiceRows: invoiceRows.sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime()),
+            grandTotal: Array.from(summaryByPromo.values()).reduce((sum, row) => sum + Number(row.totalDiscount || 0), 0),
+        };
+    }, [sales, getInvoicePromotionInfo]);
+
     return (
         <div className="settings-module">
             <h2>Modulo de ConfiguraciAn</h2>
@@ -595,12 +669,66 @@ export function SettingsModule({
                     <div className="card card--warn">
                         <h3 style={{ marginTop: 0 }}>Fecha Operativa (Retroceder Dia)</h3>
                         <p style={{ marginTop: 0 }}>
-                            Permite ajustar temporalmente la fecha del sistema para corregir errores del dia anterior.
+                            El ajuste global sigue disponible para toda la empresa, pero ahora tambien puede mover la reapertura de jornada para un usuario especifico.
                             Requiere motivo obligatorio para trazabilidad.
                         </p>
                         <div style={{ display: 'grid', gap: '0.75rem' }}>
+                            <div className="card card--muted" style={{ marginBottom: '0.25rem' }}>
+                                <strong>Ajuste por usuario para reapertura</strong>
+                                <p style={{ margin: '0.5rem 0 0.75rem 0', color: 'var(--text-secondary)' }}>
+                                    Use esto cuando un usuario ya cerro jornada hoy y necesita volver a abrir en otra correccion o en otro equipo.
+                                </p>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '0.75rem' }}>
+                                    <div className="input-group" style={{ marginBottom: 0 }}>
+                                        <label className="input-label">Usuario</label>
+                                        <select
+                                            className="input-field"
+                                            value={targetUserIdForDayOffset}
+                                            onChange={(e) => setTargetUserIdForDayOffset(e.target.value)}
+                                        >
+                                            <option value="">Seleccione usuario...</option>
+                                            {(users || []).map((user) => (
+                                                <option key={String(user?.id || user?.username || user?.name)} value={String(user?.id || '')}>
+                                                    {user?.name || user?.username || 'Usuario'}{user?.role ? ` (${user.role})` : ''}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    <div className="input-group" style={{ marginBottom: 0 }}>
+                                        <label className="input-label">Dias a mover para ese usuario</label>
+                                        <input
+                                            type="number"
+                                            className="input-field"
+                                            value={Number(userDayOffsetInput || 0)}
+                                            min={-30}
+                                            max={30}
+                                            step={1}
+                                            onChange={(e) => setUserDayOffsetInput(Number(e.target.value))}
+                                        />
+                                    </div>
+                                </div>
+                                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
+                                    <button
+                                        className="btn btn-primary"
+                                        onClick={async () => {
+                                            const ok = await onApplyUserShiftCloseOverride?.({
+                                                userId: String(targetUserIdForDayOffset || '').trim(),
+                                                daysOffset: Number(userDayOffsetInput || 0),
+                                                reason: String(dayOffsetReason || '').trim()
+                                            });
+                                            if (ok) {
+                                                setDayOffsetReason('');
+                                                setUserDayOffsetInput(0);
+                                                alert('Ajuste por usuario aplicado.');
+                                            }
+                                        }}
+                                    >
+                                        Aplicar a usuario
+                                    </button>
+                                </div>
+                            </div>
                             <div className="input-group" style={{ marginBottom: 0 }}>
-                                <label className="input-label">Dias a mover (negativo = retroceder, maximo +/-30)</label>
+                                <label className="input-label">Dias a mover globalmente (negativo = retroceder, maximo +/-30)</label>
                                 <input
                                     type="number"
                                     className="input-field"
@@ -639,7 +767,7 @@ export function SettingsModule({
                                         }
                                     }}
                                 >
-                                    Aplicar ajuste
+                                    Aplicar ajuste global
                                 </button>
                                 <button
                                     className="btn"
@@ -973,12 +1101,17 @@ export function SettingsModule({
                     <div className="card">
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>
                             <h3 style={{ marginTop: 0, marginBottom: 0 }}>Promociones vigentes</h3>
-                            <button className="btn btn-primary" onClick={savePromotionsNow} disabled={promoSaveBusy}>
-                                {promoSaveBusy ? 'Guardando...' : 'Guardar promociones'}
-                            </button>
+                            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                <button className="btn" onClick={() => setPromoHistoryOpen(true)}>
+                                    Historial
+                                </button>
+                                <button className="btn btn-primary" onClick={savePromotionsNow} disabled={promoSaveBusy}>
+                                    {promoSaveBusy ? 'Guardando...' : 'Guardar promociones'}
+                                </button>
+                            </div>
                         </div>
                         <p style={{ marginTop: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-                            Nota: si el cajero aplica un descuento EXTRA fuera de la promo, el sistema vuelve a pedir autorizacion.
+                            Nota: si el cliente ya tiene descuento fijo en su perfil, la promocion no se aplica. El sistema evita doble descuento.
                         </p>
 
                         {(promotions || []).length === 0 ? (
@@ -1186,6 +1319,85 @@ export function SettingsModule({
                                 </button>
                             </div>
                         ))}
+                    </div>
+                </div>
+            )}
+
+            {promoHistoryOpen && (
+                <div className="modal-overlay" style={{
+                    position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+                    backgroundColor: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100, padding: '1rem'
+                }}>
+                    <div className="card" style={{ width: 'min(1100px, 100%)', maxHeight: '90vh', overflowY: 'auto' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', marginBottom: '1rem' }}>
+                            <div>
+                                <h3 style={{ margin: 0 }}>Historial de promociones</h3>
+                                <p style={{ margin: '0.35rem 0 0 0', color: 'var(--text-secondary)' }}>
+                                    Total descontado por promociones: <strong>${Number(promotionHistory.grandTotal || 0).toLocaleString()}</strong>
+                                </p>
+                            </div>
+                            <button className="btn" onClick={() => setPromoHistoryOpen(false)}>Cerrar</button>
+                        </div>
+
+                        <div className="card card--muted" style={{ marginBottom: '1rem' }}>
+                            <h4 style={{ marginTop: 0 }}>Totales por promocion</h4>
+                            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                                <thead>
+                                    <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
+                                        <th style={{ padding: '0.5rem', textAlign: 'left' }}>Promocion</th>
+                                        <th style={{ padding: '0.5rem', textAlign: 'right' }}>Usos</th>
+                                        <th style={{ padding: '0.5rem', textAlign: 'right' }}>Total descontado</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {promotionHistory.totals.length === 0 ? (
+                                        <tr><td colSpan="3" style={{ padding: '1rem', textAlign: 'center' }}>No hay descuentos de promociones registrados.</td></tr>
+                                    ) : (
+                                        promotionHistory.totals.map((row) => (
+                                            <tr key={row.promoId} style={{ borderBottom: '1px solid #e2e8f0' }}>
+                                                <td style={{ padding: '0.5rem' }}>{row.promoName}</td>
+                                                <td style={{ padding: '0.5rem', textAlign: 'right' }}>{Number(row.uses || 0).toLocaleString()}</td>
+                                                <td style={{ padding: '0.5rem', textAlign: 'right', fontWeight: 700 }}>${Number(row.totalDiscount || 0).toLocaleString()}</td>
+                                            </tr>
+                                        ))
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div className="card card--muted">
+                            <h4 style={{ marginTop: 0 }}>Detalle por factura</h4>
+                            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                                <thead>
+                                    <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
+                                        <th style={{ padding: '0.5rem', textAlign: 'left' }}>Fecha</th>
+                                        <th style={{ padding: '0.5rem', textAlign: 'left' }}>Promocion</th>
+                                        <th style={{ padding: '0.5rem', textAlign: 'left' }}>Factura</th>
+                                        <th style={{ padding: '0.5rem', textAlign: 'left' }}>Cliente</th>
+                                        <th style={{ padding: '0.5rem', textAlign: 'left' }}>Usuario</th>
+                                        <th style={{ padding: '0.5rem', textAlign: 'right' }}>Descuento promo</th>
+                                        <th style={{ padding: '0.5rem', textAlign: 'right' }}>Total factura</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {promotionHistory.invoiceRows.length === 0 ? (
+                                        <tr><td colSpan="7" style={{ padding: '1rem', textAlign: 'center' }}>Sin facturas con promociones.</td></tr>
+                                    ) : (
+                                        promotionHistory.invoiceRows.map((row, index) => (
+                                            <tr key={`${row.promoId}-${row.invoiceCode}-${index}`} style={{ borderBottom: '1px solid #e2e8f0' }}>
+                                                <td style={{ padding: '0.5rem' }}>{row.date ? new Date(row.date).toLocaleString() : 'N/A'}</td>
+                                                <td style={{ padding: '0.5rem' }}>{row.promoName}</td>
+                                                <td style={{ padding: '0.5rem' }}>{row.invoiceCode}</td>
+                                                <td style={{ padding: '0.5rem' }}>{row.clientName}</td>
+                                                <td style={{ padding: '0.5rem' }}>{row.userName}</td>
+                                                <td style={{ padding: '0.5rem', textAlign: 'right' }}>-${Number(row.promoAmount || 0).toLocaleString()}</td>
+                                                <td style={{ padding: '0.5rem', textAlign: 'right' }}>${Number(row.invoiceTotal || 0).toLocaleString()}</td>
+                                            </tr>
+                                        ))
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 </div>
             )}

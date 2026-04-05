@@ -120,9 +120,13 @@ export function computeInvoiceTotals({
   const safeItems = Array.isArray(items) ? items : [];
   const subtotal = safeItems.reduce((sum, item) => sum + (Number(item?.total || 0) || 0), 0);
   const safeDeliveryFee = Number(deliveryFee || 0) || 0;
+  const automaticPercent = Math.max(0, Number(selectedClientDiscountPercent || 0) || 0);
+  const allowPromotion = automaticPercent <= 0;
 
   const { promotion, eligibleSubtotal: promoEligibleSubtotal, discountAmount: promoDiscountAmount } =
-    resolveBestActivePromotion(promotions, safeItems, now);
+    allowPromotion
+      ? resolveBestActivePromotion(promotions, safeItems, now)
+      : { promotion: null, eligibleSubtotal: 0, discountAmount: 0 };
 
   const discountableSubtotal = safeItems.reduce((sum, item) => {
     const lineTotal = Number(item?.total || 0);
@@ -143,7 +147,6 @@ export function computeInvoiceTotals({
     ? promoDiscountAmount * (promoDiscountableSubtotal / promoEligibleSubtotal)
     : 0;
 
-  const automaticPercent = Number(selectedClientDiscountPercent || 0) || 0;
   const rawAutomatic = discountableSubtotal * (automaticPercent / 100);
   const maxAutomaticAllowed = Math.max(0, discountableSubtotal - promoDiscountOnDiscountableItems);
   const automaticDiscountAmount = Math.max(0, Math.min(rawAutomatic, maxAutomaticAllowed));
@@ -169,6 +172,7 @@ export function computeInvoiceTotals({
       amount: promotion.amount,
       includeFullPriceOnly: promotion.includeFullPriceOnly === true,
     } : null,
+    promotionsBlockedByClientDiscount: !allowPromotion,
     promoEligibleSubtotal,
     promoDiscountAmount: Math.max(0, promoDiscountAmount || 0),
     promoDiscountOnDiscountableItems: Math.max(0, promoDiscountOnDiscountableItems || 0),
@@ -181,4 +185,3 @@ export function computeInvoiceTotals({
     total,
   };
 }
-

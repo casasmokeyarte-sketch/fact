@@ -595,6 +595,8 @@ export const dataService = {
         clientDoc: inv.client_doc ?? 'N/A',
         subtotal: Number(inv.subtotal ?? 0),
         deliveryFee: Number(inv.delivery_fee ?? 0),
+        promoDiscountAmount: Number(inv?.mixed_details?.discount?.promoAmount ?? 0),
+        promotion: inv?.mixed_details?.discount?.promotion ?? null,
         automaticDiscountPercent: Number(inv?.mixed_details?.discount?.automaticPercent ?? 0),
         automaticDiscountAmount: Number(inv?.mixed_details?.discount?.automaticAmount ?? 0),
         extraDiscount: Number(inv?.mixed_details?.discount?.extraAmount ?? 0),
@@ -626,6 +628,15 @@ export const dataService = {
       ...(baseMixedDetails && typeof baseMixedDetails === 'object' ? baseMixedDetails : {}),
       user_name: userName || undefined,
       discount: {
+        promotion:
+          invoice?.promotion ??
+          baseMixedDetails?.discount?.promotion ??
+          null,
+        promoAmount: Number(
+          invoice?.promoDiscountAmount ??
+          baseMixedDetails?.discount?.promoAmount ??
+          0
+        ),
         automaticPercent: Number(
           invoice?.automaticDiscountPercent ??
           baseMixedDetails?.discount?.automaticPercent ??
@@ -944,14 +955,16 @@ export const dataService = {
   async getOpenShiftForUser(userId) {
     if (!userId) return null;
 
-    const { data, error } = await supabase
-      .from('shift_history')
-      .select('*')
-      .eq('user_id', userId)
-      .is('end_time', null)
-      .order('start_time', { ascending: false })
-      .limit(1)
-      .maybeSingle();
+    const { data, error } = await withRetry(() => (
+      supabase
+        .from('shift_history')
+        .select('*')
+        .eq('user_id', userId)
+        .is('end_time', null)
+        .order('start_time', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+    ));
 
     if (error) throw error;
     if (!data) return null;
@@ -1009,7 +1022,7 @@ export const dataService = {
     };
 
     if (isUuid(payload.id)) {
-      let { data, error } = await supabase.from('shift_history').upsert(payload).select();
+      let { data, error } = await withRetry(() => supabase.from('shift_history').upsert(payload).select());
       if (error && isUndefinedColumnError(error)) {
         const {
           user_name,
@@ -1021,7 +1034,7 @@ export const dataService = {
           inventory_status,
           ...fallbackPayload
         } = payload;
-        const retry = await supabase.from('shift_history').upsert(fallbackPayload).select();
+        const retry = await withRetry(() => supabase.from('shift_history').upsert(fallbackPayload).select());
         data = retry.data;
         error = retry.error;
       }
@@ -1030,7 +1043,7 @@ export const dataService = {
     }
 
     const insertPayload = removeInvalidUuidId(payload);
-    let { data, error } = await supabase.from('shift_history').insert(insertPayload).select();
+    let { data, error } = await withRetry(() => supabase.from('shift_history').insert(insertPayload).select());
     if (error && isUndefinedColumnError(error)) {
       const {
         user_name,
@@ -1042,7 +1055,7 @@ export const dataService = {
         inventory_status,
         ...fallbackPayload
       } = insertPayload;
-      const retry = await supabase.from('shift_history').insert(fallbackPayload).select();
+      const retry = await withRetry(() => supabase.from('shift_history').insert(fallbackPayload).select());
       data = retry.data;
       error = retry.error;
     }

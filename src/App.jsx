@@ -232,6 +232,7 @@ const REMOTE_AUTH_REQUESTS_STORAGE_KEY = 'fact_remote_auth_requests';
 const SOUND_SETTINGS_STORAGE_KEY = 'fact_sound_settings';
 const AUTH_REQUEST_LOG_PREFIX = 'AUTH_REQUEST_EVENT::';
 const BOARD_NOTE_LOG_PREFIX = 'BOARD_NOTE_EVENT::';
+const SHIFT_CLOSE_OVERRIDE_LOG_PREFIX = 'SHIFT_CLOSE_OVERRIDE::';
 const INVOICE_DRAFTS_STORAGE_KEY = 'fact_invoice_drafts';
 const INVOICE_COMPOSER_STORAGE_KEY = 'fact_invoice_composer';
 const NOTIFICATIONS_SEEN_AT_STORAGE_KEY = 'fact_notifications_seen_at';
@@ -361,6 +362,17 @@ const parseAuthRequestLogEvent = (details) => {
   if (!raw.startsWith(AUTH_REQUEST_LOG_PREFIX)) return null;
   try {
     const parsed = JSON.parse(raw.slice(AUTH_REQUEST_LOG_PREFIX.length));
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
+const parseShiftCloseOverrideLogEvent = (details) => {
+  const raw = String(details || '');
+  if (!raw.startsWith(SHIFT_CLOSE_OVERRIDE_LOG_PREFIX)) return null;
+  try {
+    const parsed = JSON.parse(raw.slice(SHIFT_CLOSE_OVERRIDE_LOG_PREFIX.length));
     return parsed && typeof parsed === 'object' ? parsed : null;
   } catch {
     return null;
@@ -1436,6 +1448,17 @@ function App() {
     };
   }, [])
 
+  useEffect(() => {
+    if (!currentUser?.id || shift?.startTime) return undefined;
+
+    const retryRestore = () => {
+      restoreOpenShift(currentUser.id);
+    };
+
+    window.addEventListener('focus', retryRestore);
+    return () => window.removeEventListener('focus', retryRestore);
+  }, [currentUser?.id, shift?.startTime]);
+
   // Handle logout
   const handleLogout = async () => {
     const { error } = await signOut();
@@ -2472,6 +2495,53 @@ function App() {
     return true;
   };
 
+  const onApplyUserShiftCloseOverride = async ({ userId = '', daysOffset = 0, reason = '' } = {}) => {
+    const targetUserId = String(userId || '').trim();
+    const normalizedOffset = Math.max(-30, Math.min(30, Math.trunc(Number(daysOffset) || 0)));
+    const cleanReason = String(reason || '').trim();
+
+    if (!targetUserId) {
+      alert('Seleccione el usuario al que se le aplicara el ajuste.');
+      return false;
+    }
+
+    if (cleanReason.length < 10) {
+      alert('Debe escribir un motivo claro (minimo 10 caracteres).');
+      return false;
+    }
+
+    if (!isAdminAuth) {
+      alert('Solo un Administrador puede ajustar la reapertura de jornada por usuario.');
+      return false;
+    }
+
+    const targetUser = (users || []).find((user) => String(user?.id || '') === targetUserId);
+    const effectiveDate = new Date();
+    effectiveDate.setDate(effectiveDate.getDate() + normalizedOffset);
+    const effectiveDateKey = effectiveDate.toISOString().slice(0, 10);
+
+    const closeMap = readLastShiftCloseByUser();
+    closeMap[targetUserId] = effectiveDateKey;
+    writeLastShiftCloseByUser(closeMap);
+
+    await addLog({
+      module: 'Jornada',
+      action: 'Retroceder Dia Usuario',
+      details: `${SHIFT_CLOSE_OVERRIDE_LOG_PREFIX}${JSON.stringify({
+        targetUserId,
+        targetUserName: targetUser?.name || targetUser?.username || 'Usuario',
+        appliedById: currentUser?.id || null,
+        appliedByName: currentUser?.name || currentUser?.email || 'Sistema',
+        daysOffset: normalizedOffset,
+        effectiveDateKey,
+        reason: cleanReason,
+        appliedAt: new Date().toISOString(),
+      })}`
+    });
+
+    return true;
+  };
+
   const resetInvoiceComposer = () => {
     setItems([]);
     setClientName(CLIENT_OCASIONAL);
@@ -2716,9 +2786,8 @@ function App() {
     const startCash = Number(initialCash) > 0 ? Number(initialCash) : 0;
     const nowIso = getOperationalNowIso();
     const nowRealDateKey = getRealDateKey();
-    const closeMap = readLastShiftCloseByUser();
     const userKey = String(currentUser?.id || '');
-    const lastClosedDateKey = String(closeMap[userKey] || '');
+    const lastClosedDateKey = getEffectiveLastClosedDateForUser(userKey);
     const inventoryAssignments = filterSmokeShiftInventoryAssignments(
       normalizeShiftInventoryAssignments(
         options?.inventoryAssignments,
@@ -2758,7 +2827,7 @@ function App() {
       addLog({
         module: 'Jornada',
         action: 'Reapertura Excepcional',
-        details: `Reapertura autorizada para ${currentUser?.name || 'Usuario'} en fecha real ${nowRealDateKey}.`
+        details: `Reapertura autorizada para ${currentUser?.name || 'Usuario'} en fecha real ${nowRealDateKey}. Ultimo cierre efectivo: ${lastClosedDateKey || 'N/A'}.`
       });
     }
 
@@ -3282,6 +3351,32 @@ function App() {
     }
 
     const salesTotal = summary.salesBreakdown.gross;
+    const shiftSalesDetailedLines = summary.shiftSales.map((sale) => {
+      const invoiceCode = String(
+        sale?.invoiceCode ||
+        sale?.mixedDetails?.invoiceCode ||
+        sale?.mixedDetails?.invoice_code ||
+        sale?.id ||
+        'N/A'
+      );
+      const discount = sale?.mixedDetails?.discount || {};
+      const promoName = String(sale?.promotion?.name || discount?.promotion?.name || '').trim();
+      const promoAmount = Number(sale?.promoDiscountAmount ?? discount?.promoAmount ?? 0);
+      const automaticAmount = Number(sale?.automaticDiscountAmount ?? discount?.automaticAmount ?? 0);
+      const extraAmount = Number(sale?.extraDiscount ?? discount?.extraAmount ?? 0);
+      const totalDiscountAmount = Number(sale?.totalDiscount ?? discount?.totalAmount ?? (promoAmount + automaticAmount + extraAmount));
+      return [
+        `Factura ${invoiceCode}`,
+        `Cliente ${sale?.clientName || 'Cliente Ocasional'}`,
+        `Pago ${sale?.paymentMode || 'N/A'}`,
+        `Bruto ${Number(sale?.subtotal || 0).toLocaleString()}`,
+        promoAmount > 0 ? `Promo${promoName ? ` ${promoName}` : ''} ${promoAmount.toLocaleString()}` : null,
+        automaticAmount > 0 ? `Desc. cliente ${automaticAmount.toLocaleString()}` : null,
+        extraAmount > 0 ? `Desc. extra ${extraAmount.toLocaleString()}` : null,
+        totalDiscountAmount > 0 ? `Desc. total ${totalDiscountAmount.toLocaleString()}` : null,
+        `Neto ${Number(sale?.total || 0).toLocaleString()}`,
+      ].filter(Boolean).join(' | ');
+    });
     const reconciliation = data?.reconciliation && typeof data.reconciliation === 'object'
       ? data.reconciliation
       : null;
@@ -3371,6 +3466,9 @@ function App() {
       '------------------------------------------',
       'RESUMEN MONETARIO',
       `Ventas Brutas: ${salesTotal.toLocaleString()} (${summary.shiftSales.length} facturas)`,
+      `Descuento promociones: ${summary.shiftSales.reduce((sum, sale) => sum + Number(sale?.promoDiscountAmount ?? sale?.mixedDetails?.discount?.promoAmount ?? 0), 0).toLocaleString()}`,
+      `Descuento clientes fijos: ${summary.shiftSales.reduce((sum, sale) => sum + Number(sale?.automaticDiscountAmount ?? sale?.mixedDetails?.discount?.automaticAmount ?? 0), 0).toLocaleString()}`,
+      `Descuento extraordinario: ${summary.shiftSales.reduce((sum, sale) => sum + Number(sale?.extraDiscount ?? sale?.mixedDetails?.discount?.extraAmount ?? 0), 0).toLocaleString()}`,
       `Abonos Cartera: ${Number(summary.abonosBreakdown.total || 0).toLocaleString()} (${summary.shiftCarteraAbonos.length} abono(s))`,
       `Recibos Caja Externos: ${Number(summary.externalCashReceiptsBreakdown.total || 0).toLocaleString()} (${summary.shiftExternalCashReceipts.length} recibo(s))`,
       `Cuenta EFECTIVO: Sistema ${Number(systemAccounts.efectivo || 0).toLocaleString()} | Declarado ${Number(enteredAccounts.efectivo || 0).toLocaleString()}`,
@@ -3386,6 +3484,9 @@ function App() {
       `Cierre con autorizacion admin: ${authorizedMismatch ? 'SI' : 'NO'}`,
       `Cierre sin movimientos: ${hasAnyUserMovement ? 'NO' : 'SI'}`,
       ...(hasAnyUserMovement ? [] : [`Motivo cierre sin movimientos: ${emptyCloseReason}`]),
+      '------------------------------------------',
+      'FACTURACION DETALLADA',
+      ...(shiftSalesDetailedLines.length > 0 ? shiftSalesDetailedLines : ['Sin facturas registradas en esta jornada.']),
       '------------------------------------------',
       'CONTROL DE INVENTARIO POR TURNO',
       ...(inventoryClosureRows.length > 0
@@ -3504,6 +3605,41 @@ function App() {
       console.error('No se pudo guardar cierre por usuario:', e);
     }
   };
+
+  const getManualShiftCloseOverrideMap = useCallback(() => {
+    return (auditLogs || []).reduce((acc, log) => {
+      const event = parseShiftCloseOverrideLogEvent(log?.details);
+      const userId = String(event?.targetUserId || '').trim();
+      if (!userId || !event?.effectiveDateKey) return acc;
+      acc[userId] = String(event.effectiveDateKey);
+      return acc;
+    }, {});
+  }, [auditLogs]);
+
+  const getLatestClosedShiftDateForUser = useCallback((userId) => {
+    const key = String(userId || '').trim();
+    if (!key) return '';
+
+    const latestShift = (shiftHistory || [])
+      .filter((row) => String(row?.user_id || '').trim() === key && row?.endTime)
+      .sort((a, b) => new Date(b?.endTime || 0).getTime() - new Date(a?.endTime || 0).getTime())[0];
+
+    if (!latestShift?.endTime) return '';
+    return getDateKey(latestShift.endTime);
+  }, [shiftHistory]);
+
+  const getEffectiveLastClosedDateForUser = useCallback((userId) => {
+    const key = String(userId || '').trim();
+    if (!key) return '';
+
+    const localMap = readLastShiftCloseByUser();
+    const localDateKey = String(localMap[key] || '').trim();
+    const manualOverrideMap = getManualShiftCloseOverrideMap();
+    const manualDateKey = String(manualOverrideMap[key] || '').trim();
+    const cloudDateKey = String(getLatestClosedShiftDateForUser(key) || '').trim();
+
+    return manualDateKey || localDateKey || cloudDateKey || '';
+  }, [getLatestClosedShiftDateForUser, getManualShiftCloseOverrideMap]);
 
   const handleAddItem = (item) => {
     if (item?.is_visible === false) {
@@ -4992,6 +5128,7 @@ function App() {
 	              categories={categories} setCategories={setCategories}
 	              onSaveCategories={saveCompanyCategories}
                 products={products}
+                sales={salesHistory}
                 promotions={companyPromotions}
                 setPromotions={setCompanyPromotions}
                 onSavePromotions={saveCompanyPromotions}
@@ -5001,6 +5138,7 @@ function App() {
 	              soundPreset={soundPreset} setSoundPreset={setSoundPreset}
 	              operationalDateSettings={operationalDateSettings}
 	              onApplyOperationalDateOffset={onApplyOperationalDateOffset}
+                onApplyUserShiftCloseOverride={onApplyUserShiftCloseOverride}
 	            />
 	          )}
           {activeTab === 'trueque' && (

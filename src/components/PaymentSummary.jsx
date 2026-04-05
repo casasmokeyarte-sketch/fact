@@ -52,7 +52,8 @@ export function PaymentSummary({
   buildApprovalAttachments,
   loadedDraftState,
   onSaveDraft,
-  onFacturarCero
+  onFacturarCero,
+  onDraftStateChange
 }) {
   const normalizeRole = (role) => {
     const normalized = String(role || '').trim().toLowerCase();
@@ -108,6 +109,7 @@ export function PaymentSummary({
   const maxExtraDiscount = totals.maxExtraDiscount;
   const effectiveExtraDiscount = totals.effectiveExtraDiscount;
   const totalDiscount = totals.totalDiscount;
+  const promotionsBlockedByClientDiscount = totals.promotionsBlockedByClientDiscount;
   const safeMixedAmountA = clamp(Number(mixedAmountA) || 0, 0, Math.max(0, total));
   const mixedAmountB = Math.max(0, total - safeMixedAmountA);
 
@@ -176,8 +178,10 @@ export function PaymentSummary({
     });
   };
 
+  const loadedDraftStateKey = loadedDraftState?.restoreKey || loadedDraftState?.draftId || '';
+
   useEffect(() => {
-    if (!loadedDraftState?.draftId) return;
+    if (!loadedDraftStateKey) return;
 
     setResolvedExtraDiscount(Number(loadedDraftState.extraDiscount || 0));
     setAuthNote(String(loadedDraftState.authNote || ''));
@@ -205,11 +209,46 @@ export function PaymentSummary({
       setMixedOtherA('');
       setMixedOtherB('');
     }
-  }, [loadedDraftState?.draftId]);
+  }, [loadedDraftStateKey]);
 
   useEffect(() => {
     if (!needsApproval) localApprovalRef.current = null;
   }, [needsApproval]);
+
+  useEffect(() => {
+    if (typeof onDraftStateChange !== 'function') return;
+
+    onDraftStateChange({
+      extraDiscount: Number(resolvedExtraDiscount || 0),
+      authNote: String(authNote || ''),
+      activeRemoteRequestId: String(activeRemoteRequestId || ''),
+      isMixed: !!isMixed,
+      mixedData: isMixed ? {
+        modeA: mixedModeA,
+        modeB: mixedModeB,
+        amountA: Number(safeMixedAmountA || 0),
+        refA: String(mixedRefA || ''),
+        refB: String(mixedRefB || ''),
+        otherA: String(mixedOtherA || ''),
+        otherB: String(mixedOtherB || ''),
+      } : null,
+      otherPaymentDetail: String(otherPaymentDetail || ''),
+    });
+  }, [
+    onDraftStateChange,
+    resolvedExtraDiscount,
+    authNote,
+    activeRemoteRequestId,
+    isMixed,
+    mixedModeA,
+    mixedModeB,
+    safeMixedAmountA,
+    mixedRefA,
+    mixedRefB,
+    mixedOtherA,
+    mixedOtherB,
+    otherPaymentDetail,
+  ]);
 
   const reasonType = hasGift
     ? 'REGALO'
@@ -643,6 +682,14 @@ export function PaymentSummary({
             <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
               {promoName ? `Promocion (${promoName}): ` : 'Promocion: '}
               <strong>-${Number(promoDiscountAmount || 0).toLocaleString()}</strong>
+            </div>
+          </div>
+        )}
+
+        {promotionsBlockedByClientDiscount && Number(selectedClientDiscount || 0) > 0 && (
+          <div className="card card--muted" style={{ marginBottom: '1rem', borderColor: '#f59e0b' }}>
+            <div style={{ fontSize: '0.9rem', color: '#92400e' }}>
+              Este cliente ya tiene descuento fijo en su registro. La promocion automatica no aplica para evitar doble descuento.
             </div>
           </div>
         )}
