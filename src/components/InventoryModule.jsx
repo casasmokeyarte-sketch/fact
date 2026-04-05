@@ -15,6 +15,7 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
     const [activeCountProductId, setActiveCountProductId] = useState('');
     const [activeCountValue, setActiveCountValue] = useState('');
     const [countSearchTerm, setCountSearchTerm] = useState('');
+    const [countStage, setCountStage] = useState('capture');
     const [countReportPrinted, setCountReportPrinted] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [categoryFilter, setCategoryFilter] = useState('');
@@ -191,11 +192,19 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
     const countedProducts = useMemo(() => {
         const q = String(countSearchTerm || '').trim().toLowerCase();
         const rowsById = new Map((countSessionRows || []).map((row) => [String(row.productId), row]));
-        return sortedCountProducts
+        return (countStage === 'capture' ? (countSessionRows || []).map((row) => ({
+            product: (products || []).find((item) => String(item?.id || '') === String(row.productId || '')) || {
+                id: row.productId,
+                name: row.productName,
+                barcode: row.barcode,
+                category: ''
+            },
+            countRow: row,
+        })) : sortedCountProducts
             .map((product) => ({
                 product,
                 countRow: rowsById.get(String(product?.id || '')) || null,
-            }))
+            })))
             .filter(({ product, countRow }) => {
                 if (!q) return true;
                 const haystack = [
@@ -206,7 +215,7 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
                 ].join(' ').toLowerCase();
                 return haystack.includes(q);
             });
-    }, [sortedCountProducts, countSessionRows, countSearchTerm]);
+    }, [sortedCountProducts, countSessionRows, countSearchTerm, countStage, products]);
 
     const countSummary = useMemo(() => {
         const rows = countedProducts.map(({ product, countRow }) => {
@@ -412,14 +421,13 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
 
     // Physical Count Logic
     const handleStartCount = () => {
-        const initialCounts = {};
-        products.forEach(p => initialCounts[p.id] = Number(stock?.ventas?.[p.id] || 0));
-        setPhysicalCounts(initialCounts);
+        setPhysicalCounts({});
         setCountSessionRows([]);
         setCountScanCode('');
         setActiveCountProductId('');
         setActiveCountValue('');
         setCountSearchTerm('');
+        setCountStage('capture');
         setCountReportPrinted(false);
         setView('count');
     };
@@ -467,7 +475,8 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
         }
 
         setActiveCountProductId(String(product.id));
-        setActiveCountValue(String(Number(physicalCounts?.[product.id] ?? stock?.ventas?.[product.id] ?? 0)));
+        const previousCount = physicalCounts?.[product.id];
+        setActiveCountValue(previousCount === undefined ? '' : String(Number(previousCount || 0)));
         setCountScanCode('');
     };
 
@@ -480,7 +489,7 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
         onLog?.({
             module: 'Inventario',
             action: 'Conteo Producto',
-            details: `Conteo por escaner: ${product?.name || product?.id} | Sistema ${Number(stock?.ventas?.[product.id] || 0)} | Contado ${countedQty}`
+            details: `Conteo por escaner: ${product?.name || product?.id} | Contado ${countedQty}`
         });
         setActiveCountProductId('');
         setActiveCountValue('');
@@ -488,7 +497,33 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
         setTimeout(() => countScanInputRef.current?.focus(), 50);
     };
 
-    const buildInventoryCountReportHtml = (rows, title) => `
+    const buildInventoryPhysicalCountReportHtml = (rows) => `
+        <div style="margin-bottom:12px;">
+            <strong>Usuario:</strong> ${String(currentUser?.name || 'Sistema')}<br/>
+            <strong>Fecha:</strong> ${new Date().toLocaleString()}<br/>
+            <strong>Total productos:</strong> ${Number(rows.length || 0).toLocaleString()}
+        </div>
+        <table>
+            <thead>
+                <tr>
+                    <th>Producto</th>
+                    <th>Codigo</th>
+                    <th>Contado</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${rows.map((row) => `
+                    <tr>
+                        <td>${String(row.productName || 'Producto')}</td>
+                        <td>${String(row.barcode || 'N/A')}</td>
+                        <td>${Number(row.countedQty || 0).toLocaleString()}</td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>
+    `;
+
+    const buildInventoryReconciliationReportHtml = (rows) => `
         <div style="margin-bottom:12px;">
             <strong>Usuario:</strong> ${String(currentUser?.name || 'Sistema')}<br/>
             <strong>Fecha:</strong> ${new Date().toLocaleString()}<br/>
@@ -518,15 +553,19 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
         </table>
     `;
 
-    const handlePrintCountReport = () => {
-        const rows = countSummary.rows;
+    const handlePrintPhysicalCountReport = () => {
+        const rows = (countSessionRows || []).map((row) => ({
+            productName: row.productName,
+            barcode: row.barcode,
+            countedQty: row.countedQty
+        }));
         if (rows.length === 0) {
             return alert('No hay productos para imprimir en el conteo.');
         }
         printReportHtml({
-            title: 'Reporte de Conteo de Inventario',
+            title: 'Reporte de Conteo Fisico',
             subtitle: `Usuario: ${currentUser?.name || 'Sistema'}`,
-            contentHtml: buildInventoryCountReportHtml(rows, 'Reporte de Conteo de Inventario'),
+            contentHtml: buildInventoryPhysicalCountReportHtml(rows),
             mode: 'a4'
         });
         setCountReportPrinted(true);
@@ -535,6 +574,26 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
             action: 'Imprimir Conteo',
             details: `Conteo de inventario impreso. Productos: ${rows.length}. Diferencias: ${countSummary.adjustedRows.length}.`
         });
+    };
+
+    const handleOpenReconciliation = () => {
+        if ((countSessionRows || []).length === 0) {
+            return alert('Primero registre al menos un conteo fisico.');
+        }
+        setCountStage('reconcile');
+        setCountSearchTerm('');
+    };
+
+    const handlePrintReconciliationReport = () => {
+        const rows = countSummary.rows;
+        if (rows.length === 0) return alert('No hay productos para imprimir.');
+        printReportHtml({
+            title: 'Reporte de Conciliacion de Inventario',
+            subtitle: `Usuario: ${currentUser?.name || 'Sistema'}`,
+            contentHtml: buildInventoryReconciliationReportHtml(rows),
+            mode: 'a4'
+        });
+        setCountReportPrinted(true);
     };
 
     const handleApplyCountAdjustments = async () => {
@@ -562,7 +621,7 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
             printReportHtml({
                 title: 'Reporte de Ajuste de Inventario',
                 subtitle: `Usuario: ${currentUser?.name || 'Sistema'}`,
-                contentHtml: buildInventoryCountReportHtml(rowsToAdjust, 'Reporte de Ajuste de Inventario'),
+                contentHtml: buildInventoryReconciliationReportHtml(rowsToAdjust),
                 mode: 'a4'
             });
 
@@ -726,7 +785,11 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
 	            {view === 'count' && (
 	                <div className="card">
 	                    <h3>Hacer Inventario por Escaner</h3>
-	                    <p>Escanee el codigo de barras, revise la informacion del producto y registre la cantidad contada.</p>
+	                    <p>
+                            {countStage === 'capture'
+                                ? 'Paso 1: registre solo el conteo fisico. Aun no se muestra ni se cruza con el sistema.'
+                                : 'Paso 2: revise la conciliacion contra sistema antes de aplicar ajustes.'}
+                        </p>
 
                         <div className="card card--muted" style={{ marginBottom: '1rem' }}>
                             <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: '1rem' }}>
@@ -759,7 +822,7 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
                                 </div>
                             </div>
 
-                            {activeCountProductId && (
+                            {countStage === 'capture' && activeCountProductId && (
                                 (() => {
                                     const product = (products || []).find((row) => String(row?.id || '') === String(activeCountProductId || ''));
                                     if (!product) return null;
@@ -810,56 +873,91 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
                             )}
                         </div>
 
-	                    <table>
-	                        <thead>
-	                            <tr>
-	                                <th><SortButton label="Producto" sortKey="name" sortConfig={countSort} onChange={setCountSortKey} /></th>
-                                    <th>Codigo</th>
-	                                <th><SortButton label="Saldo Sistema" sortKey="sys" sortConfig={countSort} onChange={setCountSortKey} /></th>
-	                                <th><SortButton label="Conteo Real" sortKey="real" sortConfig={countSort} onChange={setCountSortKey} /></th>
-	                                <th><SortButton label="Diferencia" sortKey="diff" sortConfig={countSort} onChange={setCountSortKey} /></th>
-                                    <th>Ultimo conteo</th>
-	                            </tr>
-	                        </thead>
-	                        <tbody>
-	                            {countedProducts.map(({ product, countRow }, idx) => {
-	                                const sys = Number(stock?.ventas?.[product.id] || 0);
-	                                const real = Number(physicalCounts?.[product.id] ?? sys);
-                                    const diff = real - sys;
-	                                return (
-	                                    <tr key={`${product.id}-${idx}`}>
-                                        <td>{product.name}</td>
-                                        <td>{product.barcode || 'N/A'}</td>
-                                        <td>{sys}</td>
-                                        <td>{real}</td>
-                                        <td style={{ color: diff === 0 ? 'green' : 'red', fontWeight: 700 }}>{diff}</td>
-                                        <td>{countRow?.countedAt ? new Date(countRow.countedAt).toLocaleString() : 'Sin contar'}</td>
+                        {countStage === 'capture' ? (
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th><SortButton label="Producto" sortKey="name" sortConfig={countSort} onChange={setCountSortKey} /></th>
+                                        <th>Codigo</th>
+                                        <th><SortButton label="Conteo Real" sortKey="real" sortConfig={countSort} onChange={setCountSortKey} /></th>
+                                        <th>Ultimo conteo</th>
                                     </tr>
-                                );
-                            })}
-                        </tbody>
-                    </table>
+                                </thead>
+                                <tbody>
+                                    {countedProducts.length === 0 ? (
+                                        <tr><td colSpan="4" style={{ textAlign: 'center', padding: '1rem' }}>Aun no hay productos contados.</td></tr>
+                                    ) : countedProducts.map(({ product, countRow }, idx) => (
+                                        <tr key={`${product.id}-${idx}`}>
+                                            <td>{product.name}</td>
+                                            <td>{product.barcode || 'N/A'}</td>
+                                            <td>{Number(countRow?.countedQty || 0).toLocaleString()}</td>
+                                            <td>{countRow?.countedAt ? new Date(countRow.countedAt).toLocaleString() : 'Sin contar'}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        ) : (
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th><SortButton label="Producto" sortKey="name" sortConfig={countSort} onChange={setCountSortKey} /></th>
+                                        <th>Codigo</th>
+                                        <th><SortButton label="Saldo Sistema" sortKey="sys" sortConfig={countSort} onChange={setCountSortKey} /></th>
+                                        <th><SortButton label="Conteo Real" sortKey="real" sortConfig={countSort} onChange={setCountSortKey} /></th>
+                                        <th><SortButton label="Diferencia" sortKey="diff" sortConfig={countSort} onChange={setCountSortKey} /></th>
+                                        <th>Ultimo conteo</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {countedProducts.map(({ product, countRow }, idx) => {
+                                        const sys = Number(stock?.ventas?.[product.id] || 0);
+                                        const real = Number(physicalCounts?.[product.id] ?? 0);
+                                        const diff = real - sys;
+                                        return (
+                                            <tr key={`${product.id}-${idx}`}>
+                                                <td>{product.name}</td>
+                                                <td>{product.barcode || 'N/A'}</td>
+                                                <td>{sys}</td>
+                                                <td>{real}</td>
+                                                <td style={{ color: diff === 0 ? 'green' : 'red', fontWeight: 700 }}>{diff}</td>
+                                                <td>{countRow?.countedAt ? new Date(countRow.countedAt).toLocaleString() : 'Sin contar'}</td>
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
+                        )}
 
                     <div className="card card--muted" style={{ marginTop: '1rem' }}>
                         <strong>Resumen</strong>
                         <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', marginTop: '0.5rem' }}>
-                            <span>Productos: {Number(countSummary.rows.length || 0).toLocaleString()}</span>
-                            <span>Sistema: {Number(countSummary.totals.systemQty || 0).toLocaleString()}</span>
+                            <span>Productos: {Number((countStage === 'capture' ? countSessionRows.length : countSummary.rows.length) || 0).toLocaleString()}</span>
+                            {countStage === 'reconcile' && <span>Sistema: {Number(countSummary.totals.systemQty || 0).toLocaleString()}</span>}
                             <span>Contado: {Number(countSummary.totals.countedQty || 0).toLocaleString()}</span>
-                            <span>Diferencia total: {Number(countSummary.totals.diff || 0).toLocaleString()}</span>
-                            <span>Con ajuste: {Number(countSummary.adjustedRows.length || 0).toLocaleString()}</span>
+                            {countStage === 'reconcile' && <span>Diferencia total: {Number(countSummary.totals.diff || 0).toLocaleString()}</span>}
+                            {countStage === 'reconcile' && <span>Con ajuste: {Number(countSummary.adjustedRows.length || 0).toLocaleString()}</span>}
                         </div>
                     </div>
 
                     <div style={{ marginTop: '1rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }} className="no-print">
-                        <button className="btn btn-primary" onClick={handlePrintCountReport}>Imprimir reporte de conteo</button>
-                        <button className="btn" onClick={handleApplyCountAdjustments}>
-                            Ajustar inventario e imprimir reporte
-                        </button>
-                        {!countReportPrinted && (
-                            <div className="alert alert-info" style={{ margin: 0, padding: '0.5rem 0.75rem' }}>
-                                Recomendado: imprima primero el conteo y luego aplique el ajuste.
-                            </div>
+                        {countStage === 'capture' ? (
+                            <>
+                                <button className="btn btn-primary" onClick={handlePrintPhysicalCountReport}>Imprimir reporte de conteo fisico</button>
+                                <button className="btn" onClick={handleOpenReconciliation}>Continuar a conciliacion</button>
+                            </>
+                        ) : (
+                            <>
+                                <button className="btn btn-primary" onClick={handlePrintReconciliationReport}>Imprimir reporte de conciliacion</button>
+                                <button className="btn" onClick={handleApplyCountAdjustments}>
+                                    Ajustar inventario e imprimir reporte
+                                </button>
+                                {!countReportPrinted && (
+                                    <div className="alert alert-info" style={{ margin: 0, padding: '0.5rem 0.75rem' }}>
+                                        Recomendado: imprima primero la conciliacion y luego aplique el ajuste.
+                                    </div>
+                                )}
+                                <button className="btn" onClick={() => setCountStage('capture')}>Volver al conteo</button>
+                            </>
                         )}
                         <button className="btn" onClick={() => setView('list')}>Cancelar</button>
                     </div>
