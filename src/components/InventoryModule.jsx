@@ -12,6 +12,7 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
     const [physicalCounts, setPhysicalCounts] = useState({});
     const [countSessionRows, setCountSessionRows] = useState([]);
     const [countScanCode, setCountScanCode] = useState('');
+    const [manualCountProductId, setManualCountProductId] = useState('');
     const [activeCountProductId, setActiveCountProductId] = useState('');
     const [activeCountValue, setActiveCountValue] = useState('');
     const [countSearchTerm, setCountSearchTerm] = useState('');
@@ -188,6 +189,18 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
         });
         return map;
     }, [products]);
+
+    const manualCountOptions = useMemo(() => (
+        [...(products || [])]
+            .sort((a, b) => String(a?.name || '').localeCompare(String(b?.name || '')))
+            .map((product) => ({
+                id: String(product?.id || ''),
+                name: product?.name || 'Producto',
+                barcode: normalizeBarcode(product?.barcode),
+                category: product?.category || 'General',
+            }))
+            .filter((product) => product.id)
+    ), [products]);
 
     const countedProducts = useMemo(() => {
         const q = String(countSearchTerm || '').trim().toLowerCase();
@@ -424,6 +437,7 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
         setPhysicalCounts({});
         setCountSessionRows([]);
         setCountScanCode('');
+        setManualCountProductId('');
         setActiveCountProductId('');
         setActiveCountValue('');
         setCountSearchTerm('');
@@ -460,6 +474,15 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
         });
     };
 
+    const activateCountProduct = (product) => {
+        if (!product?.id) return;
+        setActiveCountProductId(String(product.id));
+        const previousCount = physicalCounts?.[product.id];
+        setActiveCountValue(previousCount === undefined ? '' : String(Number(previousCount || 0)));
+        setCountScanCode('');
+        setManualCountProductId('');
+    };
+
     const handleScanCountProduct = (rawCode) => {
         const barcode = normalizeBarcode(rawCode);
         if (!barcode) {
@@ -474,10 +497,20 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
             return;
         }
 
-        setActiveCountProductId(String(product.id));
-        const previousCount = physicalCounts?.[product.id];
-        setActiveCountValue(previousCount === undefined ? '' : String(Number(previousCount || 0)));
-        setCountScanCode('');
+        activateCountProduct(product);
+    };
+
+    const handleManualCountProductSelect = (productId) => {
+        const normalizedProductId = String(productId || '').trim();
+        setManualCountProductId(normalizedProductId);
+        if (!normalizedProductId) {
+            setActiveCountProductId('');
+            setActiveCountValue('');
+            return;
+        }
+        const product = (products || []).find((row) => String(row?.id || '') === normalizedProductId);
+        if (!product) return;
+        activateCountProduct(product);
     };
 
     const handleSaveCountForActiveProduct = () => {
@@ -784,7 +817,7 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
 
 	            {view === 'count' && (
 	                <div className="card">
-	                    <h3>Hacer Inventario por Escaner</h3>
+	                    <h3>Hacer Inventario por Escaner o Busqueda Manual</h3>
 	                    <p>
                             {countStage === 'capture'
                                 ? 'Paso 1: registre solo el conteo fisico. Aun no se muestra ni se cruza con el sistema.'
@@ -792,7 +825,7 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
                         </p>
 
                         <div className="card card--muted" style={{ marginBottom: '1rem' }}>
-                            <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: '1rem' }}>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.2fr 1fr', gap: '1rem' }}>
                                 <div className="input-group" style={{ marginBottom: 0 }}>
                                     <label className="input-label">Escanear codigo de barras</label>
                                     <input
@@ -811,6 +844,21 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
                                     />
                                 </div>
                                 <div className="input-group" style={{ marginBottom: 0 }}>
+                                    <label className="input-label">Buscar producto manualmente</label>
+                                    <select
+                                        className="input-field"
+                                        value={manualCountProductId}
+                                        onChange={(e) => handleManualCountProductSelect(e.target.value)}
+                                    >
+                                        <option value="">Seleccione un producto...</option>
+                                        {manualCountOptions.map((product) => (
+                                            <option key={product.id} value={product.id}>
+                                                {product.name}{product.barcode ? ` | ${product.barcode}` : ''}{product.category ? ` | ${product.category}` : ''}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div className="input-group" style={{ marginBottom: 0 }}>
                                     <label className="input-label">Filtrar lista del conteo</label>
                                     <input
                                         type="text"
@@ -826,20 +874,15 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
                                 (() => {
                                     const product = (products || []).find((row) => String(row?.id || '') === String(activeCountProductId || ''));
                                     if (!product) return null;
-                                    const systemQty = Number(stock?.ventas?.[product.id] || 0);
                                     return (
                                         <div className="card" style={{ marginTop: '0.75rem' }}>
-                                            <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr 1fr', gap: '0.75rem', alignItems: 'end' }}>
+                                            <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 1fr 1fr', gap: '0.75rem', alignItems: 'end' }}>
                                                 <div>
                                                     <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Producto</div>
                                                     <strong>{product?.name || 'Producto'}</strong>
                                                     <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.2rem' }}>
                                                         Codigo: {product?.barcode || 'N/A'} | Categoria: {product?.category || 'General'}
                                                     </div>
-                                                </div>
-                                                <div>
-                                                    <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Sistema</div>
-                                                    <strong>{systemQty.toLocaleString()}</strong>
                                                 </div>
                                                 <div className="input-group" style={{ marginBottom: 0 }}>
                                                     <label className="input-label">Cantidad contada</label>

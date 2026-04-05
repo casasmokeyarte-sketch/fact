@@ -41,6 +41,7 @@ export function ShiftManager({
   stock = { ventas: {} },
   activeShiftInventorySummary = null,
   hideSystemResults = false,
+  closeBlockers = [],
 }) {
   const [showStartModal, setShowStartModal] = useState(false);
   const [showReconciliation, setShowReconciliation] = useState(false);
@@ -106,7 +107,9 @@ export function ShiftManager({
   const closureRows = useMemo(() => (
     (activeShiftInventorySummary?.rows || []).map((row) => ({
       ...row,
-      returnedQty: Math.max(0, Math.trunc(Number(returnedInventoryDraft?.[row.productId] ?? row.expectedQty ?? 0) || 0)),
+      returnedQty: Object.prototype.hasOwnProperty.call(returnedInventoryDraft || {}, row.productId)
+        ? Math.max(0, Math.trunc(Number(returnedInventoryDraft?.[row.productId] || 0) || 0))
+        : '',
     }))
   ), [activeShiftInventorySummary?.rows, returnedInventoryDraft]);
 
@@ -152,6 +155,20 @@ export function ShiftManager({
   const handleEndAttempt = () => {
     if (!allRequiredFilled) {
       alert('Debe diligenciar todas las cuentas. Si no hubo movimiento, escriba 0.');
+      return;
+    }
+
+    if ((closeBlockers || []).length > 0) {
+      alert(`No puede cerrar la jornada hasta resolver lo siguiente:\n\n- ${closeBlockers.join('\n- ')}`);
+      return;
+    }
+
+    const missingInventoryRows = closureRows.filter((row) => (
+      !Object.prototype.hasOwnProperty.call(returnedInventoryDraft || {}, row.productId) ||
+      String(returnedInventoryDraft?.[row.productId] ?? '').trim() === ''
+    ));
+    if (missingInventoryRows.length > 0) {
+      alert(`Debe registrar la cantidad fisica de cierre para todos los productos del turno. Pendientes: ${missingInventoryRows.map((row) => row.productName).join(', ')}`);
       return;
     }
 
@@ -227,7 +244,6 @@ export function ShiftManager({
                     <thead>
                       <tr>
                         <th>Producto</th>
-                        <th>Disponible sistema</th>
                         <th>Entregado al turno</th>
                       </tr>
                     </thead>
@@ -235,7 +251,6 @@ export function ShiftManager({
                       {availableShiftProducts.map((product) => (
                         <tr key={product.productId}>
                           <td>{product.name}</td>
-                          <td>{product.available}</td>
                           <td>
                             <input
                               type="number"
@@ -336,19 +351,27 @@ export function ShiftManager({
               )}
             </div>
 
+            {!!closeBlockers.length && (
+              <div style={{ marginTop: '0.9rem', padding: '10px', borderRadius: '6px', backgroundColor: 'rgba(255, 45, 85, 0.10)', border: '1px solid rgba(255, 45, 85, 0.30)' }}>
+                <div style={{ fontWeight: 700, marginBottom: '0.35rem' }}>Bloqueos de cierre</div>
+                {closeBlockers.map((reason, index) => (
+                  <div key={`${reason}-${index}`} style={{ fontSize: '0.92rem', color: 'var(--text-secondary)' }}>
+                    - {reason}
+                  </div>
+                ))}
+              </div>
+            )}
+
             {!!closureRows.length && (
               <div style={{ marginTop: '1rem', padding: '10px', borderRadius: '6px', backgroundColor: 'var(--surface-muted)', border: '1px solid var(--border-soft)' }}>
                 <div style={{ fontWeight: 700, marginBottom: '0.45rem' }}>Entrega final de inventario al supervisor</div>
                 <p style={{ marginTop: 0, color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-                  El supervisor compara el saldo esperado del sistema contra lo que el turno entrega fisicamente.
+                  Registre solo la cantidad fisica con la que el turno cierra. El sistema validara internamente la diferencia antes de permitir el cierre.
                 </p>
                 <table>
                   <thead>
                     <tr>
                       <th>Producto</th>
-                      <th>Entregado al turno</th>
-                      <th>Vendido</th>
-                      <th>Esperado sistema</th>
                       <th>Recibido fisico</th>
                     </tr>
                   </thead>
@@ -356,17 +379,15 @@ export function ShiftManager({
                     {closureRows.map((row) => (
                       <tr key={row.productId}>
                         <td>{row.productName}</td>
-                        <td>{row.assignedQty}</td>
-                        <td>{row.soldQty}</td>
-                        <td>{row.expectedQty}</td>
                         <td>
                           <input
                             type="number"
                             min="0"
                             className="input-field"
                             style={{ width: '110px' }}
-                            value={returnedInventoryDraft?.[row.productId] ?? row.expectedQty ?? ''}
+                            value={returnedInventoryDraft?.[row.productId] ?? ''}
                             onChange={(e) => handleReturnedInventoryChange(row.productId, e.target.value)}
+                            placeholder="0"
                           />
                         </td>
                       </tr>

@@ -2720,6 +2720,38 @@ function App() {
       .filter((d) => String(d?.savedBy?.id || '') === String(currentUser?.id || ''))
       .slice(0, 12)
   ), [invoiceDrafts, currentUser?.id]);
+  const currentCashUserKey = useMemo(() => (
+    String(getCashUserKey(currentUser) || '').trim()
+  ), [currentUser]);
+  const ownPendingInventoryTransferRequests = useMemo(() => (
+    (inventoryTransferRequests || []).filter((request) => {
+      if (String(request?.status || '').toUpperCase() !== 'PENDING') return false;
+      const createdByMe = String(request?.createdBy?.id || '') === String(currentUser?.id || '');
+      const receivedByMe =
+        String(request?.targetUserId || '') === String(currentUser?.id || '') ||
+        (currentCashUserKey && String(request?.targetUserKey || '') === currentCashUserKey);
+      return createdByMe || receivedByMe;
+    })
+  ), [inventoryTransferRequests, currentUser?.id, currentCashUserKey]);
+  const ownPendingRemoteAuthRequests = useMemo(() => (
+    (remoteAuthRequests || []).filter((request) => (
+      String(request?.status || '').toUpperCase() === 'PENDING' &&
+      String(request?.requestedBy?.id || '') === String(currentUser?.id || '')
+    ))
+  ), [remoteAuthRequests, currentUser?.id]);
+  const shiftCloseBlockers = useMemo(() => {
+    const blockers = [];
+    if (ownPendingInventoryTransferRequests.length > 0) {
+      blockers.push(`Tiene ${ownPendingInventoryTransferRequests.length} traslado(s) de inventario pendiente(s) por confirmar o responder.`);
+    }
+    if (ownInvoiceDrafts.length > 0) {
+      blockers.push(`Tiene ${ownInvoiceDrafts.length} factura(s) en borrador.`);
+    }
+    if (ownPendingRemoteAuthRequests.length > 0) {
+      blockers.push(`Tiene ${ownPendingRemoteAuthRequests.length} solicitud(es) de autorizacion aun pendiente(s).`);
+    }
+    return blockers;
+  }, [ownPendingInventoryTransferRequests.length, ownInvoiceDrafts.length, ownPendingRemoteAuthRequests.length]);
 
   useEffect(() => {
     if (!notificationsOpen) return;
@@ -3316,6 +3348,10 @@ function App() {
       );
       return;
     }
+    if (shiftCloseBlockers.length > 0) {
+      alert(`No puede cerrar la jornada hasta resolver lo siguiente:\n\n- ${shiftCloseBlockers.join('\n- ')}`);
+      return;
+    }
     const shiftEndIso = getOperationalNowIso();
     const shiftOwnerRef = buildShiftOwnerReference(shift, currentUser);
     const summary = getShiftFinancialSnapshot(shift.startTime, shiftEndIso, shiftOwnerRef);
@@ -3441,7 +3477,15 @@ function App() {
     const hasInventoryMismatch = inventoryClosureRows.some((row) => Math.abs(Number(row.differenceQty || 0)) > 0);
     let authorizedMismatch = false;
 
-    if (Math.abs(discrepancy) > 1 || hasAccountMismatch || hasInventoryMismatch) {
+    if (hasInventoryMismatch) {
+      const mismatchedProducts = inventoryClosureRows
+        .filter((row) => Math.abs(Number(row.differenceQty || 0)) > 0)
+        .map((row) => `${row.productName} (${Number(row.differenceQty || 0) > 0 ? '+' : ''}${Number(row.differenceQty || 0)})`);
+      alert(`No se puede cerrar la jornada porque el inventario fisico no coincide con el sistema.\n\nRevise estos productos:\n- ${mismatchedProducts.join('\n- ')}`);
+      return;
+    }
+
+    if (Math.abs(discrepancy) > 1 || hasAccountMismatch) {
       const approved = await requestAdminAuthorization();
       if (!approved) {
         return;
@@ -4440,6 +4484,7 @@ function App() {
                   stock={stock}
                   activeShiftInventorySummary={activeShiftInventorySummary}
                   hideSystemResults={!canViewShiftSystemResults}
+                  closeBlockers={shiftCloseBlockers}
                 />
               )}
             </div>
@@ -4637,6 +4682,7 @@ function App() {
           stock={stock}
           activeShiftInventorySummary={activeShiftInventorySummary}
           hideSystemResults={!canViewShiftSystemResults}
+          closeBlockers={shiftCloseBlockers}
         />
       ) : (
         <>
