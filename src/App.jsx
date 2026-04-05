@@ -827,6 +827,39 @@ function App() {
     localStorage.removeItem(OPEN_SHIFT_STORAGE_KEY);
   };
 
+  const selectedClientPendingBalance = selectedClient
+    ? (cartera || [])
+        .filter((inv) =>
+          String(inv?.clientDoc || '').trim() === String(selectedClient?.document || '').trim() ||
+          String(inv?.clientName || '').trim().toLowerCase() === String(selectedClient?.name || '').trim().toLowerCase()
+        )
+        .reduce((sum, inv) => sum + Number(inv?.balance || 0), 0)
+    : 0;
+
+  const selectedClientAvailableCredit = selectedClient
+    ? Math.max(0, Number(selectedClient?.creditLimit || 0) - selectedClientPendingBalance)
+    : 0;
+  const selectedClientReferralCredits = Math.max(0, Number(selectedClient?.referralCreditsAvailable || 0) || 0);
+  const referredClientDiscountEligible = !!selectedClient?.document &&
+    !!String(selectedClient?.referrerDocument || '').trim() &&
+    selectedClient?.referralRewardGranted !== true;
+  const selectedReferrer = useMemo(() => {
+    const safeDoc = String(selectedReferrerDocument || '').trim();
+    if (!safeDoc) return null;
+    return (registeredClients || []).find((client) => String(client?.document || '').trim() === safeDoc) || null;
+  }, [registeredClients, selectedReferrerDocument]);
+
+  useEffect(() => {
+    const existingReferrer = String(selectedClient?.referrerDocument || '').trim();
+    if (!selectedClient?.document) {
+      setSelectedReferrerDocument('');
+      return;
+    }
+    if (existingReferrer) {
+      setSelectedReferrerDocument(existingReferrer);
+    }
+  }, [selectedClient?.document, selectedClient?.referrerDocument]);
+
   const hydrateOpenShift = (rawShift) => normalizeStoredOpenShift(rawShift);
 
   const isValidOpenShift = (candidateShift) => {
@@ -4509,39 +4542,6 @@ function App() {
       - Number(summary.expensesTotal || 0)
       - Number(summary.purchasesTotal || 0);
   }, [shift, currentUser, activeShiftOwnerRef, salesHistory, expenses, purchases, auditLogs, allExternalCashReceipts, getOperationalNowIso, userCashBalances]);
-
-  const selectedClientPendingBalance = selectedClient
-    ? (cartera || [])
-        .filter((inv) =>
-          String(inv?.clientDoc || '').trim() === String(selectedClient?.document || '').trim() ||
-          String(inv?.clientName || '').trim().toLowerCase() === String(selectedClient?.name || '').trim().toLowerCase()
-        )
-        .reduce((sum, inv) => sum + Number(inv?.balance || 0), 0)
-    : 0;
-
-  const selectedClientAvailableCredit = selectedClient
-    ? Math.max(0, Number(selectedClient?.creditLimit || 0) - selectedClientPendingBalance)
-    : 0;
-  const selectedClientReferralCredits = Math.max(0, Number(selectedClient?.referralCreditsAvailable || 0) || 0);
-  const referredClientDiscountEligible = !!selectedClient?.document &&
-    !!String(selectedClient?.referrerDocument || '').trim() &&
-    selectedClient?.referralRewardGranted !== true;
-  const selectedReferrer = useMemo(() => {
-    const safeDoc = String(selectedReferrerDocument || '').trim();
-    if (!safeDoc) return null;
-    return (registeredClients || []).find((client) => String(client?.document || '').trim() === safeDoc) || null;
-  }, [registeredClients, selectedReferrerDocument]);
-
-  useEffect(() => {
-    const existingReferrer = String(selectedClient?.referrerDocument || '').trim();
-    if (!selectedClient?.document) {
-      setSelectedReferrerDocument('');
-      return;
-    }
-    if (existingReferrer) {
-      setSelectedReferrerDocument(existingReferrer);
-    }
-  }, [selectedClient?.document, selectedClient?.referrerDocument]);
 
   if (loading) {
     return (
