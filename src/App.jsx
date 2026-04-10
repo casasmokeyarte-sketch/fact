@@ -782,6 +782,7 @@ function App() {
   const pendingClientsSyncRef = useRef(false);
   const userCashBalancesHydratedRef = useRef(false);
   const lastSyncedUserCashBalancesRef = useRef('');
+  const usersRef = useRef([]);
 
   // New States
   const [registeredClients, setRegisteredClients] = useState([]);
@@ -1345,6 +1346,10 @@ function App() {
   }, [currentUser, refreshUsersFromCloud]);
 
   useEffect(() => {
+    usersRef.current = Array.isArray(users) ? users : [];
+  }, [users]);
+
+  useEffect(() => {
     try {
       localStorage.setItem(USERS_CACHE_STORAGE_KEY, JSON.stringify(mergeUsersByIdentity(users || [])));
     } catch {}
@@ -1721,6 +1726,7 @@ function App() {
 
       const userNameById = {};
       const inferredUsers = [];
+      const currentUsers = Array.isArray(usersRef.current) ? usersRef.current : [];
       const collectUserCandidate = (candidate) => {
         if (!candidate) return;
         const normalized = normalizeAppUser(candidate);
@@ -1728,7 +1734,7 @@ function App() {
         inferredUsers.push(normalized);
       };
 
-      (users || []).forEach((user) => {
+      currentUsers.forEach((user) => {
         const normalized = normalizeAppUser(user);
         const uid = String(normalized?.id || '').trim();
         const uname = String(normalized?.name || normalized?.username || normalized?.email || '').trim();
@@ -1771,7 +1777,7 @@ function App() {
       }));
       Object.entries(dbUserCashBalances || {}).forEach(([cashKey]) => collectUserCandidate({
         id: cashKey,
-        name: users.find((user) => String(getCashUserKey(user)) === String(cashKey))?.name || null,
+        name: currentUsers.find((user) => String(getCashUserKey(user)) === String(cashKey))?.name || null,
       }));
 
       if (inferredUsers.length > 0) {
@@ -1840,7 +1846,7 @@ function App() {
     } finally {
       if (showLoader) setLoading(false);
     }
-  }, [currentUser?.id, currentUser?.name, users]);
+  }, [currentUser?.id, currentUser?.name]);
 
   // Initial Data Sync (only when authenticated user exists)
   useEffect(() => {
