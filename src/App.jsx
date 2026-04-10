@@ -312,6 +312,29 @@ const normalizeClientDraft = (client) => ({
   successfulReferralCount: Math.max(0, Number(client?.successfulReferralCount ?? client?.successful_referral_count ?? 0) || 0),
 });
 
+const normalizeSignatureText = (value) => String(value || '')
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .trim()
+  .replace(/\s+/g, ' ')
+  .toLowerCase();
+
+const buildClientReferralSyncPayload = (client) => {
+  const normalized = normalizeClientDraft(client || {});
+  return {
+    clientId: normalized.id || null,
+    name: normalized.name || '',
+    document: normalized.document || '',
+    referrerDocument: normalized.referrerDocument || '',
+    referrerName: normalized.referrerName || '',
+    referralRewardGranted: normalized.referralRewardGranted === true,
+    referralCreditsAvailable: Number(normalized.referralCreditsAvailable || 0),
+    referralPoints: Number(normalized.referralPoints || 0),
+    successfulReferralCount: Number(normalized.successfulReferralCount || 0),
+    updatedAt: new Date().toISOString(),
+  };
+};
+
 const dedupeClients = (rows) => {
   const byDoc = new Map();
   (rows || []).forEach((row) => {
@@ -333,7 +356,7 @@ const dedupeProducts = (rows) => {
 
     const idKey = String(row.id || '').trim();
     const barcodeKey = normalizeBarcodeKey(row.barcode);
-    const signature = `${String(row.name || '').trim().toLowerCase()}|${String(row.category || '').trim().toLowerCase()}|${Number(row.price || 0)}`;
+    const signature = `${normalizeSignatureText(row.name)}|${normalizeSignatureText(row.category)}|${Number(row.price || 0)}`;
 
     if (idKey && byId.has(idKey)) {
       byId.set(idKey, { ...byId.get(idKey), ...row });
@@ -370,6 +393,72 @@ const dedupeProducts = (rows) => {
     ...bySignature.values()
   ]));
 };
+
+const normalizeAppUser = (user) => {
+  if (!user || typeof user !== 'object') return null;
+
+  const normalizedRole = normalizeRole(user?.role);
+  const name = String(
+    user?.name ||
+    user?.display_name ||
+    user?.username ||
+    user?.email ||
+    ''
+  ).trim();
+
+  const id = String(user?.id || user?.user_id || '').trim();
+  const username = String(
+    user?.username ||
+    (String(user?.email || '').includes('@') ? String(user.email).split('@')[0] : '')
+  ).trim();
+  const email = String(user?.email || '').trim();
+
+  const normalized = {
+    ...user,
+    id: id || null,
+    name: name || email || username || 'Usuario',
+    username: username || (email ? email.split('@')[0] : ''),
+    email: email || null,
+    role: normalizedRole,
+    permissions: normalizePermissionsForRole(normalizedRole, user?.permissions),
+  };
+
+  return normalized;
+};
+
+const mergeUsersByIdentity = (...groups) => {
+  const byIdentity = new Map();
+
+  groups.flat().forEach((user) => {
+    const normalized = normalizeAppUser(user);
+    if (!normalized) return;
+
+    const keys = [
+      String(normalized?.id || '').trim(),
+      String(normalized?.email || '').trim().toLowerCase(),
+      String(normalized?.username || '').trim().toLowerCase(),
+      String(normalized?.name || '').trim().toLowerCase(),
+    ].filter(Boolean);
+
+    const existingKey = keys.find((key) => byIdentity.has(key));
+    const existing = existingKey ? byIdentity.get(existingKey) : null;
+    const merged = existing ? { ...existing, ...normalized } : normalized;
+    keys.forEach((key) => byIdentity.set(key, merged));
+  });
+
+  return Array.from(new Set(byIdentity.values()));
+};
+
+function HeaderClock() {
+  const [now, setNow] = useState(() => new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  return <span>{now.toLocaleString('es-CO')}</span>;
+}
 
 const parseAuthRequestLogEvent = (details) => {
   const raw = String(details || '');
@@ -721,7 +810,6 @@ function App() {
   const [auditLogs, setAuditLogs] = useState([]);
   const [salesHistory, setSalesHistory] = useState([]);
   const [shiftHistory, setShiftHistory] = useState([]);
-  const [headerNow, setHeaderNow] = useState(() => new Date());
   const [remoteAuthRequests, setRemoteAuthRequests] = useState(() => {
     try {
       const raw = localStorage.getItem(REMOTE_AUTH_REQUESTS_STORAGE_KEY);
@@ -749,6 +837,8 @@ function App() {
       return [];
     }
   });
+  const adminApiBase = String(import.meta.env?.VITE_ADMIN_API_BASE_URL || '').trim();
+  const adminUsersUrl = `${adminApiBase}/api/admin-users`;
   const [invoiceDrafts, setInvoiceDrafts] = useState(() => {
     try {
       const raw = localStorage.getItem(INVOICE_DRAFTS_STORAGE_KEY);
@@ -1092,11 +1182,6 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const timer = setInterval(() => setHeaderNow(new Date()), 1000);
-    return () => clearInterval(timer);
-  }, []);
-
-  useEffect(() => {
     setAppSoundEnabled(!!soundEnabled);
   }, [soundEnabled]);
 
@@ -1184,6 +1269,32 @@ function App() {
     }
   };
 
+  const refreshUsersFromCloud = useCallback(async ({ silent = true } = {}) => {
+    if (!adminApiBase || !currentUser?.id) return;
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      if (!token) return;
+
+      const res = await fetch(adminUsersUrl, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.ok) {
+        throw new Error(data?.error || 'No se pudo cargar usuarios.');
+      }
+
+      const incomingUsers = Array.isArray(data?.users) ? data.users : [];
+      setUsers((prev) => mergeUsersByIdentity(prev, incomingUsers, [currentUser]));
+    } catch (error) {
+      if (!silent) {
+        console.error('No se pudo refrescar usuarios:', error);
+      }
+    }
+  }, [adminApiBase, adminUsersUrl, currentUser]);
+
   // Keep current role/permissions in sync with realtime profile updates.
   useEffect(() => {
     if (!currentUser?.id || !liveProfile) return;
@@ -1213,6 +1324,13 @@ function App() {
 
     setIsAdminAuth(normalizeRole(liveProfile.role) === 'Administrador');
   }, [currentUser?.id, liveProfile]);
+
+  useEffect(() => {
+    if (!currentUser?.id) return;
+
+    setUsers((prev) => mergeUsersByIdentity(prev, [currentUser]));
+    refreshUsersFromCloud({ silent: true });
+  }, [currentUser, refreshUsersFromCloud]);
 
   const companyId = liveProfile?.company_id || null;
 
@@ -1553,6 +1671,11 @@ function App() {
             console.warn('Refresh de productos devolvio vacio; se conserva cache local para evitar perdida visual.');
             return prev;
           }
+          const prevSerialized = JSON.stringify(dedupeProducts(prev || []));
+          const nextSerialized = JSON.stringify(safeProducts);
+          if (prevSerialized === nextSerialized) {
+            return prev;
+          }
           return safeProducts;
         });
       }
@@ -1565,6 +1688,12 @@ function App() {
       setStock({ bodega: bStock, ventas: vStock });
 
       const userNameById = {};
+      (users || []).forEach((user) => {
+        const normalized = normalizeAppUser(user);
+        const uid = String(normalized?.id || '').trim();
+        const uname = String(normalized?.name || normalized?.username || normalized?.email || '').trim();
+        if (uid && uname && !userNameById[uid]) userNameById[uid] = uname;
+      });
       (dbLogs || []).forEach((log) => {
         const uid = String(log?.user_id || '').trim();
         const uname = String(log?.user_name || log?.user || '').trim();
@@ -1636,7 +1765,7 @@ function App() {
     } finally {
       if (showLoader) setLoading(false);
     }
-  }, []);
+  }, [currentUser?.id, currentUser?.name, users]);
 
   // Initial Data Sync (only when authenticated user exists)
   useEffect(() => {
@@ -2249,7 +2378,6 @@ function App() {
 
   const getOperationalNowIso = useCallback(() => getOperationalNow().toISOString(), [getOperationalNow]);
 
-  const adminApiBase = String(import.meta.env?.VITE_ADMIN_API_BASE_URL || '').trim();
   const adminSystemUrl = `${adminApiBase}/api/admin-system`;
 
   const runAdminSystemAction = async (action) => {
@@ -4062,6 +4190,7 @@ function App() {
         await dataService.saveInvoice(finalInvoice, items);
         for (const client of changedClients) {
           await dataService.saveClient({ ...client, user_id: currentUser?.id });
+          await syncFactMovement('client.referral_snapshot', buildClientReferralSyncPayload(client));
         }
         await syncFactMovement('invoice.created', {
           invoiceId: finalInvoice.id,
@@ -4630,7 +4759,7 @@ function App() {
               }}
             >
               <strong>HORA</strong>
-              <span>{headerNow.toLocaleString('es-CO')}</span>
+              <HeaderClock />
             </div>
             <div style={{ position: 'relative' }}>
               <button
@@ -5113,6 +5242,7 @@ function App() {
 
                   for (const changed of changedClients) {
                     await dataService.saveClient({ ...changed, user_id: currentUser?.id });
+                    await syncFactMovement('client.referral_snapshot', buildClientReferralSyncPayload(changed));
                   }
 
                   await refreshCloudData({ silent: true });
@@ -5599,7 +5729,3 @@ function App() {
 }
 
 export default App
-
-
-
-

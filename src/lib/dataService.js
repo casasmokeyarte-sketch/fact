@@ -142,6 +142,23 @@ function normalizeNumericBarcode(value) {
   return /^\d+$/.test(raw) ? raw : '';
 }
 
+function normalizeSignatureText(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLowerCase();
+}
+
+function buildProductSignature(product) {
+  const name = normalizeSignatureText(product?.name);
+  const category = normalizeSignatureText(product?.category);
+  const price = Number(product?.price ?? 0);
+  if (!name) return null;
+  return { name, category, price };
+}
+
 function normalizeShiftInventoryRows(value) {
   if (!Array.isArray(value)) return [];
   return value
@@ -344,6 +361,7 @@ export const dataService = {
 
     const insertPayload = removeInvalidUuidId(payload);
     const hasBarcode = !!insertPayload.barcode;
+    const signature = buildProductSignature(insertPayload);
 
     if (hasBarcode) {
       const updatePayload = removeInvalidUuidId(insertPayload);
@@ -360,6 +378,48 @@ export const dataService = {
       }
       if (existingByBarcodeError) throw existingByBarcodeError;
       if ((existingByBarcode || []).length > 0) return existingByBarcode;
+    }
+
+    if (signature) {
+      let signatureQuery = supabase
+        .from('products')
+        .select('*')
+        .neq('status', 'inactivo')
+        .eq('price', signature.price);
+
+      if (insertPayload.category) {
+        signatureQuery = signatureQuery.eq('category', insertPayload.category);
+      } else {
+        signatureQuery = signatureQuery.or('category.is.null,category.eq.');
+      }
+
+      const { data: samePriceRows, error: samePriceRowsError } = await withRetry(() => signatureQuery);
+      if (samePriceRowsError) throw samePriceRowsError;
+
+      const existingBySignature = (samePriceRows || []).find((row) => {
+        const rowSignature = buildProductSignature(row);
+        return rowSignature
+          && rowSignature.name === signature.name
+          && rowSignature.category === signature.category
+          && rowSignature.price === signature.price;
+      });
+
+      if (existingBySignature?.id) {
+        const updatePayload = removeInvalidUuidId(insertPayload);
+        let { data: existingRows, error: existingRowsError } = await withRetry(() =>
+          supabase.from('products').update(updatePayload).eq('id', existingBySignature.id).select()
+        );
+        if (existingRowsError && isMissingIsVisibleColumnError(existingRowsError)) {
+          const { is_visible, ...fallbackPayload } = updatePayload;
+          const retry = await withRetry(() =>
+            supabase.from('products').update(fallbackPayload).eq('id', existingBySignature.id).select()
+          );
+          existingRows = retry.data;
+          existingRowsError = retry.error;
+        }
+        if (existingRowsError) throw existingRowsError;
+        if ((existingRows || []).length > 0) return existingRows;
+      }
     }
 
     let { data, error } = await withRetry(() => supabase.from('products').insert(insertPayload).select());
