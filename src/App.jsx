@@ -5539,6 +5539,7 @@ function App() {
           {activeTab === 'bitacora' && <AuditLog logs={auditLogs} />}
 	          {activeTab === 'config' && (
 	            <SettingsModule
+                currentUser={currentUser}
 	              users={users} setUsers={setUsers}
 	              paymentMethods={paymentMethods} setPaymentMethods={setPaymentMethods}
 	              onSavePaymentMethods={saveCompanyPaymentMethods}

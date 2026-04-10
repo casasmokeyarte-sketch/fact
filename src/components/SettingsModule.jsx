@@ -7,6 +7,7 @@ import { useTableSort } from '../lib/useTableSort';
 import { SortButton } from './SortButton';
 
 export function SettingsModule({
+    currentUser,
     users, setUsers,
     paymentMethods, setPaymentMethods,
     onSavePaymentMethods,
@@ -170,10 +171,9 @@ export function SettingsModule({
 
     React.useEffect(() => {
         if (subTab !== 'usuarios') return;
-        if (!Array.isArray(users) || users.length <= 1) {
-            refreshUsersFromSupabase();
-        }
-    }, [subTab, users?.length, refreshUsersFromSupabase]);
+        if (String(currentUser?.role || '') !== 'Administrador') return;
+        refreshUsersFromSupabase();
+    }, [subTab, currentUser?.role, refreshUsersFromSupabase]);
 
     const defaultPermissions = {
         Administrador: {
