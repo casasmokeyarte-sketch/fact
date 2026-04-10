@@ -248,6 +248,7 @@ const OPERATIONAL_DATE_SETTINGS_STORAGE_KEY = 'fact_operational_date_settings';
 const LAST_SHIFT_CLOSE_BY_USER_STORAGE_KEY = 'fact_last_shift_close_by_user';
 const INVENTORY_TRANSFER_REQUESTS_STORAGE_KEY = 'fact_inventory_transfer_requests';
 const COMMERCIAL_NOTES_STORAGE_KEY = 'fact_commercial_notes';
+const USERS_CACHE_STORAGE_KEY = 'fact_users_cache';
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_OPEN_SHIFT_HOURS = 24;
 const MAX_OPEN_SHIFT_MS = MAX_OPEN_SHIFT_HOURS * 60 * 60 * 1000;
@@ -447,6 +448,16 @@ const mergeUsersByIdentity = (...groups) => {
   });
 
   return Array.from(new Set(byIdentity.values()));
+};
+
+const readCachedUsers = () => {
+  try {
+    const raw = localStorage.getItem(USERS_CACHE_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? mergeUsersByIdentity(parsed) : [];
+  } catch {
+    return [];
+  }
 };
 
 function HeaderClock() {
@@ -775,8 +786,9 @@ function App() {
   // New States
   const [registeredClients, setRegisteredClients] = useState([]);
   const [isAdminAuth, setIsAdminAuth] = useState(false);
-  const [users, setUsers] = useState([
-    {
+  const [users, setUsers] = useState(() => mergeUsersByIdentity(
+    readCachedUsers(),
+    [{
       id: 1,
       name: 'Administrador',
       username: 'Admin',
@@ -800,8 +812,8 @@ function App() {
         historial: true,
         cierres: true
       }
-    }
-  ]);
+    }]
+  ));
   const adminPass = useMemo(() => (
     String(users.find((u) => u.username === 'Admin')?.password || '').trim() || 'Admin'
   ), [users]);
@@ -1332,6 +1344,12 @@ function App() {
     refreshUsersFromCloud({ silent: true });
   }, [currentUser, refreshUsersFromCloud]);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(USERS_CACHE_STORAGE_KEY, JSON.stringify(mergeUsersByIdentity(users || [])));
+    } catch {}
+  }, [users]);
+
   const companyId = liveProfile?.company_id || null;
 
   useEffect(() => {
@@ -1509,6 +1527,20 @@ function App() {
       const rows = await dataService.getInventoryTransferRequests(companyId);
       if (Array.isArray(rows)) {
         setInventoryTransferRequests(rows);
+        setUsers((prev) => mergeUsersByIdentity(prev, rows.flatMap((row) => ([
+          {
+            id: row?.targetUserId || null,
+            name: row?.targetUserName || null,
+          },
+          {
+            id: row?.createdBy?.id || null,
+            name: row?.createdBy?.name || null,
+          },
+          {
+            id: row?.resolvedBy?.id || null,
+            name: row?.resolvedBy?.name || null,
+          },
+        ]))));
       }
     } catch (error) {
       if (!silent) {
@@ -1688,19 +1720,62 @@ function App() {
       setStock({ bodega: bStock, ventas: vStock });
 
       const userNameById = {};
+      const inferredUsers = [];
+      const collectUserCandidate = (candidate) => {
+        if (!candidate) return;
+        const normalized = normalizeAppUser(candidate);
+        if (!normalized?.id && !normalized?.name && !normalized?.username && !normalized?.email) return;
+        inferredUsers.push(normalized);
+      };
+
       (users || []).forEach((user) => {
         const normalized = normalizeAppUser(user);
         const uid = String(normalized?.id || '').trim();
         const uname = String(normalized?.name || normalized?.username || normalized?.email || '').trim();
         if (uid && uname && !userNameById[uid]) userNameById[uid] = uname;
+        collectUserCandidate(normalized);
       });
       (dbLogs || []).forEach((log) => {
         const uid = String(log?.user_id || '').trim();
         const uname = String(log?.user_name || log?.user || '').trim();
         if (uid && uname && !userNameById[uid]) userNameById[uid] = uname;
+        collectUserCandidate({
+          id: log?.user_id || null,
+          name: log?.user_name || log?.user || null,
+        });
       });
       if (currentUser?.id && currentUser?.name) {
         userNameById[String(currentUser.id)] = currentUser.name;
+        collectUserCandidate(currentUser);
+      }
+
+      (dbSales || []).forEach((sale) => collectUserCandidate({
+        id: sale?.user_id || null,
+        name: sale?.user_name || sale?.user || null,
+      }));
+      (dbExpenses || []).forEach((expense) => collectUserCandidate({
+        id: expense?.user_id || null,
+        name: expense?.user_name || expense?.user || null,
+      }));
+      (dbExternalCashReceipts || []).forEach((receipt) => collectUserCandidate({
+        id: receipt?.user_id || null,
+        name: receipt?.user_name || receipt?.user || null,
+      }));
+      (dbPurchases || []).forEach((purchase) => collectUserCandidate({
+        id: purchase?.user_id || null,
+        name: purchase?.user_name || purchase?.user || null,
+      }));
+      (dbShiftHistory || []).forEach((shiftRow) => collectUserCandidate({
+        id: shiftRow?.user_id || null,
+        name: shiftRow?.user_name || shiftRow?.user || null,
+      }));
+      Object.entries(dbUserCashBalances || {}).forEach(([cashKey]) => collectUserCandidate({
+        id: cashKey,
+        name: users.find((user) => String(getCashUserKey(user)) === String(cashKey))?.name || null,
+      }));
+
+      if (inferredUsers.length > 0) {
+        setUsers((prev) => mergeUsersByIdentity(prev, inferredUsers));
       }
 
       const enrichedSales = (dbSales || []).map((sale) => ({
