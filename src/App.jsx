@@ -398,7 +398,8 @@ const dedupeProducts = (rows) => {
 const normalizeAppUser = (user) => {
   if (!user || typeof user !== 'object') return null;
 
-  const normalizedRole = normalizeRole(user?.role);
+  const hasExplicitRole = String(user?.role || '').trim().length > 0;
+  const normalizedRole = hasExplicitRole ? normalizeRole(user?.role) : null;
   const name = String(
     user?.name ||
     user?.display_name ||
@@ -421,7 +422,9 @@ const normalizeAppUser = (user) => {
     username: username || (email ? email.split('@')[0] : ''),
     email: email || null,
     role: normalizedRole,
-    permissions: normalizePermissionsForRole(normalizedRole, user?.permissions),
+    permissions: hasExplicitRole
+      ? normalizePermissionsForRole(normalizedRole, user?.permissions)
+      : (user?.permissions ?? null),
   };
 
   return normalized;
@@ -443,7 +446,12 @@ const mergeUsersByIdentity = (...groups) => {
 
     const existingKey = keys.find((key) => byIdentity.has(key));
     const existing = existingKey ? byIdentity.get(existingKey) : null;
-    const merged = existing ? { ...existing, ...normalized } : normalized;
+    const merged = existing ? {
+      ...existing,
+      ...normalized,
+      role: normalized?.role ?? existing?.role ?? null,
+      permissions: normalized?.permissions ?? existing?.permissions ?? null,
+    } : normalized;
     keys.forEach((key) => byIdentity.set(key, merged));
   });
 
