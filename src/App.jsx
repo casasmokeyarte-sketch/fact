@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import './design-system.css'
 import {
   CLIENT_OCASIONAL,
@@ -40,7 +40,7 @@ import { printShiftClosure, printShiftOpening } from './lib/printReports'
 import { dataService } from './lib/dataService'
 import { getProfile } from './lib/databaseService'
 import { initEmailJS } from './lib/emailService'
-import { playSound, setSoundEnabled as setAppSoundEnabled, setSoundVolume as setAppSoundVolume, setNotifyPreset as setAppNotifyPreset } from './lib/soundService'
+import { playSound, resumeContext, setSoundEnabled as setAppSoundEnabled, setSoundVolume as setAppSoundVolume, setNotifyPreset as setAppNotifyPreset } from './lib/soundService'
 import { supabase } from './lib/supabaseClient'
 import { useProfile } from './lib/useSupabase'
 import { syncFactMovement } from './lib/crmSyncService'
@@ -797,6 +797,20 @@ function App() {
   const userCashBalancesHydratedRef = useRef(false);
   const lastSyncedUserCashBalancesRef = useRef('');
   const usersRef = useRef([]);
+
+  useEffect(() => {
+    const handleGesture = () => {
+      resumeContext();
+      window.removeEventListener('click', handleGesture);
+      window.removeEventListener('keydown', handleGesture);
+    };
+    window.addEventListener('click', handleGesture);
+    window.addEventListener('keydown', handleGesture);
+    return () => {
+      window.removeEventListener('click', handleGesture);
+      window.removeEventListener('keydown', handleGesture);
+    };
+  }, []);
 
   // New States
   const [registeredClients, setRegisteredClients] = useState([]);
@@ -5329,8 +5343,9 @@ function App() {
                   });
                 } catch (e) {
                   adjustUserCashBalance(currentUser, totalAmount);
-                  console.error("Error guardando compra en Supabase:", e);
-                  throw e;
+                  const isSyncError = e?.message && (e.message.includes('CRM') || e.message.includes('sync') || e.message.includes('status'));
+                  console.error(isSyncError ? "Error sincronizando con CRM:" : "Error guardando compra en Supabase:", e);
+                  throw new Error(isSyncError ? `Compra guardada localmente pero fallo el envio al CRM: ${e.message}` : `Error en base de datos: ${e.message}`);
                 }
               }}
               products={products}

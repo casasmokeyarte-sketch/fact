@@ -18,6 +18,13 @@ function getContext() {
   return ctx;
 }
 
+export async function resumeContext() {
+  const ac = getContext();
+  if (ac && ac.state === 'suspended') {
+    await ac.resume().catch(() => {});
+  }
+}
+
 function tone({ freq = 440, duration = 0.12, type = 'sine', gain = masterVolume, at = 0 }) {
   const ac = getContext();
   if (!ac || !enabled) return;
