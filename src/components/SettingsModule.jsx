@@ -6,6 +6,8 @@ import { supabase } from '../lib/supabaseClient';
 import { useTableSort } from '../lib/useTableSort';
 import { SortButton } from './SortButton';
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 export function SettingsModule({
     currentUser,
     users, setUsers,
@@ -282,6 +284,9 @@ export function SettingsModule({
 
     const handleDeleteUser = async (userRow) => {
         if (!userRow?.id) return;
+        if (!UUID_REGEX.test(String(userRow.id || '').trim())) {
+            return alert('Ese registro no corresponde a un usuario real de Supabase. Refresque la lista oficial antes de eliminar.');
+        }
         const label = userRow?.username || userRow?.email || userRow?.name || 'usuario';
         const ok = confirm(`Eliminar al usuario ${label}?\n\nEsta accion lo borra de Supabase Auth y su perfil.`);
         if (!ok) return;

@@ -13,6 +13,7 @@ export async function syncFactMovement(type, data) {
     headers: {
       'Content-Type': 'application/json',
       'x-sync-secret': CRM_SYNC_SECRET,
+      Authorization: `Bearer ${CRM_SYNC_SECRET}`,
     },
     body: JSON.stringify({
       source: 'FACT',

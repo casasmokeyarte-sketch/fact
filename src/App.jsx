@@ -4279,7 +4279,11 @@ function App() {
         await dataService.saveInvoice(finalInvoice, items);
         for (const client of changedClients) {
           await dataService.saveClient({ ...client, user_id: currentUser?.id });
-          await syncFactMovement('client.referral_snapshot', buildClientReferralSyncPayload(client));
+          try {
+            await syncFactMovement('client.referral_snapshot', buildClientReferralSyncPayload(client));
+          } catch (syncError) {
+            console.warn('No se pudo sincronizar snapshot CRM del cliente:', syncError);
+          }
         }
         await syncFactMovement('invoice.created', {
           invoiceId: finalInvoice.id,
@@ -5331,7 +5335,11 @@ function App() {
 
                   for (const changed of changedClients) {
                     await dataService.saveClient({ ...changed, user_id: currentUser?.id });
-                    await syncFactMovement('client.referral_snapshot', buildClientReferralSyncPayload(changed));
+                    try {
+                      await syncFactMovement('client.referral_snapshot', buildClientReferralSyncPayload(changed));
+                    } catch (syncError) {
+                      console.warn('No se pudo sincronizar snapshot CRM del cliente:', syncError);
+                    }
                   }
 
                   await refreshCloudData({ silent: true });
