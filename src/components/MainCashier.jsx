@@ -48,8 +48,33 @@ export function MainCashier({
         return status === 'anulada' || status === 'devuelta';
     };
 
+    const resolveNetSaleTotal = (sale) => {
+        const storedTotal = Number(sale?.total || 0);
+        const subtotal = Number(sale?.subtotal || 0);
+        const deliveryFee = Number(sale?.deliveryFee ?? sale?.delivery_fee ?? 0);
+        const discount = sale?.mixedDetails?.discount || sale?.mixed_details?.discount || {};
+        const totalDiscount = Number(
+            sale?.totalDiscount ??
+            discount?.totalAmount ??
+            (
+                Number(sale?.promoDiscountAmount ?? discount?.promoAmount ?? 0) +
+                Number(sale?.automaticDiscountAmount ?? discount?.automaticAmount ?? 0) +
+                Number(sale?.extraDiscount ?? discount?.extraAmount ?? 0)
+            )
+        );
+        const computedNet = subtotal > 0
+            ? Math.max(0, subtotal + deliveryFee - totalDiscount)
+            : storedTotal;
+
+        if (subtotal > 0 && Math.abs(computedNet - storedTotal) > 0.009) {
+            return computedNet;
+        }
+
+        return storedTotal;
+    };
+
     const getCashPortionFromSale = (sale) => {
-        const total = Number(sale?.total || 0);
+        const total = resolveNetSaleTotal(sale);
         const paymentMode = String(sale?.paymentMode || '');
         const mixedParts = Array.isArray(sale?.mixedDetails?.parts) ? sale.mixedDetails.parts : [];
 

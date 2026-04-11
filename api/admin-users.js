@@ -159,6 +159,9 @@ async function requireAdmin(req) {
 function toUiUser(profileRow) {
   const email = String(profileRow?.email || '');
   const username = email.includes('@') ? email.split('@')[0] : email;
+  const permissions = profileRow?.permissions && typeof profileRow.permissions === 'object'
+    ? profileRow.permissions
+    : null;
   return {
     id: profileRow?.user_id,
     user_id: profileRow?.user_id,
@@ -167,7 +170,8 @@ function toUiUser(profileRow) {
     name: profileRow?.display_name || username || profileRow?.email || 'Usuario',
     display_name: profileRow?.display_name || null,
     role: normalizeRole(profileRow?.role),
-    permissions: profileRow?.permissions || null,
+    permissions,
+    authorization_key: permissions?.authorizationKey || '',
     created_at: profileRow?.created_at || null,
     updated_at: profileRow?.updated_at || null,
   };
@@ -204,7 +208,14 @@ export default async function handler(req, res) {
       const username = String(body?.username || '').trim();
       const password = String(body?.password || '').trim();
       const role = normalizeRole(body?.role || 'Cajero');
-      const permissions = buildDefaultPermissionsForRole(role, body?.permissions);
+      const basePermissions = buildDefaultPermissionsForRole(role, body?.permissions);
+      const authorizationKey = String(body?.authorization_key || body?.authorizationKey || '').trim();
+      const permissions = {
+        ...(basePermissions && typeof basePermissions === 'object' ? basePermissions : {}),
+      };
+      if (authorizationKey) {
+        permissions.authorizationKey = authorizationKey;
+      }
 
       const emailDomain = String(body?.emailDomain || process.env.USERNAME_EMAIL_DOMAIN || '@fact.local').trim();
 
@@ -276,19 +287,38 @@ export default async function handler(req, res) {
       const role = normalizeRole(body?.role || 'Cajero');
       const permissions = buildDefaultPermissionsForRole(role, body?.permissions);
       const displayName = String(body?.display_name || body?.name || '').trim();
+      const nextAuthorizationKey = String(body?.authorization_key || body?.authorizationKey || '').trim();
+      const nextPassword = String(body?.password || '').trim();
 
       if (!userId) return json(res, 400, { ok: false, error: 'Falta user_id.' });
+
+      const mergedPermissions = {
+        ...(permissions && typeof permissions === 'object' ? permissions : {}),
+        authorizationKey: nextAuthorizationKey || undefined,
+      };
+      if (!nextAuthorizationKey) delete mergedPermissions.authorizationKey;
 
       const payload = {
         user_id: userId,
         role,
-        permissions,
+        permissions: mergedPermissions,
         updated_at: new Date().toISOString(),
       };
       if (displayName) payload.display_name = displayName;
 
       const { error } = await supabase.from('profiles').upsert(payload, { onConflict: 'user_id' });
       if (error) return json(res, 500, { ok: false, error: error.message || 'No se pudo actualizar usuario.' });
+
+      if (displayName || nextPassword) {
+        const authPayload = {
+          ...(displayName ? { user_metadata: { full_name: displayName } } : {}),
+          ...(nextPassword ? { password: nextPassword } : {}),
+        };
+        const { error: authError } = await supabase.auth.admin.updateUserById(userId, authPayload);
+        if (authError) {
+          return json(res, 500, { ok: false, error: authError.message || 'No se pudo actualizar credenciales del usuario.' });
+        }
+      }
 
       const { data: freshProfile, error: freshError } = await supabase
         .from('profiles')
@@ -323,4 +353,3 @@ export default async function handler(req, res) {
     return json(res, 500, { ok: false, error: 'Error interno creando/gestionando usuarios.' });
   }
 }
-

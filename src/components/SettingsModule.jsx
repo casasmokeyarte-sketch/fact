@@ -48,8 +48,9 @@ export function SettingsModule({
     const [promoHistoryOpen, setPromoHistoryOpen] = useState(false);
 
     // New User State
-    const [newUser, setNewUser] = useState({ name: '', username: '', password: '', role: 'Cajero' });
+    const [newUser, setNewUser] = useState({ name: '', username: '', password: '', role: 'Cajero', authorizationKey: '' });
     const [editingPermissionsUser, setEditingPermissionsUser] = useState(null);
+    const [editingUser, setEditingUser] = useState(null);
 
     // New Payment Method State
     const [newMethod, setNewMethod] = useState('');
@@ -161,6 +162,7 @@ export function SettingsModule({
                 email: u.email || null,
                 role: u.role || 'Cajero',
                 permissions: u.permissions || {},
+                authorization_key: String(u.authorization_key || u?.permissions?.authorizationKey || '').trim(),
             }));
 
             setUsers(mapped);
@@ -226,6 +228,7 @@ export function SettingsModule({
                     password: newUser.password,
                     role: newUser.role,
                     permissions,
+                    authorizationKey: String(newUser.authorizationKey || '').trim(),
                     emailDomain: '@fact.local',
                 })
             });
@@ -235,7 +238,7 @@ export function SettingsModule({
                 throw new Error(data?.error || 'No se pudo crear el usuario.');
             }
 
-            setNewUser({ name: '', username: '', password: '', role: 'Cajero' });
+            setNewUser({ name: '', username: '', password: '', role: 'Cajero', authorizationKey: '' });
             await refreshUsersFromSupabase();
             alert("Usuario creado en Supabase.");
         } catch (err) {
@@ -315,6 +318,63 @@ export function SettingsModule({
             alert('Usuario eliminado.');
         } catch (err) {
             alert(err?.message || 'Error eliminando usuario.');
+        } finally {
+            setUsersLoading(false);
+        }
+    };
+
+    const openEditUser = (userRow) => {
+        setEditingUser({
+            id: userRow?.id || '',
+            name: userRow?.name || '',
+            role: userRow?.role || 'Cajero',
+            authorizationKey: String(userRow?.authorization_key || userRow?.permissions?.authorizationKey || '').trim(),
+            password: '',
+        });
+    };
+
+    const handleUpdateUser = async () => {
+        if (!editingUser?.id) return;
+        setUsersLoading(true);
+        setUsersError('');
+        try {
+            const { data: { session } } = await supabase.auth.getSession();
+            const token = session?.access_token;
+            if (!token) throw new Error('Sesion no valida.');
+
+            const target = users.find((u) => String(u?.id || '') === String(editingUser.id));
+            const role = String(editingUser.role || target?.role || 'Cajero').trim();
+            const permissionsBase = target?.permissions && typeof target.permissions === 'object'
+                ? { ...target.permissions }
+                : { ...(defaultPermissions[role] || defaultPermissions.Cajero) };
+
+            const res = await fetch(adminUsersUrl, {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${token}`
+                },
+                body: JSON.stringify({
+                    user_id: editingUser.id,
+                    name: String(editingUser.name || '').trim(),
+                    display_name: String(editingUser.name || '').trim(),
+                    role,
+                    permissions: permissionsBase,
+                    authorization_key: String(editingUser.authorizationKey || '').trim(),
+                    password: String(editingUser.password || '').trim() || undefined,
+                })
+            });
+
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || !data?.ok) {
+                throw new Error(data?.error || 'No se pudo actualizar el usuario.');
+            }
+
+            await refreshUsersFromSupabase();
+            setEditingUser(null);
+            alert('Usuario actualizado.');
+        } catch (err) {
+            alert(err?.message || 'Error actualizando usuario.');
         } finally {
             setUsersLoading(false);
         }
@@ -540,6 +600,16 @@ export function SettingsModule({
                                     <option value="Cajero">Cajero (Ventas solamente)</option>
                                 </select>
                             </div>
+                            <div className="input-group">
+                                <label className="input-label">Clave de Autorizacion</label>
+                                <input
+                                    type="password"
+                                    className="input-field"
+                                    value={newUser.authorizationKey}
+                                    onChange={e => setNewUser({ ...newUser, authorizationKey: e.target.value })}
+                                    placeholder="Opcional para aprobar descuentos y acciones"
+                                />
+                            </div>
                             <button type="submit" className="btn btn-primary" style={{ width: '100%' }}>Crear Usuario</button>
                         </form>
                         <div style={{ marginTop: '0.75rem', display: 'flex', gap: '0.5rem' }}>
@@ -585,6 +655,13 @@ export function SettingsModule({
                                                 </span>
                                             </td>
                                             <td style={{ padding: '0.5rem', textAlign: 'right', display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                                                <button
+                                                    className="btn"
+                                                    style={{ padding: '2px 8px', fontSize: '0.8em' }}
+                                                    onClick={() => openEditUser(u)}
+                                                >
+                                                    Editar
+                                                </button>
                                                 <button
                                                     className="btn"
                                                     style={{ padding: '2px 8px', fontSize: '0.8em', backgroundColor: 'var(--surface-muted)' }}
@@ -1402,6 +1479,72 @@ export function SettingsModule({
                                     )}
                                 </tbody>
                             </table>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {editingUser && (
+                <div className="modal-overlay" style={{
+                    position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+                    backgroundColor: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1200, padding: '1rem'
+                }}>
+                    <div className="card" style={{ width: 'min(520px, 100%)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', marginBottom: '1rem' }}>
+                            <h3 style={{ margin: 0 }}>Editar Usuario</h3>
+                            <button className="btn" onClick={() => setEditingUser(null)}>Cerrar</button>
+                        </div>
+
+                        <div className="input-group">
+                            <label className="input-label">Nombre Real</label>
+                            <input
+                                type="text"
+                                className="input-field"
+                                value={editingUser.name}
+                                onChange={(e) => setEditingUser((prev) => ({ ...prev, name: e.target.value }))}
+                            />
+                        </div>
+
+                        <div className="input-group">
+                            <label className="input-label">Rol</label>
+                            <select
+                                className="input-field"
+                                value={editingUser.role}
+                                onChange={(e) => setEditingUser((prev) => ({ ...prev, role: e.target.value }))}
+                            >
+                                <option value="Administrador">Administrador</option>
+                                <option value="Supervisor">Supervisor</option>
+                                <option value="Cajero">Cajero</option>
+                            </select>
+                        </div>
+
+                        <div className="input-group">
+                            <label className="input-label">Clave de Autorizacion</label>
+                            <input
+                                type="password"
+                                className="input-field"
+                                value={editingUser.authorizationKey}
+                                onChange={(e) => setEditingUser((prev) => ({ ...prev, authorizationKey: e.target.value }))}
+                                placeholder="Clave para descuentos y aprobaciones"
+                            />
+                        </div>
+
+                        <div className="input-group">
+                            <label className="input-label">Nueva Contrasena</label>
+                            <input
+                                type="password"
+                                className="input-field"
+                                value={editingUser.password}
+                                onChange={(e) => setEditingUser((prev) => ({ ...prev, password: e.target.value }))}
+                                placeholder="Opcional, solo si desea cambiarla"
+                            />
+                        </div>
+
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1rem' }}>
+                            <button className="btn" onClick={() => setEditingUser(null)}>Cancelar</button>
+                            <button className="btn btn-primary" onClick={handleUpdateUser} disabled={usersLoading}>
+                                {usersLoading ? 'Guardando...' : 'Guardar Cambios'}
+                            </button>
                         </div>
                     </div>
                 </div>

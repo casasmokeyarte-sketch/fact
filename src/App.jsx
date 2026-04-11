@@ -425,6 +425,12 @@ const normalizeAppUser = (user) => {
     permissions: hasExplicitRole
       ? normalizePermissionsForRole(normalizedRole, user?.permissions)
       : (user?.permissions ?? null),
+    authorization_key: String(
+      user?.authorization_key ||
+      user?.authorizationKey ||
+      user?.permissions?.authorizationKey ||
+      ''
+    ).trim(),
   };
 
   return normalized;
@@ -824,7 +830,28 @@ function App() {
     }]
   ));
   const adminPass = useMemo(() => (
-    String(users.find((u) => u.username === 'Admin')?.password || '').trim() || 'Admin'
+    String(
+      users.find((u) => u.username === 'Admin')?.authorization_key ||
+      users.find((u) => u.username === 'Admin')?.permissions?.authorizationKey ||
+      users.find((u) => u.username === 'Admin')?.password ||
+      ''
+    ).trim() || 'Admin'
+  ), [users]);
+  const authorizationApprovers = useMemo(() => (
+    (users || [])
+      .map((user) => normalizeAppUser(user))
+      .filter((user) => ['Administrador', 'Supervisor'].includes(String(user?.role || '')))
+      .map((user) => ({
+        ...user,
+        authorizationKey: String(
+          user?.authorization_key ||
+          user?.authorizationKey ||
+          user?.permissions?.authorizationKey ||
+          user?.password ||
+          ''
+        ).trim(),
+      }))
+      .filter((user) => user.authorizationKey)
   ), [users]);
   const [cartera, setCartera] = useState([]);
   const [stock, setStock] = useState({ bodega: {}, ventas: {} });
@@ -3069,8 +3096,8 @@ function App() {
     title = 'Autorizacion',
     message = 'Se necesita clave del administrador para avanzar.',
   } = {}) => {
-    if (!adminPass) {
-      alert('No hay clave Admin configurada para autorizar esta accion.');
+    if (!authorizationApprovers.length) {
+      alert('No hay claves de autorizacion configuradas para Administrador o Supervisor.');
       return false;
     }
 
@@ -3083,7 +3110,7 @@ function App() {
         value: '',
       });
     });
-  }, [adminPass]);
+  }, [authorizationApprovers]);
 
   const onStartShift = async (initialCash, options = {}) => {
     const startCash = Number(initialCash) > 0 ? Number(initialCash) : 0;
@@ -4095,6 +4122,9 @@ function App() {
 
     const finalMode = isInternalZero ? 'Factura Interna $0' : (mixedData ? 'Mixto' : paymentMode);
     const finalTotal = isInternalZero ? 0 : totalAfterDiscounts;
+    const effectiveCashCollected = !isInternalZero
+      ? (mixedData ? Number(mixedData?.cash || 0) : (finalMode === PAYMENT_MODES.CONTADO ? finalTotal : 0))
+      : 0;
     let invoiceCode = '';
     try {
       invoiceCode = await dataService.getNextInvoiceCode('SSOT');
@@ -4267,10 +4297,8 @@ function App() {
     setSalesHistory((prev) => [...prev, finalInvoice]);
 
     // Actualiza caja del usuario en tiempo real para reflejar facturacion en el circulo central.
-    if (!isInternalZero && finalMode === PAYMENT_MODES.CONTADO) {
-      adjustUserCashBalance(currentUser, finalTotal);
-    } else if (!isInternalZero && finalMode === 'Mixto') {
-      adjustUserCashBalance(currentUser, Number(mixedData?.cash || 0));
+    if (effectiveCashCollected > 0) {
+      adjustUserCashBalance(currentUser, effectiveCashCollected);
     }
 
     // Save to Supabase
@@ -5123,6 +5151,7 @@ function App() {
                   selectedClientAvailableCredit={selectedClientAvailableCredit}
                   items={items}
                   adminPass={adminPass}
+                  authorizationApprovers={authorizationApprovers}
                   extraDiscount={composerExtraDiscount}
                   setExtraDiscount={setComposerExtraDiscount}
                   promotions={companyPromotions}
@@ -5789,11 +5818,12 @@ function App() {
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
                     const pass = String(adminAuthModal.value || '').trim();
-                    if (pass !== String(adminPass).trim()) {
+                    const matchedApprover = authorizationApprovers.find((user) => user.authorizationKey === pass);
+                    if (!matchedApprover) {
                       alert('Clave incorrecta.');
                       return;
                     }
-                    closeAdminAuthModal(true);
+                    closeAdminAuthModal(matchedApprover);
                   }
                   if (e.key === 'Escape') closeAdminAuthModal(false);
                 }}
@@ -5806,11 +5836,12 @@ function App() {
                 style={{ flex: 1 }}
                 onClick={() => {
                   const pass = String(adminAuthModal.value || '').trim();
-                  if (pass !== String(adminPass).trim()) {
+                  const matchedApprover = authorizationApprovers.find((user) => user.authorizationKey === pass);
+                  if (!matchedApprover) {
                     alert('Clave incorrecta.');
                     return;
                   }
-                  closeAdminAuthModal(true);
+                  closeAdminAuthModal(matchedApprover);
                 }}
               >
                 Autorizar

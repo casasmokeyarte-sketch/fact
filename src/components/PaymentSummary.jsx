@@ -43,6 +43,7 @@ export function PaymentSummary({
   selectedClientAvailableCredit = 0,
   items,
   adminPass,
+  authorizationApprovers = [],
   extraDiscount: extraDiscountProp,
   setExtraDiscount: setExtraDiscountProp,
   promotions = [],
@@ -483,24 +484,35 @@ export function PaymentSummary({
         return;
       }
 
-      const expectedAdminPass = String(adminPass || '').trim();
-      if (!expectedAdminPass) {
+      const approvers = Array.isArray(authorizationApprovers) ? authorizationApprovers : [];
+      if (approvers.length === 0 && !String(adminPass || '').trim()) {
         playSound('error');
-        alert('No hay clave Admin configurada para autorizar esta accion.');
+        alert('No hay claves de autorizacion configuradas.');
         return;
       }
 
-      const pass = String(prompt(`Ingrese clave Admin para autorizar: ${reasonLabel}`) || '').trim();
+      const pass = String(prompt(`Ingrese clave de autorizacion para: ${reasonLabel}`) || '').trim();
       if (!pass) return;
-      if (pass !== expectedAdminPass) {
+      const matchedApprover = approvers.find((user) => String(user?.authorizationKey || '').trim() === pass);
+      const fallbackAdminPass = String(adminPass || '').trim();
+      const resolvedApprover = matchedApprover || (
+        fallbackAdminPass && pass === fallbackAdminPass
+          ? { id: null, name: 'Admin', role: 'Administrador' }
+          : null
+      );
+      if (!resolvedApprover) {
         playSound('error');
-        alert('Clave Admin incorrecta. Accion no autorizada.');
+        alert('Clave incorrecta. Accion no autorizada.');
         return;
       }
 
       const approval = {
         approvedAt: new Date().toISOString(),
-        approvedBy: { id: null, name: 'Admin', role: 'Administrador' },
+        approvedBy: {
+          id: resolvedApprover?.id || null,
+          name: resolvedApprover?.name || 'Administrador',
+          role: resolvedApprover?.role || 'Administrador',
+        },
         note: String(authNote || '').trim()
       };
 
