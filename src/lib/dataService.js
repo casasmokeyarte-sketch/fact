@@ -589,7 +589,9 @@ export const dataService = {
     };
 
     if (isUuid(payload.id)) {
-      let { data, error } = await withRetry(() => supabase.from('clients').upsert(payload).select());
+      // Use onConflict: 'document' if available to handle potential document conflicts gracefully.
+      const upsertOptions = document ? { onConflict: 'document' } : {};
+      let { data, error } = await withRetry(() => supabase.from('clients').upsert(payload, upsertOptions).select());
       if (error && isUndefinedColumnError(error)) {
         const {
           referrer_document,
@@ -1057,7 +1059,7 @@ export const dataService = {
     const { data, error } = await supabase
       .from('shift_history')
       .select('*')
-      .order('end_time', { ascending: false, nullsFirst: false });
+      .order('end_time', { ascending: false });
     if (error) throw error;
 
     return (data || [])

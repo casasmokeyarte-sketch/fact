@@ -7,22 +7,24 @@ let notifyPreset = 'beep';
 
 function getContext() {
   if (!isBrowser) return null;
+  return ctx;
+}
+
+export async function initContext() {
+  if (!isBrowser) return null;
   if (!ctx) {
     const AudioCtx = window.AudioContext || window.webkitAudioContext;
     if (!AudioCtx) return null;
     ctx = new AudioCtx();
   }
   if (ctx.state === 'suspended') {
-    ctx.resume().catch(() => {});
+    await ctx.resume().catch(() => {});
   }
   return ctx;
 }
 
 export async function resumeContext() {
-  const ac = getContext();
-  if (ac && ac.state === 'suspended') {
-    await ac.resume().catch(() => {});
-  }
+  await initContext();
 }
 
 function tone({ freq = 440, duration = 0.12, type = 'sine', gain = masterVolume, at = 0 }) {
