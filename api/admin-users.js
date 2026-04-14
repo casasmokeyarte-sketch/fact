@@ -177,6 +177,16 @@ function toUiUser(profileRow) {
   };
 }
 
+function isMissingAuthUserError(error) {
+  const message = String(error?.message || '').toLowerCase();
+  return (
+    message.includes('user not found') ||
+    message.includes('not found') ||
+    message.includes('no rows') ||
+    message.includes('does not exist')
+  );
+}
+
 export default async function handler(req, res) {
   if (req.method === 'OPTIONS') {
     res.statusCode = 204;
@@ -338,8 +348,34 @@ export default async function handler(req, res) {
         return json(res, 400, { ok: false, error: 'No puedes eliminar tu propio usuario.' });
       }
 
-      const { error } = await supabase.auth.admin.deleteUser(userId);
-      if (error) return json(res, 500, { ok: false, error: error.message || 'No se pudo eliminar el usuario.' });
+      const { error: deleteAuthError } = await supabase.auth.admin.deleteUser(userId);
+      if (deleteAuthError && !isMissingAuthUserError(deleteAuthError)) {
+        console.error('[api/admin-users] deleteUser failed:', {
+          userId,
+          message: deleteAuthError.message || null,
+          status: deleteAuthError.status || null,
+          code: deleteAuthError.code || null,
+          name: deleteAuthError.name || null,
+        });
+        return json(res, 500, { ok: false, error: deleteAuthError.message || 'No se pudo eliminar el usuario.' });
+      }
+
+      const { error: deleteProfileError } = await supabase
+        .from('profiles')
+        .delete()
+        .eq('user_id', userId);
+
+      if (deleteProfileError) {
+        console.error('[api/admin-users] profile cleanup failed:', {
+          userId,
+          message: deleteProfileError.message || null,
+          code: deleteProfileError.code || null,
+          details: deleteProfileError.details || null,
+          hint: deleteProfileError.hint || null,
+        });
+        return json(res, 500, { ok: false, error: deleteProfileError.message || 'No se pudo limpiar el perfil del usuario.' });
+      }
+
       return json(res, 200, { ok: true });
     }
 
