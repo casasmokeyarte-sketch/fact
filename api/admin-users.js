@@ -348,6 +348,22 @@ export default async function handler(req, res) {
         return json(res, 400, { ok: false, error: 'No puedes eliminar tu propio usuario.' });
       }
 
+      const { error: deleteShiftHistoryError } = await supabase
+        .from('shift_history')
+        .delete()
+        .eq('user_id', userId);
+
+      if (deleteShiftHistoryError) {
+        console.error('[api/admin-users] shift_history cleanup failed:', {
+          userId,
+          message: deleteShiftHistoryError.message || null,
+          code: deleteShiftHistoryError.code || null,
+          details: deleteShiftHistoryError.details || null,
+          hint: deleteShiftHistoryError.hint || null,
+        });
+        return json(res, 500, { ok: false, error: deleteShiftHistoryError.message || 'No se pudo limpiar el historial de cierres del usuario.' });
+      }
+
       const { error: deleteAuthError } = await supabase.auth.admin.deleteUser(userId);
       if (deleteAuthError && !isMissingAuthUserError(deleteAuthError)) {
         console.error('[api/admin-users] deleteUser failed:', {
