@@ -235,9 +235,17 @@ export function useProfile(userId?: UID) {
           data: { session },
         } = await supabase.auth.getSession()
 
+        const accessToken = session?.access_token ?? ''
+        if (!accessToken) {
+          console.warn('Skipping profile realtime subscription: missing Supabase access token', {
+            userId,
+          })
+          return
+        }
+
         if (!isMounted) return
 
-        await supabase.realtime.setAuth(session?.access_token ?? '')
+        await supabase.realtime.setAuth(accessToken)
 
         if (!isMounted) return
 
@@ -264,7 +272,11 @@ export function useProfile(userId?: UID) {
           }
 
           if (status === 'CHANNEL_ERROR') {
-            console.error('Realtime profile channel error:', err)
+            console.error('Realtime profile channel error:', {
+              userId,
+              status,
+              error: err ?? null,
+            })
           }
         })
       } catch (err) {

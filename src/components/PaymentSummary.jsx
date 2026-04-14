@@ -678,7 +678,16 @@ export function PaymentSummary({
   };
 
   return (
-    <div className="card" style={{ position: 'sticky', top: '2rem' }}>
+    <div
+      className="card"
+      style={{
+        position: 'sticky',
+        top: '2rem',
+        maxHeight: 'calc(100vh - 4rem)',
+        overflowY: 'auto',
+        overscrollBehavior: 'contain',
+      }}
+    >
       <h2 style={{ marginTop: 0 }}>Total Pago</h2>
       <div style={{ fontSize: '2.5rem', fontWeight: 'bold', margin: '1rem 0' }}>
         ${total.toLocaleString()}
@@ -977,19 +986,20 @@ export function PaymentSummary({
         </div>
       )}
 
-      <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
+      <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem', flexWrap: 'wrap' }}>
         <button
           className="btn btn-primary"
-          style={{ flex: 1, backgroundColor: limitExceeded ? '#94a3b8' : '' }}
+          style={{ flex: '1 1 160px', backgroundColor: limitExceeded ? '#94a3b8' : '' }}
           onClick={() => { handleAuthAction(onFinalFacturar); }}
           disabled={limitExceeded || isRequestingRemoteAuth}
         >
           {limitExceeded ? 'Limite Excedido' : isRequestingRemoteAuth ? 'Enviando Solicitud...' : 'Facturar'}
         </button>
-        <button className="btn" onClick={() => handlePrintInvoice('58mm')} title="Imprimir 58mm">58mm</button>
-        <button className="btn" onClick={() => handlePrintInvoice('a4')} title="Imprimir A4">A4</button>
+        <button className="btn" style={{ flex: '0 1 88px' }} onClick={() => handlePrintInvoice('58mm')} title="Imprimir 58mm">58mm</button>
+        <button className="btn" style={{ flex: '0 1 88px' }} onClick={() => handlePrintInvoice('a4')} title="Imprimir A4">A4</button>
         <button
           className="btn"
+          style={{ flex: '0 1 120px' }}
           onClick={() => onSaveDraft?.({
             source: 'MANUAL_SAVE',
             authRequestId: activeRemoteRequestId || '',

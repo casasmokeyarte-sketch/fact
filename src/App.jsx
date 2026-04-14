@@ -5145,7 +5145,7 @@ function App() {
                 </div>
               </div>
 
-              <div className="right-column">
+              <div className="right-column" style={{ minWidth: 0 }}>
                 <PaymentSummary
                   subtotal={subtotal}
                   deliveryFee={deliveryFee}
@@ -5180,7 +5180,7 @@ function App() {
                   onSaveDraft={onSaveInvoiceDraft}
                   onFacturarCero={onFacturarCero}
                 />
-                <div className="card" style={{ marginTop: '1rem' }}>
+                <div className="card" style={{ marginTop: '1rem', position: 'relative', zIndex: 1 }}>
                   <h3 style={{ marginTop: 0 }}>Borradores de Factura</h3>
                   {ownInvoiceDrafts.length === 0 ? (
                     <p style={{ margin: 0, color: '#64748b' }}>No tienes borradores guardados.</p>
