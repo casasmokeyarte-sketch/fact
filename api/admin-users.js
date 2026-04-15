@@ -140,7 +140,7 @@ async function requireAdmin(req) {
   const user = userData.user;
   const { data: profile, error: profileError } = await supabase
     .from('profiles')
-    .select('role')
+    .select('role, company_id')
     .eq('user_id', user.id)
     .maybeSingle();
 
@@ -153,7 +153,11 @@ async function requireAdmin(req) {
     return { ok: false, status: 403, message: 'No autorizado. Requiere rol Administrador.' };
   }
 
-  return { ok: true, supabase, user };
+  if (!profile?.company_id) {
+    return { ok: false, status: 500, message: 'No se encontro company_id para el administrador autenticado.' };
+  }
+
+  return { ok: true, supabase, user, companyId: profile.company_id };
 }
 
 function toUiUser(profileRow) {
@@ -170,6 +174,7 @@ function toUiUser(profileRow) {
     name: profileRow?.display_name || username || profileRow?.email || 'Usuario',
     display_name: profileRow?.display_name || null,
     role: normalizeRole(profileRow?.role),
+    company_id: profileRow?.company_id || null,
     permissions,
     authorization_key: permissions?.authorizationKey || '',
     created_at: profileRow?.created_at || null,
@@ -200,11 +205,13 @@ export default async function handler(req, res) {
     const auth = await requireAdmin(req);
     if (!auth.ok) return json(res, auth.status, { ok: false, error: auth.message });
     const supabase = auth.supabase;
+    const companyId = auth.companyId;
 
     if (req.method === 'GET') {
       const { data, error } = await supabase
         .from('profiles')
-        .select('user_id,email,display_name,role,permissions,created_at,updated_at')
+        .select('user_id,email,display_name,role,company_id,permissions,created_at,updated_at')
+        .eq('company_id', companyId)
         .order('created_at', { ascending: false })
         .limit(200);
 
@@ -269,6 +276,7 @@ export default async function handler(req, res) {
         email,
         display_name: name,
         role,
+        company_id: companyId,
         permissions,
         updated_at: new Date().toISOString(),
       };
@@ -283,7 +291,7 @@ export default async function handler(req, res) {
 
       const { data: freshProfile, error: freshError } = await supabase
         .from('profiles')
-        .select('user_id,email,display_name,role,permissions,created_at,updated_at')
+        .select('user_id,email,display_name,role,company_id,permissions,created_at,updated_at')
         .eq('user_id', userId)
         .maybeSingle();
 
@@ -302,6 +310,16 @@ export default async function handler(req, res) {
 
       if (!userId) return json(res, 400, { ok: false, error: 'Falta user_id.' });
 
+      const { data: existingProfile, error: existingProfileError } = await supabase
+        .from('profiles')
+        .select('company_id')
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (existingProfileError) {
+        return json(res, 500, { ok: false, error: existingProfileError.message || 'No se pudo consultar el perfil actual.' });
+      }
+
       const mergedPermissions = {
         ...(permissions && typeof permissions === 'object' ? permissions : {}),
         authorizationKey: nextAuthorizationKey || undefined,
@@ -311,6 +329,7 @@ export default async function handler(req, res) {
       const payload = {
         user_id: userId,
         role,
+        company_id: existingProfile?.company_id || companyId,
         permissions: mergedPermissions,
         updated_at: new Date().toISOString(),
       };
@@ -332,7 +351,7 @@ export default async function handler(req, res) {
 
       const { data: freshProfile, error: freshError } = await supabase
         .from('profiles')
-        .select('user_id,email,display_name,role,permissions,created_at,updated_at')
+        .select('user_id,email,display_name,role,company_id,permissions,created_at,updated_at')
         .eq('user_id', userId)
         .maybeSingle();
 
