@@ -3048,11 +3048,19 @@ function App() {
     })
   ), [inventoryTransferRequests, currentUser?.id, currentCashUserKey]);
   const ownPendingRemoteAuthRequests = useMemo(() => (
-    (remoteAuthRequests || []).filter((request) => (
-      String(request?.status || '').toUpperCase() === 'PENDING' &&
-      String(request?.requestedBy?.id || '') === String(currentUser?.id || '')
-    ))
-  ), [remoteAuthRequests, currentUser?.id]);
+    (remoteAuthRequests || []).filter((request) => {
+      if (String(request?.status || '').toUpperCase() !== 'PENDING') return false;
+      if (String(request?.requestedBy?.id || '') !== String(currentUser?.id || '')) return false;
+
+      const requestCreatedAtMs = new Date(request?.createdAt || 0).getTime();
+      const shiftStartMs = new Date(shift?.startTime || 0).getTime();
+      if (Number.isFinite(shiftStartMs) && !Number.isNaN(shiftStartMs) && Number.isFinite(requestCreatedAtMs) && !Number.isNaN(requestCreatedAtMs)) {
+        return requestCreatedAtMs >= shiftStartMs;
+      }
+
+      return true;
+    })
+  ), [remoteAuthRequests, currentUser?.id, shift?.startTime]);
   const shiftCloseBlockers = useMemo(() => {
     const blockers = [];
     if (ownPendingInventoryTransferRequests.length > 0) {
@@ -5388,6 +5396,7 @@ function App() {
                     }
                   }
 
+                  pendingClientsSyncRef.current = false;
                   await refreshCloudData({ silent: true });
                 } catch (e) {
                   console.error("Error sincronizando clientes en Supabase:", e);
@@ -5458,6 +5467,7 @@ function App() {
                     await dataService.saveProduct({ ...changed, user_id: currentUser?.id });
                   }
 
+                  pendingProductsSyncRef.current = false;
                   await refreshCloudData({ silent: true });
                 } catch (e) {
                   console.error("Error guardando productos en Supabase:", e);
@@ -5562,6 +5572,7 @@ function App() {
                   for (const changed of changedProducts) {
                     await dataService.saveProduct({ ...changed, user_id: currentUser?.id });
                   }
+                  pendingProductsSyncRef.current = false;
                   await refreshCloudData({ silent: true });
                 } catch (e) {
                   console.error('Error sync producto desde codigos:', e);
