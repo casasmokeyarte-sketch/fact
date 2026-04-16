@@ -311,6 +311,8 @@ const normalizeClientDraft = (client) => ({
   referralCreditsAvailable: Math.max(0, Number(client?.referralCreditsAvailable ?? client?.referral_credits_available ?? 0) || 0),
   referralPoints: Math.max(0, Number(client?.referralPoints ?? client?.referral_points ?? 0) || 0),
   successfulReferralCount: Math.max(0, Number(client?.successfulReferralCount ?? client?.successful_referral_count ?? 0) || 0),
+  active: client?.active ?? !(client?.blocked === true),
+  blocked: client?.blocked === true || client?.active === false,
 });
 
 const normalizeSignatureText = (value) => String(value || '')

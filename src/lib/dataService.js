@@ -58,6 +58,33 @@ function isMissingIsVisibleColumnError(error) {
   return code === '42703' || code === 'PGRST204' || blob.includes('is_visible');
 }
 
+function isMissingFullPriceOnlyColumnError(error) {
+  const code = String(error?.code || '');
+  const blob = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`.toLowerCase();
+  return code === '42703' || code === 'PGRST204' || blob.includes('full_price_only');
+}
+
+function stripUnsupportedProductFields(payload, error) {
+  if (!payload || typeof payload !== 'object') return payload;
+
+  let nextPayload = { ...payload };
+  let changed = false;
+
+  if (Object.prototype.hasOwnProperty.call(nextPayload, 'is_visible') && isMissingIsVisibleColumnError(error)) {
+    const { is_visible, ...rest } = nextPayload;
+    nextPayload = rest;
+    changed = true;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(nextPayload, 'full_price_only') && isMissingFullPriceOnlyColumnError(error)) {
+    const { full_price_only, ...rest } = nextPayload;
+    nextPayload = rest;
+    changed = true;
+  }
+
+  return changed ? nextPayload : null;
+}
+
 function isMissingRelationError(error) {
   const code = String(error?.code || '');
   const blob = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`.toLowerCase();
@@ -324,13 +351,15 @@ export const dataService = {
       let { data: updatedData, error: updateError } = await withRetry(() =>
         supabase.from('products').update(updatePayload).eq('id', payload.id).select()
       );
-      if (updateError && isMissingIsVisibleColumnError(updateError)) {
-        const { is_visible, ...fallbackPayload } = updatePayload;
+      if (updateError) {
+        const fallbackPayload = stripUnsupportedProductFields(updatePayload, updateError);
+        if (fallbackPayload) {
         const retry = await withRetry(() =>
           supabase.from('products').update(fallbackPayload).eq('id', payload.id).select()
         );
         updatedData = retry.data;
         updateError = retry.error;
+        }
       }
       if (updateError) throw updateError;
       if ((updatedData || []).length > 0) return updatedData;
@@ -339,22 +368,34 @@ export const dataService = {
       let { data: insertedData, error: insertError } = await withRetry(() =>
         supabase.from('products').insert(insertWithIdPayload).select()
       );
-      if (insertError && isMissingIsVisibleColumnError(insertError)) {
-        const { is_visible, ...fallbackPayload } = insertWithIdPayload;
+      if (insertError) {
+        const fallbackPayload = stripUnsupportedProductFields(insertWithIdPayload, insertError);
+        if (fallbackPayload) {
         const retry = await withRetry(() =>
           supabase.from('products').insert(fallbackPayload).select()
         );
         insertedData = retry.data;
         insertError = retry.error;
+        }
       }
       if (!insertError) return insertedData;
 
       if (!isBarcodeUniqueError(insertError) || !payload.barcode) throw insertError;
 
       const fallbackUpdatePayload = removeInvalidUuidId(updatePayload);
-      const { data: byBarcodeData, error: byBarcodeError } = await withRetry(() =>
+      let { data: byBarcodeData, error: byBarcodeError } = await withRetry(() =>
         supabase.from('products').update(fallbackUpdatePayload).eq('barcode', payload.barcode).select()
       );
+      if (byBarcodeError) {
+        const retryPayload = stripUnsupportedProductFields(fallbackUpdatePayload, byBarcodeError);
+        if (retryPayload) {
+          const retry = await withRetry(() =>
+            supabase.from('products').update(retryPayload).eq('barcode', payload.barcode).select()
+          );
+          byBarcodeData = retry.data;
+          byBarcodeError = retry.error;
+        }
+      }
       if (byBarcodeError) throw byBarcodeError;
       return byBarcodeData;
     }
@@ -368,13 +409,15 @@ export const dataService = {
       let { data: existingByBarcode, error: existingByBarcodeError } = await withRetry(() =>
         supabase.from('products').update(updatePayload).eq('barcode', insertPayload.barcode).select()
       );
-      if (existingByBarcodeError && isMissingIsVisibleColumnError(existingByBarcodeError)) {
-        const { is_visible, ...fallbackPayload } = updatePayload;
+      if (existingByBarcodeError) {
+        const fallbackPayload = stripUnsupportedProductFields(updatePayload, existingByBarcodeError);
+        if (fallbackPayload) {
         const retry = await withRetry(() =>
           supabase.from('products').update(fallbackPayload).eq('barcode', insertPayload.barcode).select()
         );
         existingByBarcode = retry.data;
         existingByBarcodeError = retry.error;
+        }
       }
       if (existingByBarcodeError) throw existingByBarcodeError;
       if ((existingByBarcode || []).length > 0) return existingByBarcode;
@@ -409,13 +452,15 @@ export const dataService = {
         let { data: existingRows, error: existingRowsError } = await withRetry(() =>
           supabase.from('products').update(updatePayload).eq('id', existingBySignature.id).select()
         );
-        if (existingRowsError && isMissingIsVisibleColumnError(existingRowsError)) {
-          const { is_visible, ...fallbackPayload } = updatePayload;
+        if (existingRowsError) {
+          const fallbackPayload = stripUnsupportedProductFields(updatePayload, existingRowsError);
+          if (fallbackPayload) {
           const retry = await withRetry(() =>
             supabase.from('products').update(fallbackPayload).eq('id', existingBySignature.id).select()
           );
           existingRows = retry.data;
           existingRowsError = retry.error;
+          }
         }
         if (existingRowsError) throw existingRowsError;
         if ((existingRows || []).length > 0) return existingRows;
@@ -423,20 +468,32 @@ export const dataService = {
     }
 
     let { data, error } = await withRetry(() => supabase.from('products').insert(insertPayload).select());
-    if (error && isMissingIsVisibleColumnError(error)) {
-      const { is_visible, ...fallbackPayload } = insertPayload;
-      const retry = await withRetry(() => supabase.from('products').insert(fallbackPayload).select());
-      data = retry.data;
-      error = retry.error;
+    if (error) {
+      const fallbackPayload = stripUnsupportedProductFields(insertPayload, error);
+      if (fallbackPayload) {
+        const retry = await withRetry(() => supabase.from('products').insert(fallbackPayload).select());
+        data = retry.data;
+        error = retry.error;
+      }
     }
     if (!error) return data;
 
     if (!isBarcodeUniqueError(error) || !insertPayload.barcode) throw error;
 
     const fallbackUpdatePayload = removeInvalidUuidId(insertPayload);
-    const { data: byBarcodeData, error: byBarcodeError } = await withRetry(() =>
+    let { data: byBarcodeData, error: byBarcodeError } = await withRetry(() =>
       supabase.from('products').update(fallbackUpdatePayload).eq('barcode', insertPayload.barcode).select()
     );
+    if (byBarcodeError) {
+      const retryPayload = stripUnsupportedProductFields(fallbackUpdatePayload, byBarcodeError);
+      if (retryPayload) {
+        const retry = await withRetry(() =>
+          supabase.from('products').update(retryPayload).eq('barcode', insertPayload.barcode).select()
+        );
+        byBarcodeData = retry.data;
+        byBarcodeError = retry.error;
+      }
+    }
     if (byBarcodeError) throw byBarcodeError;
     return byBarcodeData;
   },
@@ -514,6 +571,7 @@ export const dataService = {
       referralPoints: Math.max(0, Number(c.referral_points ?? 0) || 0),
       successfulReferralCount: Math.max(0, Number(c.successful_referral_count ?? 0) || 0),
       active: c.active ?? true,
+      blocked: c.active === false,
     }));
   },
 
@@ -585,7 +643,7 @@ export const dataService = {
       referral_credits_available: Math.max(0, Number(client.referralCreditsAvailable ?? existingByDocument?.referral_credits_available ?? 0) || 0),
       referral_points: Math.max(0, Number(client.referralPoints ?? existingByDocument?.referral_points ?? 0) || 0),
       successful_referral_count: Math.max(0, Number(client.successfulReferralCount ?? existingByDocument?.successful_referral_count ?? 0) || 0),
-      active: client.active ?? existingByDocument?.active ?? true,
+      active: client.active ?? (client.blocked === true ? false : undefined) ?? existingByDocument?.active ?? true,
     };
 
     if (isUuid(payload.id)) {

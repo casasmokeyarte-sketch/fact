@@ -21,14 +21,6 @@ async function buildSyncHeaders() {
     'x-sync-secret': CRM_SYNC_SECRET,
   };
 
-  const crmHost = getHostname(CRM_SYNC_URL);
-  const appHost = getHostname(APP_SUPABASE_URL);
-  const isSameSupabaseProject = !!crmHost && crmHost === appHost;
-
-  if (!isSameSupabaseProject) {
-    return headers;
-  }
-
   try {
     const {
       data: { session },
@@ -42,6 +34,10 @@ async function buildSyncHeaders() {
     if (APP_SUPABASE_ANON_KEY) {
       headers.Authorization = `Bearer ${APP_SUPABASE_ANON_KEY}`;
     }
+  }
+
+  if (!headers.Authorization && APP_SUPABASE_ANON_KEY) {
+    headers.Authorization = `Bearer ${APP_SUPABASE_ANON_KEY}`;
   }
 
   return headers;
