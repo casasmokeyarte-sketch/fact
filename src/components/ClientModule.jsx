@@ -17,8 +17,13 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
     const filterStorageKey = `fact_filter_clients_${currentUser?.id || 'anon'}`;
     
     // Check if user is Cajero
-    const isCajero = currentUser?.role === 'Cajero';
-    const isAdmin = currentUser?.role === 'Administrador';
+    const normalizedRole = String(currentUser?.role || '')
+        .trim()
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '');
+    const isCajero = normalizedRole.includes('cajer');
+    const isAdmin = normalizedRole === 'administrador' || normalizedRole === 'admin';
     const canEdit = !isCajero && (currentUser?.permissions?.clientes?.editar !== false);
     const canExport = !isCajero && (currentUser?.permissions?.clientes?.exportar !== false);
     const canImport = !isCajero && (currentUser?.permissions?.clientes?.importar !== false);

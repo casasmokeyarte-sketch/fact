@@ -38,6 +38,21 @@ interface DataResult<T> {
 
 const profileKey = (userId: UID) => ['profile', userId] as const
 
+function parseJwtAlg(token: string): string {
+  try {
+    const [headerChunk] = String(token || '').split('.')
+    if (!headerChunk) return ''
+
+    const base64 = headerChunk.replace(/-/g, '+').replace(/_/g, '/')
+    const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4)
+    const decoded = atob(padded)
+    const header = JSON.parse(decoded)
+    return String(header?.alg || '').toUpperCase()
+  } catch {
+    return ''
+  }
+}
+
 export function useSupabase() {
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
@@ -245,7 +260,15 @@ export function useProfile(userId?: UID) {
 
         if (!isMounted) return
 
-        await supabase.realtime.setAuth(accessToken)
+        const tokenAlg = parseJwtAlg(accessToken)
+        if (tokenAlg !== 'ES256' && tokenAlg !== 'ES384' && tokenAlg !== 'ES512') {
+          await supabase.realtime.setAuth(accessToken)
+        } else {
+          console.warn('Skipping realtime.setAuth for unsupported JWT algorithm', {
+            userId,
+            tokenAlg,
+          })
+        }
 
         if (!isMounted) return
 

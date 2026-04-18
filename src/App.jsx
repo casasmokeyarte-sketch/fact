@@ -145,6 +145,21 @@ const normalizePermissions = (permissions) => {
   return normalized;
 };
 
+const parseJwtAlg = (token) => {
+  try {
+    const [headerChunk] = String(token || '').split('.');
+    if (!headerChunk) return '';
+
+    const base64 = headerChunk.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4);
+    const decoded = atob(padded);
+    const header = JSON.parse(decoded);
+    return String(header?.alg || '').toUpperCase();
+  } catch {
+    return '';
+  }
+};
+
 const normalizePermissionsForRole = (role, permissions) => {
   const normalizedRole = normalizeRole(role);
   const base = normalizePermissions(permissions);
@@ -869,6 +884,21 @@ function App() {
       }))
       .filter((user) => user.authorizationKey)
   ), [users]);
+  const resolveAuthorizationApproval = useCallback((rawPass) => {
+    const pass = String(rawPass || '').trim();
+    if (!pass) return null;
+
+    const matchedApprover = authorizationApprovers.find((user) => String(user?.authorizationKey || '').trim() === pass);
+    if (matchedApprover) return matchedApprover;
+
+    const fallbackAdminPass = String(adminPass || '').trim();
+    if (fallbackAdminPass && pass === fallbackAdminPass) {
+      const adminUser = authorizationApprovers.find((user) => normalizeRole(user?.role) === 'Administrador');
+      return adminUser || { id: null, name: 'Admin', role: 'Administrador', authorizationKey: fallbackAdminPass };
+    }
+
+    return null;
+  }, [adminPass, authorizationApprovers]);
   const [cartera, setCartera] = useState([]);
   const [stock, setStock] = useState({ bodega: {}, ventas: {} });
   const [auditLogs, setAuditLogs] = useState([]);
@@ -1642,7 +1672,11 @@ function App() {
     const setup = async () => {
       try {
         const { data: { session } } = await supabase.auth.getSession();
-        await supabase.realtime.setAuth(session?.access_token ?? '');
+        const accessToken = session?.access_token ?? '';
+        const tokenAlg = parseJwtAlg(accessToken);
+        if (tokenAlg !== 'ES256' && tokenAlg !== 'ES384' && tokenAlg !== 'ES512') {
+          await supabase.realtime.setAuth(accessToken);
+        }
 
         channel = supabase
           .channel(`company_settings:${companyId}`)
@@ -3120,7 +3154,7 @@ function App() {
     title = 'Autorizacion',
     message = 'Se necesita clave del administrador para avanzar.',
   } = {}) => {
-    if (!authorizationApprovers.length) {
+    if (!authorizationApprovers.length && !String(adminPass || '').trim()) {
       alert('No hay claves de autorizacion configuradas para Administrador o Supervisor.');
       return false;
     }
@@ -3134,7 +3168,7 @@ function App() {
         value: '',
       });
     });
-  }, [authorizationApprovers]);
+  }, [adminPass, authorizationApprovers]);
 
   const onStartShift = async (initialCash, options = {}) => {
     const startCash = Number(initialCash) > 0 ? Number(initialCash) : 0;
@@ -5800,7 +5834,7 @@ function App() {
               products={products}
               logs={auditLogs}
               currentUser={currentUser}
-              isAdmin={currentUser?.role === 'Administrador'}
+              isAdmin={normalizeRole(currentUser?.role) === 'Administrador'}
               onDeleteInvoice={onDeleteInvoice}
               onCancelInvoice={onCancelInvoice}
               onReturnInvoice={onReturnInvoice}
@@ -5846,7 +5880,7 @@ function App() {
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
                     const pass = String(adminAuthModal.value || '').trim();
-                    const matchedApprover = authorizationApprovers.find((user) => user.authorizationKey === pass);
+                    const matchedApprover = resolveAuthorizationApproval(pass);
                     if (!matchedApprover) {
                       alert('Clave incorrecta.');
                       return;
@@ -5864,7 +5898,7 @@ function App() {
                 style={{ flex: 1 }}
                 onClick={() => {
                   const pass = String(adminAuthModal.value || '').trim();
-                  const matchedApprover = authorizationApprovers.find((user) => user.authorizationKey === pass);
+                  const matchedApprover = resolveAuthorizationApproval(pass);
                   if (!matchedApprover) {
                     alert('Clave incorrecta.');
                     return;

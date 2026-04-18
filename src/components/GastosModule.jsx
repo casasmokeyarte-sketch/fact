@@ -66,6 +66,7 @@ export function GastosModule({
     const [form, setForm] = useState(INITIAL_FORM);
     const [statusFilter, setStatusFilter] = useState('');
     const [selectedReceipt, setSelectedReceipt] = useState(null);
+    const [isSaving, setIsSaving] = useState(false);
     const normalizedExpenses = useMemo(() => (Array.isArray(expenses) ? expenses.map(toExpenseViewModel) : []), [expenses]);
     const [rowDrafts, setRowDrafts] = useState({});
 
@@ -86,6 +87,7 @@ export function GastosModule({
 
     const handleAddExpense = async (e) => {
         e.preventDefault();
+        if (isSaving) return;
         if (!form.amount || !form.description) return alert('Complete los campos de monto y descripcion.');
 
         const amount = Math.max(0, Number(form.amount || 0));
@@ -111,21 +113,29 @@ export function GastosModule({
             user_name: currentUser?.name || currentUser?.email || 'Sistema',
         });
 
-        await onRegisterExpense?.(newExpense);
-        setExpenses([newExpense, ...normalizedExpenses]);
-        onLog?.({
-            module: 'Gastos',
-            action: 'Nuevo Gasto',
-            details: `${newExpense.type}: $${amount} - ${newExpense.description} | Estado: ${newExpense.status} | Saldo: $${newExpense.balance.toLocaleString()}`,
-        });
+        try {
+            setIsSaving(true);
+            await onRegisterExpense?.(newExpense);
+            setExpenses((prev) => [newExpense, ...(Array.isArray(prev) ? prev.map(toExpenseViewModel) : [])]);
+            onLog?.({
+                module: 'Gastos',
+                action: 'Nuevo Gasto',
+                details: `${newExpense.type}: $${amount} - ${newExpense.description} | Estado: ${newExpense.status} | Saldo: $${newExpense.balance.toLocaleString()}`,
+            });
 
-        if (window.confirm('Desea imprimir el comprobante ahora?')) {
-            setSelectedReceipt(newExpense);
-            setTimeout(() => printExpenseReceipt(newExpense, 'a4'), 80);
+            if (window.confirm('Desea imprimir el comprobante ahora?')) {
+                setSelectedReceipt(newExpense);
+                setTimeout(() => printExpenseReceipt(newExpense, 'a4'), 80);
+            }
+
+            setForm(INITIAL_FORM);
+            alert('Gasto registrado con exito.');
+        } catch (error) {
+            console.error('No se pudo registrar el gasto:', error);
+            alert(`No se pudo registrar el gasto.\n\nDetalle: ${error?.message || 'Error desconocido'}`);
+        } finally {
+            setIsSaving(false);
         }
-
-        setForm(INITIAL_FORM);
-        alert('Gasto registrado con exito.');
     };
 
     const handlePrintSelected = (expense) => {
@@ -153,14 +163,23 @@ export function GastosModule({
             paidAmount,
         });
 
-        await onUpdateExpense?.(expense, updatedExpense);
-        setExpenses(normalizedExpenses.map((row) => (row.id === expense.id ? updatedExpense : row)));
-        onLog?.({
-            module: 'Gastos',
-            action: 'Actualizar Estado',
-            details: `Gasto ${expense.id}: ${expense.status} -> ${updatedExpense.status} | Abonado: $${updatedExpense.paidAmount.toLocaleString()} | Saldo: $${updatedExpense.balance.toLocaleString()}`,
-        });
-        alert('Estado del gasto actualizado.');
+        try {
+            await onUpdateExpense?.(expense, updatedExpense);
+            setExpenses((prev) => (
+                Array.isArray(prev)
+                    ? prev.map((row) => (row?.id === expense.id ? updatedExpense : toExpenseViewModel(row)))
+                    : []
+            ));
+            onLog?.({
+                module: 'Gastos',
+                action: 'Actualizar Estado',
+                details: `Gasto ${expense.id}: ${expense.status} -> ${updatedExpense.status} | Abonado: $${updatedExpense.paidAmount.toLocaleString()} | Saldo: $${updatedExpense.balance.toLocaleString()}`,
+            });
+            alert('Estado del gasto actualizado.');
+        } catch (error) {
+            console.error('No se pudo actualizar el gasto:', error);
+            alert(`No se pudo actualizar el gasto.\n\nDetalle: ${error?.message || 'Error desconocido'}`);
+        }
     };
 
     const visibleExpenses = normalizedExpenses.filter((expense) => (
@@ -259,7 +278,9 @@ export function GastosModule({
                             <label className="input-label">Descripcion</label>
                             <textarea className="input-field" style={{ height: '60px' }} value={form.description} onChange={(e) => handleFormChange('description', e.target.value)} placeholder="Detalle del gasto" />
                         </div>
-                        <button type="submit" className="btn btn-primary" style={{ width: '100%' }}>Guardar gasto</button>
+                        <button type="submit" className="btn btn-primary" style={{ width: '100%' }} disabled={isSaving}>
+                            {isSaving ? 'Guardando...' : 'Guardar gasto'}
+                        </button>
                     </form>
                 </div>
 
