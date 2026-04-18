@@ -55,6 +55,12 @@ function buildEmailFromUsername(username, domain) {
   return `${u}${safeDomain}`;
 }
 
+function normalizeEmailCandidate(rawEmail, username, domain) {
+  const email = String(rawEmail || '').trim().toLowerCase();
+  if (email) return email;
+  return buildEmailFromUsername(username, domain);
+}
+
 function buildDefaultPermissionsForRole(role, providedPermissions) {
   if (providedPermissions && typeof providedPermissions === 'object') return providedPermissions;
 
@@ -223,6 +229,7 @@ export default async function handler(req, res) {
       const body = await readBody(req);
       const name = String(body?.name || '').trim();
       const username = String(body?.username || '').trim();
+      const providedEmail = String(body?.email || '').trim();
       const password = String(body?.password || '').trim();
       const role = normalizeRole(body?.role || 'Cajero');
       const basePermissions = buildDefaultPermissionsForRole(role, body?.permissions);
@@ -240,7 +247,7 @@ export default async function handler(req, res) {
       if (!isValidUsername(username)) return json(res, 400, { ok: false, error: 'Usuario invalido. Use letras/numeros y . _ - (min 3).' });
       if (!password || password.length < 6) return json(res, 400, { ok: false, error: 'Contrasena invalida (minimo 6 caracteres).' });
 
-      const email = buildEmailFromUsername(username, emailDomain);
+      const email = normalizeEmailCandidate(providedEmail, username, emailDomain);
 
       const { data: existingProfile } = await supabase
         .from('profiles')
@@ -305,6 +312,7 @@ export default async function handler(req, res) {
       const role = normalizeRole(body?.role || 'Cajero');
       const permissions = buildDefaultPermissionsForRole(role, body?.permissions);
       const displayName = String(body?.display_name || body?.name || '').trim();
+      const nextEmail = String(body?.email || '').trim().toLowerCase();
       const nextAuthorizationKey = String(body?.authorization_key || body?.authorizationKey || '').trim();
       const nextPassword = String(body?.password || '').trim();
 
@@ -346,6 +354,25 @@ export default async function handler(req, res) {
         const { error: authError } = await supabase.auth.admin.updateUserById(userId, authPayload);
         if (authError) {
           return json(res, 500, { ok: false, error: authError.message || 'No se pudo actualizar credenciales del usuario.' });
+        }
+      }
+
+      if (nextEmail) {
+        const { error: authEmailError } = await supabase.auth.admin.updateUserById(userId, {
+          email: nextEmail,
+          email_confirm: true,
+        });
+        if (authEmailError) {
+          return json(res, 500, { ok: false, error: authEmailError.message || 'No se pudo actualizar el correo del usuario.' });
+        }
+
+        const { error: profileEmailError } = await supabase
+          .from('profiles')
+          .update({ email: nextEmail, updated_at: new Date().toISOString() })
+          .eq('user_id', userId);
+
+        if (profileEmailError) {
+          return json(res, 500, { ok: false, error: profileEmailError.message || 'No se pudo actualizar el correo del perfil.' });
         }
       }
 

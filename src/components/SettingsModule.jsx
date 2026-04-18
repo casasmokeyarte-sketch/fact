@@ -48,7 +48,7 @@ export function SettingsModule({
     const [promoHistoryOpen, setPromoHistoryOpen] = useState(false);
 
     // New User State
-    const [newUser, setNewUser] = useState({ name: '', username: '', password: '', role: 'Cajero', authorizationKey: '' });
+    const [newUser, setNewUser] = useState({ name: '', username: '', email: '', password: '', role: 'Cajero', authorizationKey: '' });
     const [editingPermissionsUser, setEditingPermissionsUser] = useState(null);
     const [editingUser, setEditingUser] = useState(null);
 
@@ -225,11 +225,11 @@ export function SettingsModule({
                 body: JSON.stringify({
                     name: newUser.name,
                     username: normalizedUsername,
+                    email: String(newUser.email || '').trim(),
                     password: newUser.password,
                     role: newUser.role,
                     permissions,
                     authorizationKey: String(newUser.authorizationKey || '').trim(),
-                    emailDomain: '@fact.local',
                 })
             });
 
@@ -238,7 +238,7 @@ export function SettingsModule({
                 throw new Error(data?.error || 'No se pudo crear el usuario.');
             }
 
-            setNewUser({ name: '', username: '', password: '', role: 'Cajero', authorizationKey: '' });
+            setNewUser({ name: '', username: '', email: '', password: '', role: 'Cajero', authorizationKey: '' });
             await refreshUsersFromSupabase();
             alert("Usuario creado en Supabase.");
         } catch (err) {
@@ -327,6 +327,7 @@ export function SettingsModule({
         setEditingUser({
             id: userRow?.id || '',
             name: userRow?.name || '',
+            email: userRow?.email || '',
             role: userRow?.role || 'Cajero',
             authorizationKey: String(userRow?.authorization_key || userRow?.permissions?.authorizationKey || '').trim(),
             password: '',
@@ -358,6 +359,7 @@ export function SettingsModule({
                     user_id: editingUser.id,
                     name: String(editingUser.name || '').trim(),
                     display_name: String(editingUser.name || '').trim(),
+                    email: String(editingUser.email || '').trim(),
                     role,
                     permissions: permissionsBase,
                     authorization_key: String(editingUser.authorizationKey || '').trim(),
@@ -587,6 +589,10 @@ export function SettingsModule({
                             <div className="input-group">
                                 <label className="input-label">Nombre de Usuario</label>
                                 <input type="text" className="input-field" value={newUser.username} onChange={e => setNewUser({ ...newUser, username: e.target.value })} required />
+                            </div>
+                            <div className="input-group">
+                                <label className="input-label">Correo real</label>
+                                <input type="email" className="input-field" value={newUser.email} onChange={e => setNewUser({ ...newUser, email: e.target.value })} placeholder="usuario@correo.com" />
                             </div>
                             <div className="input-group">
                                 <label className="input-label">ContraseAa</label>
@@ -1502,6 +1508,16 @@ export function SettingsModule({
                                 className="input-field"
                                 value={editingUser.name}
                                 onChange={(e) => setEditingUser((prev) => ({ ...prev, name: e.target.value }))}
+                            />
+                        </div>
+
+                        <div className="input-group">
+                            <label className="input-label">Correo</label>
+                            <input
+                                type="email"
+                                className="input-field"
+                                value={editingUser.email || ''}
+                                onChange={(e) => setEditingUser((prev) => ({ ...prev, email: e.target.value }))}
                             />
                         </div>
 
