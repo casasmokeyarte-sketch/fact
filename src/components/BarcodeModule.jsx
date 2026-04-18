@@ -65,6 +65,7 @@ export function BarcodeModule({ products, setProducts, onLog, preselectedProduct
     barcode: normalizeNumericBarcode(product.barcode),
     format: barcodeFormat,
     date: new Date().toLocaleDateString(),
+    origin: 'existing',
   });
 
   const getProductsWithBarcodeLabels = () =>
@@ -343,6 +344,7 @@ export function BarcodeModule({ products, setProducts, onLog, preselectedProduct
       barcode: finalBarcode,
       format: barcodeFormat,
       date: issuedDate,
+      origin: 'generated',
     };
 
     setGeneratedLabel(newLabel);
@@ -392,6 +394,7 @@ export function BarcodeModule({ products, setProducts, onLog, preselectedProduct
         barcode: newCode,
         format: barcodeFormat,
         date: issuedDate,
+        origin: 'generated',
       });
     }
 
@@ -421,6 +424,18 @@ export function BarcodeModule({ products, setProducts, onLog, preselectedProduct
     }
 
     if (!generatedLabel) return;
+
+    const currentProduct = products.find((p) => String(p?.id || '') === String(generatedLabel.productId || ''));
+    const currentBarcode = normalizeNumericBarcode(currentProduct?.barcode);
+    if (currentBarcode) {
+      alert('Este producto ya tiene codigo. Para cambiar el codigo, use Inventario > editar producto.');
+      return;
+    }
+
+    if (String(generatedLabel?.origin || '') !== 'generated') {
+      alert('No se permite asignar o regenerar codigos desde este modulo. Use Inventario > editar producto.');
+      return;
+    }
 
     setProducts((prev) =>
       prev.map((p) =>
@@ -577,7 +592,7 @@ export function BarcodeModule({ products, setProducts, onLog, preselectedProduct
                   style={{ marginTop: '5px', width: '100%', backgroundColor: '#10b981', color: 'white' }}
                   onClick={handleApplyToProduct}
                 >
-                  Asignar a Producto
+                  Asignar a Producto (solo si no tenia codigo)
                 </button>
               )}
             </div>

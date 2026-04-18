@@ -29,6 +29,16 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
     const canImport = !isCajero && (currentUser?.permissions?.clientes?.importar !== false);
     const onlyStandard = isCajero || currentUser?.permissions?.clientes?.solo_estandar;
     const canBlockClient = isAdmin;
+    const createClientId = () => {
+        if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+            return crypto.randomUUID();
+        }
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+            const r = Math.random() * 16 | 0;
+            const v = c === 'x' ? r : (r & 0x3 | 0x8);
+            return v.toString(16);
+        });
+    };
     const resolveReferralCardTier = (points) => {
         const safePoints = Math.max(0, Number(points || 0) || 0);
         if (safePoints >= 100) return 'Black';
@@ -107,6 +117,7 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
         const { credit_level, credit_limit, approved_term, ...cleanClient } = (newClient || {});
         const normalizedClient = {
             ...cleanClient,
+            id: String(newClient.id || '').trim() || undefined,
             name: String(newClient.name || '').trim(),
             document: String(newClient.document || '').trim(),
             creditLevel: resolveCreditLevel(newClient.creditLevel),
@@ -121,13 +132,22 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
 
         if (isEditing) {
             const matchDoc = editingDocument || normalizedClient.document;
-            setClients(clients.map(c => String(c.document || '').trim() === String(matchDoc || '').trim() ? normalizedClient : c));
+            setClients(clients.map((c) => (
+                String(c.document || '').trim() === String(matchDoc || '').trim()
+                    ? {
+                        ...c,
+                        ...normalizedClient,
+                        id: normalizedClient.id || c.id,
+                        updatedAt: new Date().toISOString()
+                    }
+                    : c
+            )));
             setIsEditing(false);
             setEditingDocument('');
             onLog?.({ module: 'Clientes', action: 'Editar Cliente', details: `Se editA a: ${newClient.name}` });
         } else {
             if (clients.find(c => String(c.document || '').trim() === normalizedClient.document)) return alert("Documento ya existe");
-            const clientToAdd = { ...normalizedClient, id: Date.now(), blocked: false };
+            const clientToAdd = { ...normalizedClient, id: createClientId(), blocked: false, updatedAt: new Date().toISOString() };
             setClients([...clients, clientToAdd]);
             onLog?.({ module: 'Clientes', action: 'Crear Cliente', details: `Se creA a: ${newClient.name}` });
         }
@@ -214,7 +234,7 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
                         const [header, ...rows] = lines;
                         imported = rows.map(row => {
                             const [name, doc, phone, addr, level, limit, disc] = row.split(',').map(s => s.replace(/"/g, '').trim());
-                            return { name, document: doc, phone, address: addr, creditLevel: level || 'ESTANDAR', creditLimit: Number(limit) || 0, discount: Number(disc) || 0, id: Date.now() + Math.random() };
+                            return { name, document: doc, phone, address: addr, creditLevel: level || 'ESTANDAR', creditLimit: Number(limit) || 0, discount: Number(disc) || 0, id: createClientId() };
                         });
                     }
                     if (Array.isArray(imported)) {

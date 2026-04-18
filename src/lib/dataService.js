@@ -579,6 +579,7 @@ export const dataService = {
     const userId = client?.user_id || await getAuthUserId();
     const document = String(client?.document ?? '').trim();
     let existingByDocument = null;
+    const existingClientId = isUuid(client?.id) ? client.id : null;
 
     if (document) {
       const { data: existing, error: existingError } = await withRetry(() =>
@@ -592,42 +593,57 @@ export const dataService = {
       existingByDocument = existing || null;
     }
 
+    let existingById = null;
+    if (existingClientId) {
+      const { data: existing, error: existingError } = await withRetry(() =>
+        supabase
+          .from('clients')
+          .select('*')
+          .eq('id', existingClientId)
+          .maybeSingle()
+      );
+      if (existingError) throw existingError;
+      existingById = existing || null;
+    }
+
+    const existingRecord = existingById || existingByDocument || null;
+
     const providedCreditLevel = client.creditLevel ?? client.credit_level;
     const providedCreditLimit = client.creditLimit ?? client.credit_limit;
     const providedApprovedTerm = client.approvedTerm ?? client.approved_term;
     const providedDiscount = client.discount;
-    const existingLevel = normalizeCreditLevel(resolveCreditLevel(existingByDocument?.credit_level || 'ESTANDAR'));
+    const existingLevel = normalizeCreditLevel(resolveCreditLevel(existingRecord?.credit_level || 'ESTANDAR'));
     const incomingLevel = normalizeCreditLevel(resolveCreditLevel(providedCreditLevel || 'ESTANDAR'));
     const incomingLimit = Number(providedCreditLimit ?? 0);
     const incomingDiscount = Number(providedDiscount ?? 0);
 
     // Protect against accidental downgrade to ESTANDAR/0 produced by partial payloads.
     const accidentalDowngradeToStandard =
-      existingByDocument &&
+      existingRecord &&
       existingLevel !== 'ESTANDAR' &&
       incomingLevel === 'ESTANDAR' &&
       incomingLimit <= 0 &&
       incomingDiscount <= 0;
 
     const resolvedCreditLevel = accidentalDowngradeToStandard
-      ? resolveCreditLevel(existingByDocument.credit_level)
-      : resolveCreditLevel(providedCreditLevel ?? existingByDocument?.credit_level ?? 'ESTANDAR');
+      ? resolveCreditLevel(existingRecord.credit_level)
+      : resolveCreditLevel(providedCreditLevel ?? existingRecord?.credit_level ?? 'ESTANDAR');
 
     const resolvedCreditLimit = accidentalDowngradeToStandard
-      ? Number(existingByDocument?.credit_limit ?? 0)
-      : Number(providedCreditLimit ?? existingByDocument?.credit_limit ?? 0);
+      ? Number(existingRecord?.credit_limit ?? 0)
+      : Number(providedCreditLimit ?? existingRecord?.credit_limit ?? 0);
 
     const resolvedApprovedTerm = accidentalDowngradeToStandard
-      ? Number(existingByDocument?.approved_term ?? 30)
-      : Number(providedApprovedTerm ?? existingByDocument?.approved_term ?? 30);
+      ? Number(existingRecord?.approved_term ?? 30)
+      : Number(providedApprovedTerm ?? existingRecord?.approved_term ?? 30);
 
     const resolvedDiscount = accidentalDowngradeToStandard
-      ? Number(existingByDocument?.discount ?? 0)
-      : Number(providedDiscount ?? existingByDocument?.discount ?? 0);
+      ? Number(existingRecord?.discount ?? 0)
+      : Number(providedDiscount ?? existingRecord?.discount ?? 0);
 
     const payload = {
-      id: client.id,
-      user_id: client.user_id || userId,
+      id: existingRecord?.id || client.id,
+      user_id: existingRecord?.user_id || client.user_id || userId,
       name: client.name ?? '',
       document,
       phone: client.phone ?? null,
@@ -637,19 +653,27 @@ export const dataService = {
       credit_limit: resolvedCreditLimit,
       approved_term: resolvedApprovedTerm,
       discount: resolvedDiscount,
-      referrer_document: client.referrerDocument ?? existingByDocument?.referrer_document ?? '',
-      referrer_name: client.referrerName ?? existingByDocument?.referrer_name ?? '',
-      referral_reward_granted: client.referralRewardGranted ?? existingByDocument?.referral_reward_granted ?? false,
-      referral_credits_available: Math.max(0, Number(client.referralCreditsAvailable ?? existingByDocument?.referral_credits_available ?? 0) || 0),
-      referral_points: Math.max(0, Number(client.referralPoints ?? existingByDocument?.referral_points ?? 0) || 0),
-      successful_referral_count: Math.max(0, Number(client.successfulReferralCount ?? existingByDocument?.successful_referral_count ?? 0) || 0),
-      active: client.active ?? (client.blocked === true ? false : undefined) ?? existingByDocument?.active ?? true,
+      referrer_document: client.referrerDocument ?? existingRecord?.referrer_document ?? '',
+      referrer_name: client.referrerName ?? existingRecord?.referrer_name ?? '',
+      referral_reward_granted: client.referralRewardGranted ?? existingRecord?.referral_reward_granted ?? false,
+      referral_credits_available: Math.max(0, Number(client.referralCreditsAvailable ?? existingRecord?.referral_credits_available ?? 0) || 0),
+      referral_points: Math.max(0, Number(client.referralPoints ?? existingRecord?.referral_points ?? 0) || 0),
+      successful_referral_count: Math.max(0, Number(client.successfulReferralCount ?? existingRecord?.successful_referral_count ?? 0) || 0),
+      active: client.active ?? (client.blocked === true ? false : undefined) ?? existingRecord?.active ?? true,
+      updated_at: new Date().toISOString(),
     };
 
     if (isUuid(payload.id)) {
-      // Use onConflict: 'document' if available to handle potential document conflicts gracefully.
-      const upsertOptions = document ? { onConflict: 'document' } : {};
-      let { data, error } = await withRetry(() => supabase.from('clients').upsert(payload, upsertOptions).select());
+      const { user_id, ...updatePayload } = payload;
+      let { data, error } = await withRetry(() =>
+        supabase.from('clients').update(updatePayload).eq('id', payload.id).select()
+      );
+      if (!error && Array.isArray(data) && data.length === 0) {
+        throw new Error(
+          'No se pudo actualizar el cliente en Supabase (0 filas afectadas). Esto suele pasar por permisos/RLS cuando el cliente fue creado por otro usuario. ' +
+          'Solucion: aplicar la migracion de empresa compartida (ver shared_company_migration.sql) o ajustar policies de clients.'
+        );
+      }
       if (error && isUndefinedColumnError(error)) {
         const {
           referrer_document,
@@ -660,15 +684,43 @@ export const dataService = {
           successful_referral_count,
           ...fallbackPayload
         } = payload;
-        const retry = await withRetry(() => supabase.from('clients').upsert(fallbackPayload).select());
+        const legacyUpdatePayload = { ...fallbackPayload };
+        delete legacyUpdatePayload.user_id;
+        const retry = await withRetry(() => supabase.from('clients').update(legacyUpdatePayload).eq('id', payload.id).select());
         data = retry.data;
         error = retry.error;
+        if (!error && Array.isArray(data) && data.length === 0) {
+          throw new Error(
+            'No se pudo actualizar el cliente en Supabase (0 filas afectadas). Esto suele pasar por permisos/RLS. ' +
+            'Solucion: aplicar shared_company_migration.sql o ajustar policies.'
+          );
+        }
       }
       if (!error) return data;
 
-      if (!isClientDocumentUniqueError(error) || !payload.document) throw error;
+      const insertWithIdPayload = { ...removeInvalidUuidId(payload), id: payload.id };
+      let { data: insertedData, error: insertError } = await withRetry(() =>
+        supabase.from('clients').insert(insertWithIdPayload).select()
+      );
+      if (insertError && isUndefinedColumnError(insertError)) {
+        const {
+          referrer_document,
+          referrer_name,
+          referral_reward_granted,
+          referral_credits_available,
+          referral_points,
+          successful_referral_count,
+          ...fallbackPayload
+        } = insertWithIdPayload;
+        const retry = await withRetry(() => supabase.from('clients').insert(fallbackPayload).select());
+        insertedData = retry.data;
+        insertError = retry.error;
+      }
+      if (!insertError) return insertedData;
 
-      const fallbackUpdatePayload = removeInvalidUuidId(payload);
+      if (!isClientDocumentUniqueError(insertError) || !payload.document) throw insertError;
+
+      const fallbackUpdatePayload = removeInvalidUuidId(updatePayload);
       let { data: byDocData, error: byDocError } = await withRetry(() =>
         supabase.from('clients').update(fallbackUpdatePayload).eq('document', payload.document).select()
       );

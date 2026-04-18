@@ -365,6 +365,83 @@ const dedupeClients = (rows) => {
   return Array.from(byDoc.values());
 };
 
+const getClientIdentityKey = (client) => {
+  const id = String(client?.id || '').trim();
+  if (id) return `id:${id}`;
+  const document = String(client?.document || '').trim();
+  if (document) return `doc:${document}`;
+  return '';
+};
+
+const getClientUpdatedAtMs = (client) => {
+  const value = new Date(client?.updated_at || client?.updatedAt || 0).getTime();
+  return Number.isFinite(value) ? value : 0;
+};
+
+const mergeClientsPreferNewest = (primaryRows, secondaryRows) => {
+  const merged = new Map();
+
+  const addRow = (row, sourcePriority = 0) => {
+    const normalized = normalizeClientDraft(row);
+    const key = getClientIdentityKey(normalized);
+    if (!key) return;
+
+    const existing = merged.get(key);
+    if (!existing) {
+      merged.set(key, { row: normalized, updatedAtMs: getClientUpdatedAtMs(normalized), sourcePriority });
+      return;
+    }
+
+    const nextUpdatedAtMs = getClientUpdatedAtMs(normalized);
+    if (nextUpdatedAtMs > existing.updatedAtMs) {
+      merged.set(key, { row: normalized, updatedAtMs: nextUpdatedAtMs, sourcePriority });
+      return;
+    }
+
+    if (nextUpdatedAtMs === existing.updatedAtMs && sourcePriority >= existing.sourcePriority) {
+      merged.set(key, { row: normalized, updatedAtMs: nextUpdatedAtMs, sourcePriority });
+    }
+  };
+
+  (primaryRows || []).forEach((row) => addRow(row, 1));
+  (secondaryRows || []).forEach((row) => addRow(row, 2));
+
+  return Array.from(merged.values()).map((entry) => entry.row);
+};
+
+const protectRecentClientWrites = (incomingRows, protectedRowsByKey) => {
+  const now = Date.now();
+  const result = new Map();
+
+  (incomingRows || []).forEach((row) => {
+    const normalized = normalizeClientDraft(row);
+    const key = getClientIdentityKey(normalized);
+    if (!key) return;
+    result.set(key, normalized);
+  });
+
+  Object.entries(protectedRowsByKey || {}).forEach(([key, entry]) => {
+    if (!entry?.row) return;
+    const writtenAt = Number(entry.writtenAt || 0);
+    if (!writtenAt || now - writtenAt > 15000) return;
+
+    const protectedRow = normalizeClientDraft(entry.row);
+    const incomingRow = result.get(key);
+    if (!incomingRow) {
+      result.set(key, protectedRow);
+      return;
+    }
+
+    const protectedUpdatedAt = getClientUpdatedAtMs(protectedRow);
+    const incomingUpdatedAt = getClientUpdatedAtMs(incomingRow);
+    if (protectedUpdatedAt >= incomingUpdatedAt) {
+      result.set(key, { ...incomingRow, ...protectedRow });
+    }
+  });
+
+  return Array.from(result.values());
+};
+
 const dedupeProducts = (rows) => {
   const byId = new Map();
   const byBarcode = new Map();
@@ -820,6 +897,7 @@ function App() {
   const lastAuthEventRef = useRef({ event: null, userId: null, at: 0 });
   const pendingProductsSyncRef = useRef(false);
   const pendingClientsSyncRef = useRef(false);
+  const recentClientWritesRef = useRef({});
   const userCashBalancesHydratedRef = useRef(false);
   const lastSyncedUserCashBalancesRef = useRef('');
   const usersRef = useRef([]);
@@ -1794,7 +1872,9 @@ function App() {
       ]);
 
       const safeProducts = dedupeProducts(dbProducts || []);
-      const safeClients = dedupeClients(dbClients || []);
+      const safeClients = dedupeClients(
+        protectRecentClientWrites(dbClients || [], recentClientWritesRef.current)
+      );
       if (!pendingProductsSyncRef.current) {
         setProducts((prev) => {
           // Guard against transient empty refreshes that can wipe local state.
@@ -1913,7 +1993,16 @@ function App() {
             console.warn('Refresh de clientes devolvio vacio; se conserva cache local para evitar perdida visual.');
             return prev;
           }
-          return safeClients;
+          const mergedClients = mergeClientsPreferNewest(
+            protectRecentClientWrites(prev || [], recentClientWritesRef.current),
+            safeClients
+          );
+          const prevSerialized = JSON.stringify(dedupeClients(prev || []));
+          const nextSerialized = JSON.stringify(dedupeClients(mergedClients));
+          if (prevSerialized === nextSerialized) {
+            return prev;
+          }
+          return mergedClients;
         });
       }
       setSalesHistory(enrichedSales);
@@ -5537,13 +5626,20 @@ function App() {
               setClients={async (newClients) => {
                 const previousClients = dedupeClients(registeredClients || []);
                 const normalizedNextClients = dedupeClients(newClients || []);
+                const sameClient = (left, right) => {
+                  const leftId = String(left?.id || '').trim();
+                  const rightId = String(right?.id || '').trim();
+                  if (leftId && rightId) return leftId === rightId;
+                  return String(left?.document || '').trim() === String(right?.document || '').trim();
+                };
                 pendingClientsSyncRef.current = true;
                 setRegisteredClients(normalizedNextClients);
                 const removedClients = previousClients.filter(
-                  (oldClient) => !normalizedNextClients.some((nextClient) => String(nextClient.document) === String(oldClient.document))
+                  (oldClient) => !normalizedNextClients.some((nextClient) => sameClient(nextClient, oldClient))
                 );
 
                 try {
+                  const savedClients = [];
                   if (removedClients.length > 0) {
                     for (const removed of removedClients) {
                       await dataService.deleteClient(removed);
@@ -5551,17 +5647,44 @@ function App() {
                   }
 
                   const changedClients = normalizedNextClients.filter((nextClient) => {
-                    const previous = previousClients.find((c) => c.document === nextClient.document);
+                    const previous = previousClients.find((c) => sameClient(c, nextClient));
                     return !previous || JSON.stringify(previous) !== JSON.stringify(nextClient);
                   });
 
+                  changedClients.forEach((client) => {
+                    const key = getClientIdentityKey(client);
+                    if (!key) return;
+                    recentClientWritesRef.current[key] = {
+                      row: {
+                        ...client,
+                        updatedAt: client?.updatedAt || new Date().toISOString(),
+                      },
+                      writtenAt: Date.now(),
+                    };
+                  });
+
                   for (const changed of changedClients) {
-                    await dataService.saveClient({ ...changed, user_id: currentUser?.id });
+                    const savedRows = await dataService.saveClient({ ...changed, user_id: currentUser?.id });
+                    if (Array.isArray(savedRows)) {
+                      savedClients.push(...savedRows);
+                      savedRows.forEach((savedRow) => {
+                        const key = getClientIdentityKey(savedRow);
+                        if (!key) return;
+                        recentClientWritesRef.current[key] = {
+                          row: savedRow,
+                          writtenAt: Date.now(),
+                        };
+                      });
+                    }
                     try {
                       await syncFactMovement('client.referral_snapshot', buildClientReferralSyncPayload(changed));
                     } catch (syncError) {
                       console.warn('No se pudo sincronizar snapshot CRM del cliente:', syncError);
                     }
+                  }
+
+                  if (savedClients.length > 0) {
+                    setRegisteredClients((prev) => dedupeClients(mergeClientsPreferNewest(prev || [], savedClients)));
                   }
 
                   pendingClientsSyncRef.current = false;
@@ -5570,6 +5693,8 @@ function App() {
                   console.error("Error sincronizando clientes en Supabase:", e);
                   const message = e?.message || 'Error desconocido';
                   alert(`No se pudieron sincronizar clientes en la nube.\n\nDetalle: ${message}`);
+                  // Rollback local changes so the UI doesn't "flip" and then revert on the next refresh.
+                  setRegisteredClients(previousClients);
                 } finally {
                   pendingClientsSyncRef.current = false;
                 }
@@ -5796,8 +5921,79 @@ function App() {
             <TruequeModule
               products={products}
               stock={stock}
-              setStock={setStock}
               clients={registeredClients}
+              onCommitExchange={async (trade) => {
+                const productIdGiven = String(trade?.productIdGiven || '').trim();
+                const productIdReceived = String(trade?.productIdReceived || '').trim();
+                const quantityGiven = Math.max(1, Math.trunc(Number(trade?.quantityGiven) || 0));
+                const quantityReceived = Math.max(1, Math.trunc(Number(trade?.quantityReceived) || 0));
+                const affectsInventory = trade?.affectsInventory !== false;
+
+                if (!productIdGiven) {
+                  throw new Error('Seleccione el producto entregado.');
+                }
+
+                if (affectsInventory && !productIdReceived) {
+                  throw new Error('Seleccione el producto recibido.');
+                }
+
+                const currentGivenStock = Number(stock?.ventas?.[productIdGiven] || 0);
+                if (currentGivenStock < quantityGiven) {
+                  throw new Error(`Stock insuficiente. Disponible: ${currentGivenStock}.`);
+                }
+
+                const currentReceivedStock = Number(stock?.ventas?.[productIdReceived] || 0);
+                const nextGivenStock = currentGivenStock - quantityGiven;
+                const nextReceivedStock = affectsInventory
+                  ? currentReceivedStock + quantityReceived
+                  : currentReceivedStock;
+
+                const nextStock = {
+                  ...stock,
+                  ventas: {
+                    ...stock.ventas,
+                    [productIdGiven]: nextGivenStock,
+                    ...(affectsInventory ? { [productIdReceived]: nextReceivedStock } : {})
+                  }
+                };
+
+                setStock(nextStock);
+
+                try {
+                  await updateStockInDB('ventas', productIdGiven, nextGivenStock);
+                  if (affectsInventory) {
+                    await updateStockInDB('ventas', productIdReceived, nextReceivedStock);
+                  }
+
+                  await addLog({
+                    module: 'Trueque',
+                    action: affectsInventory ? 'Trueque con inventario' : 'Trueque sin inventario',
+                    details: affectsInventory
+                      ? `${trade?.clientName || 'Cliente'} recibio ${trade?.productNameGiven || productIdGiven} x${quantityGiven} y entrego ${trade?.productNameReceived || productIdReceived} x${quantityReceived}.`
+                      : `${trade?.clientName || 'Cliente'} recibio ${trade?.productNameGiven || productIdGiven} x${quantityGiven} y entrego ${trade?.productNameReceived || 'concepto externo'}. ${trade?.notes ? `Nota: ${trade.notes}` : ''}`.trim()
+                  });
+                } catch (error) {
+                  setStock((prev) => ({
+                    ...prev,
+                    ventas: {
+                      ...prev.ventas,
+                      [productIdGiven]: currentGivenStock,
+                      ...(affectsInventory ? { [productIdReceived]: currentReceivedStock } : {})
+                    }
+                  }));
+
+                  try {
+                    await updateStockInDB('ventas', productIdGiven, currentGivenStock);
+                    if (affectsInventory) {
+                      await updateStockInDB('ventas', productIdReceived, currentReceivedStock);
+                    }
+                  } catch {
+                    // noop
+                  }
+
+                  throw error;
+                }
+              }}
               onLog={addLog}
             />
           )}

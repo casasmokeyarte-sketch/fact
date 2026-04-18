@@ -1,55 +1,89 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 
-export function TruequeModule({ products, stock, setStock, clients, onLog }) {
-    const [exchange, setExchange] = useState({
-        clientId: '',
-        productIdGiven: '',
-        productIdReceived: '',
-        quantity: 1
-    });
+const INITIAL_EXCHANGE = {
+    clientId: '',
+    productIdGiven: '',
+    quantityGiven: 1,
+    affectsInventory: true,
+    productIdReceived: '',
+    quantityReceived: 1,
+    receivedConcept: '',
+    notes: ''
+};
 
-    const handleExchange = () => {
-        if (!exchange.clientId || !exchange.productIdGiven || !exchange.productIdReceived) {
-            return alert("Complete todos los campos del trueque.");
+export function TruequeModule({ products, stock, clients, onCommitExchange, onLog }) {
+    const [exchange, setExchange] = useState(INITIAL_EXCHANGE);
+    const saleableProducts = useMemo(
+        () => (Array.isArray(products) ? products : []).filter(Boolean),
+        [products]
+    );
+    const availableClients = useMemo(
+        () => (Array.isArray(clients) ? clients : []).filter(Boolean),
+        [clients]
+    );
+
+    const handleExchange = async () => {
+        const quantityGiven = Math.max(1, Math.trunc(Number(exchange.quantityGiven) || 0));
+        const quantityReceived = Math.max(1, Math.trunc(Number(exchange.quantityReceived) || 0));
+        const affectsInventory = exchange.affectsInventory !== false;
+
+        if (!exchange.clientId || !exchange.productIdGiven) {
+            return alert('Seleccione cliente y producto entregado.');
         }
 
-        const { productIdGiven, productIdReceived, quantity } = exchange;
-
-        // Validate stock for product given (decreases)
-        if ((stock.ventas[productIdGiven] || 0) < quantity) {
-            return alert("No hay suficiente stock para entregar este producto.");
+        if (affectsInventory && !exchange.productIdReceived) {
+            return alert('Seleccione el producto que va a ingresar al inventario.');
         }
 
-        const newStock = {
-            ...stock,
-            ventas: {
-                ...stock.ventas,
-                [productIdGiven]: (stock.ventas[productIdGiven] || 0) - quantity,
-                [productIdReceived]: (stock.ventas[productIdReceived] || 0) + quantity
-            }
-        };
+        if (!affectsInventory && !String(exchange.receivedConcept || '').trim()) {
+            return alert('Describa lo que se recibe si no afecta inventario.');
+        }
 
-        const client = clients.find(c => c.id === exchange.clientId);
-        const prodOut = products.find(p => p.id === productIdGiven);
-        const prodIn = products.find(p => p.id === productIdReceived);
+        if ((stock?.ventas?.[exchange.productIdGiven] || 0) < quantityGiven) {
+            return alert('No hay suficiente stock para entregar este producto.');
+        }
 
-        setStock(newStock);
-        onLog?.({
-            module: 'Trueque',
-            action: 'Intercambio Realizado',
-            details: `Cliente: ${client?.name}. Entregado: ${prodOut?.name} x${quantity}. Recibido: ${prodIn?.name} x${quantity}.`
-        });
+        const client = availableClients.find((c) => String(c?.id || '') === String(exchange.clientId || ''));
+        const prodOut = saleableProducts.find((p) => String(p?.id || '') === String(exchange.productIdGiven || ''));
+        const prodIn = saleableProducts.find((p) => String(p?.id || '') === String(exchange.productIdReceived || ''));
 
-        alert("ATrueque realizado con Axito! Inventario actualizado.");
-        setExchange({ clientId: '', productIdGiven: '', productIdReceived: '', quantity: 1 });
+        try {
+            await onCommitExchange?.({
+                ...exchange,
+                quantityGiven,
+                quantityReceived,
+                affectsInventory,
+                clientName: client?.name || 'Cliente',
+                productNameGiven: prodOut?.name || 'Producto',
+                productNameReceived: affectsInventory
+                    ? (prodIn?.name || 'Producto')
+                    : String(exchange.receivedConcept || '').trim(),
+                notes: String(exchange.notes || '').trim(),
+            });
+
+            onLog?.({
+                module: 'Trueque',
+                action: 'Intercambio Realizado',
+                details: affectsInventory
+                    ? `Cliente: ${client?.name}. Entregado: ${prodOut?.name} x${quantityGiven}. Recibido: ${prodIn?.name} x${quantityReceived}.`
+                    : `Cliente: ${client?.name}. Entregado: ${prodOut?.name} x${quantityGiven}. Recibido fuera de inventario: ${String(exchange.receivedConcept || '').trim()}.`
+            });
+
+            alert(affectsInventory
+                ? 'Trueque guardado. El inventario fue actualizado.'
+                : 'Trueque guardado. No se afecto el inventario de ingreso.');
+            setExchange(INITIAL_EXCHANGE);
+        } catch (error) {
+            alert(error?.message || 'No se pudo registrar el trueque.');
+        }
     };
 
     return (
         <div className="trueque-module">
-            <h2>Modulo de Trueque (Intercambio)</h2>
-            <div className="card" style={{ maxWidth: '600px', margin: '0 auto' }}>
+            <h2>Modulo de Trueque</h2>
+            <div className="card" style={{ maxWidth: '760px', margin: '0 auto' }}>
                 <p style={{ color: '#64748b', marginBottom: '1.5rem' }}>
-                    Realice intercambios directos de productos con clientes. El sistema actualizarA el stock automAticamente.
+                    Registre lo que se entrega al cliente, lo que se recibe y si el ingreso debe o no afectar inventario.
                 </p>
 
                 <div className="input-group">
@@ -57,49 +91,116 @@ export function TruequeModule({ products, stock, setStock, clients, onLog }) {
                     <select
                         className="input-field"
                         value={exchange.clientId}
-                        onChange={e => setExchange({ ...exchange, clientId: e.target.value })}
+                        onChange={(e) => setExchange({ ...exchange, clientId: e.target.value })}
                     >
                         <option value="">Seleccione cliente...</option>
-                        {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                        {availableClients.map((c, idx) => (
+                            <option
+                                key={`${c?.id || c?.document || c?.name || 'cliente'}-${idx}`}
+                                value={c?.id || ''}
+                            >
+                                {c?.name || 'Cliente'}{c?.document ? ` - ${c.document}` : ''}
+                            </option>
+                        ))}
                     </select>
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 0.8fr', gap: '1rem' }}>
                     <div className="input-group">
-                        <label className="input-label">Producto ENTREGADO (Sale de Stock)</label>
+                        <label className="input-label">Producto entregado</label>
                         <select
                             className="input-field"
                             value={exchange.productIdGiven}
-                            onChange={e => setExchange({ ...exchange, productIdGiven: e.target.value })}
+                            onChange={(e) => setExchange({ ...exchange, productIdGiven: e.target.value })}
                         >
                             <option value="">Seleccione...</option>
-                            {products.map((p, idx) => (
-                                <option key={`${p.id}-${idx}`} value={p.id}>{p.name} (Stock: {stock.ventas[p.id] || 0})</option>
+                            {saleableProducts.map((p, idx) => (
+                                <option key={`${p?.id || p?.name || 'product'}-given-${idx}`} value={p?.id || ''}>
+                                    {p?.name || 'Producto'} (Stock: {Number(stock?.ventas?.[p?.id] || 0)})
+                                </option>
                             ))}
                         </select>
                     </div>
 
                     <div className="input-group">
-                        <label className="input-label">Producto RECIBIDO (Suma a Stock)</label>
-                        <select
+                        <label className="input-label">Cantidad entregada</label>
+                        <input
+                            type="number"
                             className="input-field"
-                            value={exchange.productIdReceived}
-                            onChange={e => setExchange({ ...exchange, productIdReceived: e.target.value })}
-                        >
-                            <option value="">Seleccione...</option>
-                            {products.map((p, idx) => <option key={`${p.id}-${idx}`} value={p.id}>{p.name}</option>)}
-                        </select>
+                            value={exchange.quantityGiven}
+                            min="1"
+                            onChange={(e) => setExchange({ ...exchange, quantityGiven: Number(e.target.value) })}
+                        />
                     </div>
                 </div>
 
                 <div className="input-group">
-                    <label className="input-label">Cantidad del Intercambio</label>
-                    <input
-                        type="number"
+                    <label className="input-label">Lo recibido afecta inventario</label>
+                    <select
                         className="input-field"
-                        value={exchange.quantity}
-                        min="1"
-                        onChange={e => setExchange({ ...exchange, quantity: Number(e.target.value) })}
+                        value={exchange.affectsInventory ? 'si' : 'no'}
+                        onChange={(e) => setExchange({
+                            ...exchange,
+                            affectsInventory: e.target.value === 'si',
+                            productIdReceived: e.target.value === 'si' ? exchange.productIdReceived : '',
+                            receivedConcept: e.target.value === 'si' ? '' : exchange.receivedConcept,
+                        })}
+                    >
+                        <option value="si">Si, ingresa a inventario</option>
+                        <option value="no">No, es otra cosa y no afecta inventario</option>
+                    </select>
+                </div>
+
+                {exchange.affectsInventory ? (
+                    <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 0.8fr', gap: '1rem' }}>
+                        <div className="input-group">
+                            <label className="input-label">Producto recibido</label>
+                            <select
+                                className="input-field"
+                                value={exchange.productIdReceived}
+                                onChange={(e) => setExchange({ ...exchange, productIdReceived: e.target.value })}
+                            >
+                                <option value="">Seleccione...</option>
+                                {saleableProducts.map((p, idx) => (
+                                    <option key={`${p?.id || p?.name || 'product'}-received-${idx}`} value={p?.id || ''}>
+                                        {p?.name || 'Producto'}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+
+                        <div className="input-group">
+                            <label className="input-label">Cantidad recibida</label>
+                            <input
+                                type="number"
+                                className="input-field"
+                                value={exchange.quantityReceived}
+                                min="1"
+                                onChange={(e) => setExchange({ ...exchange, quantityReceived: Number(e.target.value) })}
+                            />
+                        </div>
+                    </div>
+                ) : (
+                    <div className="input-group">
+                        <label className="input-label">Que se recibe</label>
+                        <input
+                            type="text"
+                            className="input-field"
+                            value={exchange.receivedConcept}
+                            onChange={(e) => setExchange({ ...exchange, receivedConcept: e.target.value })}
+                            placeholder="Ej: dinero adicional, accesorio externo, garantia, servicio"
+                        />
+                    </div>
+                )}
+
+                <div className="input-group">
+                    <label className="input-label">Observaciones</label>
+                    <textarea
+                        className="input-field"
+                        rows="3"
+                        value={exchange.notes}
+                        onChange={(e) => setExchange({ ...exchange, notes: e.target.value })}
+                        placeholder="Opcional"
                     />
                 </div>
 
