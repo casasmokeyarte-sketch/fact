@@ -253,6 +253,7 @@ const INVOICE_SEQUENCE_STORAGE_KEY = 'fact_invoice_sequence';
 const REMOTE_AUTH_REQUESTS_STORAGE_KEY = 'fact_remote_auth_requests';
 const SOUND_SETTINGS_STORAGE_KEY = 'fact_sound_settings';
 const AUTH_REQUEST_LOG_PREFIX = 'AUTH_REQUEST_EVENT::';
+const REMOTE_AUTH_REQUEST_TTL_MS = 2 * 60 * 60 * 1000;
 const BOARD_NOTE_LOG_PREFIX = 'BOARD_NOTE_EVENT::';
 const SHIFT_CLOSE_OVERRIDE_LOG_PREFIX = 'SHIFT_CLOSE_OVERRIDE::';
 const INVOICE_DRAFTS_STORAGE_KEY = 'fact_invoice_drafts';
@@ -631,9 +632,10 @@ const buildRemoteAuthRequestsFromLogs = (logs) => {
         id: event.requestId,
         createdAt: log?.timestamp || new Date().toISOString(),
       };
+      const decision = String(event.decision || '').trim().toUpperCase();
       byId.set(event.requestId, {
         ...existing,
-        status: event.decision === 'APPROVED' ? 'APPROVED' : 'REJECTED',
+        status: decision || existing?.status || 'REJECTED',
         resolvedAt: event.resolvedAt || log?.timestamp || new Date().toISOString(),
         resolvedBy: event.resolvedBy || existing?.resolvedBy || null,
       });
@@ -643,6 +645,13 @@ const buildRemoteAuthRequestsFromLogs = (logs) => {
   return Array.from(byId.values()).sort((a, b) => (
     new Date(b?.createdAt || 0).getTime() - new Date(a?.createdAt || 0).getTime()
   ));
+};
+
+const isRemoteAuthRequestExpired = (request, nowMs = Date.now()) => {
+  if (String(request?.status || '').toUpperCase() !== 'PENDING') return false;
+  const createdAtMs = new Date(request?.createdAt || 0).getTime();
+  if (!Number.isFinite(createdAtMs) || Number.isNaN(createdAtMs)) return false;
+  return nowMs - createdAtMs >= REMOTE_AUTH_REQUEST_TTL_MS;
 };
 
 const mergeRemoteAuthRequests = (localRequests, syncedRequests) => {
@@ -2664,6 +2673,51 @@ function App() {
     return requestId;
   };
 
+  const resolveRemoteAuthRequestStatus = useCallback((requestId, decision, options = {}) => {
+    const normalizedDecision = String(decision || '').trim().toUpperCase();
+    if (!requestId || !normalizedDecision) return null;
+
+    let updatedRequest = null;
+    setRemoteAuthRequests((prev) => prev.map((req) => {
+      if (req.id !== requestId || String(req.status || '').toUpperCase() !== 'PENDING') return req;
+      updatedRequest = {
+        ...req,
+        status: normalizedDecision,
+        resolvedAt: options?.resolvedAt || new Date().toISOString(),
+        resolvedBy: options?.resolvedBy || {
+          id: currentUser?.id || null,
+          name: currentUser?.name || currentUser?.email || 'Usuario',
+          role: normalizeRole(currentUser?.role),
+        },
+      };
+      return updatedRequest;
+    }));
+
+    if (!updatedRequest) return null;
+
+    addLog({
+      module: 'Autorizaciones',
+      action: options?.logAction || (
+        normalizedDecision === 'APPROVED'
+          ? 'Solicitud aprobada'
+          : normalizedDecision === 'REJECTED'
+            ? 'Solicitud rechazada'
+            : normalizedDecision === 'CANCELED'
+              ? 'Solicitud cancelada'
+              : 'Solicitud expirada'
+      ),
+      details: `${AUTH_REQUEST_LOG_PREFIX}${JSON.stringify({
+        type: 'RESOLVED',
+        requestId,
+        decision: normalizedDecision,
+        resolvedAt: updatedRequest.resolvedAt,
+        resolvedBy: updatedRequest.resolvedBy,
+      })}`
+    });
+
+    return updatedRequest;
+  }, [currentUser]);
+
   const onResolveRemoteAuthRequest = (requestId, decision) => {
     if (!requestId || !['APPROVED', 'REJECTED'].includes(decision)) return;
     const targetRequest = (remoteAuthRequests || []).find((req) => req.id === requestId);
@@ -2729,28 +2783,73 @@ function App() {
       });
     }
 
-    setRemoteAuthRequests((prev) => prev.map((req) => {
-      if (req.id !== requestId || req.status !== 'PENDING') return req;
-      return {
-        ...req,
-        status: decision,
-        resolvedAt: new Date().toISOString(),
-        resolvedBy
-      };
-    }));
-
-    addLog({
-      module: 'Autorizaciones',
-      action: decision === 'APPROVED' ? 'Solicitud aprobada' : 'Solicitud rechazada',
-      details: `${AUTH_REQUEST_LOG_PREFIX}${JSON.stringify({
-        type: 'RESOLVED',
-        requestId,
-        decision,
-        resolvedAt: new Date().toISOString(),
-        resolvedBy
-      })}`
+    resolveRemoteAuthRequestStatus(requestId, decision, {
+      resolvedAt: new Date().toISOString(),
+      resolvedBy,
+      logAction: decision === 'APPROVED' ? 'Solicitud aprobada' : 'Solicitud rechazada',
     });
   };
+
+  const onCancelRemoteAuthRequest = useCallback((requestId) => {
+    if (!requestId) return false;
+    const targetRequest = (remoteAuthRequests || []).find((req) => req.id === requestId);
+    if (!targetRequest || String(targetRequest?.status || '').toUpperCase() !== 'PENDING') return false;
+
+    const isManager = ['Administrador', 'Supervisor'].includes(normalizeRole(currentUser?.role));
+    const requestedByMe = String(targetRequest?.requestedBy?.id || '') === String(currentUser?.id || '');
+    if (!requestedByMe && !isManager) return false;
+
+    resolveRemoteAuthRequestStatus(requestId, 'CANCELED', {
+      resolvedAt: new Date().toISOString(),
+      resolvedBy: {
+        id: currentUser?.id || null,
+        name: currentUser?.name || currentUser?.email || 'Usuario',
+        role: normalizeRole(currentUser?.role),
+      },
+      logAction: 'Solicitud cancelada',
+    });
+    return true;
+  }, [currentUser, remoteAuthRequests, resolveRemoteAuthRequestStatus]);
+
+  const onCleanupExpiredRemoteAuthRequests = useCallback(() => {
+    const nowMs = Date.now();
+    const expiredRequests = (remoteAuthRequests || []).filter((request) => isRemoteAuthRequestExpired(request, nowMs));
+    if (expiredRequests.length === 0) {
+      alert('No hay solicitudes remotas antiguas por limpiar.');
+      return 0;
+    }
+
+    expiredRequests.forEach((request) => {
+      resolveRemoteAuthRequestStatus(request.id, 'EXPIRED', {
+        resolvedAt: new Date(nowMs).toISOString(),
+        resolvedBy: {
+          id: currentUser?.id || null,
+          name: currentUser?.name || currentUser?.email || 'Usuario',
+          role: normalizeRole(currentUser?.role),
+        },
+        logAction: 'Solicitud expirada',
+      });
+    });
+
+    return expiredRequests.length;
+  }, [currentUser, remoteAuthRequests, resolveRemoteAuthRequestStatus]);
+
+  useEffect(() => {
+    const nowMs = Date.now();
+    const expiredIds = (remoteAuthRequests || [])
+      .filter((request) => isRemoteAuthRequestExpired(request, nowMs))
+      .map((request) => request.id);
+
+    if (expiredIds.length === 0) return;
+
+    expiredIds.forEach((requestId) => {
+      resolveRemoteAuthRequestStatus(requestId, 'EXPIRED', {
+        resolvedAt: new Date(nowMs).toISOString(),
+        resolvedBy: { id: null, name: 'Sistema', role: 'Sistema' },
+        logAction: 'Solicitud expirada',
+      });
+    });
+  }, [remoteAuthRequests, resolveRemoteAuthRequestStatus]);
 
   const onCreateBoardNote = async (input) => {
     const cleanText = String(input?.text || '').trim();
@@ -2990,6 +3089,10 @@ function App() {
 
   const onDeleteInvoiceDraft = (draftId) => {
     if (!draftId) return;
+    const draft = (invoiceDrafts || []).find((d) => d.id === draftId);
+    if (draft?.authRequestId) {
+      onCancelRemoteAuthRequest(draft.authRequestId);
+    }
     setInvoiceDrafts((prev) => prev.filter((d) => d.id !== draftId));
     addLog({
       module: 'Facturacion',
@@ -3084,6 +3187,7 @@ function App() {
   const ownPendingRemoteAuthRequests = useMemo(() => (
     (remoteAuthRequests || []).filter((request) => {
       if (String(request?.status || '').toUpperCase() !== 'PENDING') return false;
+      if (isRemoteAuthRequestExpired(request)) return false;
       if (String(request?.requestedBy?.id || '') !== String(currentUser?.id || '')) return false;
 
       const requestCreatedAtMs = new Date(request?.createdAt || 0).getTime();
@@ -5020,7 +5124,20 @@ function App() {
 
                   {pendingAuthRequestsForManager.length > 0 && (
                     <div style={{ marginTop: '10px' }}>
-                      <div style={{ fontWeight: 700, fontSize: '0.85rem', marginBottom: '6px' }}>Autorizaciones pendientes</div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginBottom: '6px', flexWrap: 'wrap' }}>
+                        <div style={{ fontWeight: 700, fontSize: '0.85rem' }}>Autorizaciones pendientes</div>
+                        <button
+                          className="btn"
+                          onClick={() => {
+                            const cleaned = onCleanupExpiredRemoteAuthRequests();
+                            if (cleaned > 0) {
+                              alert(`Se limpiaron ${cleaned} solicitud(es) remota(s) vencida(s).`);
+                            }
+                          }}
+                        >
+                          Limpiar vencidas
+                        </button>
+                      </div>
                       {pendingAuthRequestsForManager.map((req) => (
                         <div key={req.id} style={{ border: '1px solid #fed7aa', background: '#fff7ed', borderRadius: '8px', padding: '8px', marginBottom: '6px' }}>
                           <div style={{ fontSize: '0.84rem', marginBottom: '4px' }}>
@@ -5060,6 +5177,23 @@ function App() {
                             {draft.clientName || 'Cliente Ocasional'} - ${Number(draft.total || 0).toLocaleString()}
                           </div>
                           <button className="btn" onClick={() => onLoadInvoiceDraft(draft.id)}>Cargar borrador</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {ownPendingRemoteAuthRequests.length > 0 && (
+                    <div style={{ marginTop: '10px' }}>
+                      <div style={{ fontWeight: 700, fontSize: '0.85rem', marginBottom: '6px' }}>Tus autorizaciones pendientes</div>
+                      {ownPendingRemoteAuthRequests.map((req) => (
+                        <div key={`own-${req.id}`} style={{ border: '1px solid #e9d5ff', background: '#faf5ff', borderRadius: '8px', padding: '8px', marginBottom: '6px' }}>
+                          <div style={{ fontSize: '0.84rem', marginBottom: '4px' }}>
+                            {req.module || 'General'} - {req.reasonLabel || req.reasonType || 'Solicitud'} {Number(req.total || 0) > 0 ? `- $${Number(req.total || 0).toLocaleString()}` : ''}
+                          </div>
+                          <div style={{ fontSize: '0.75rem', color: '#6b7280', marginBottom: '6px' }}>
+                            {new Date(req.createdAt || Date.now()).toLocaleString('es-CO')} - {req.id}
+                          </div>
+                          <button className="btn" onClick={() => onCancelRemoteAuthRequest(req.id)}>Cancelar solicitud</button>
                         </div>
                       ))}
                     </div>

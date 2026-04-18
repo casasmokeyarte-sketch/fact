@@ -406,6 +406,13 @@ export function PaymentSummary({
             alert('La solicitud fue rechazada por Administracion.');
             return;
           }
+          if (currentRemoteDecision === 'CANCELED' || currentRemoteDecision === 'EXPIRED') {
+            setActiveRemoteRequestId('');
+            setResolvedRemoteApproval(null);
+            playSound('error');
+            alert(currentRemoteDecision === 'EXPIRED' ? 'La solicitud expiro. Debe generar una nueva autorizacion.' : 'La solicitud fue cancelada.');
+            return;
+          }
           playSound('notify');
           alert('La solicitud sigue pendiente de respuesta de Administracion.');
           return;
@@ -599,6 +606,13 @@ export function PaymentSummary({
       setResolvedRemoteApproval(null);
       playSound('error');
       alert('Administracion rechazo la solicitud de autorizacion.');
+      setActiveRemoteRequestId('');
+      return;
+    }
+    if (currentRemoteDecision === 'CANCELED' || currentRemoteDecision === 'EXPIRED') {
+      setResolvedRemoteApproval(null);
+      playSound('error');
+      alert(currentRemoteDecision === 'EXPIRED' ? 'La solicitud de autorizacion expiro.' : 'La solicitud de autorizacion fue cancelada.');
       setActiveRemoteRequestId('');
       return;
     }
