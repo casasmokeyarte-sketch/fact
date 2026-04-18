@@ -5,11 +5,19 @@
     "type": "module",
     "main": "electron/main.cjs",
     "build": {
+        "appId": "com.fact.desktop",
+        "productName": "Fact",
         "files": [
             "dist/**/*",
             "electron/**/*",
             "package.json"
-        ]
+        ],
+        "win": {
+            "target": [
+                "portable"
+            ],
+            "signAndEditExecutable": false
+        }
     },
     "scripts": {
         "dev": "vite",
