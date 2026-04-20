@@ -11,6 +11,12 @@ node_modules
 dist
 dist-ssr
 *.local
+.env
+.env.*
+!.env.example
+dist-check/
+dist-check-*/
+scratch_test*.js
 
 # Editor directories and files
 .vscode/*
