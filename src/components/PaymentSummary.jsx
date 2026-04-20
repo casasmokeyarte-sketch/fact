@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { CLIENT_OCASIONAL, PAYMENT_MODES, REFERRAL_DISCOUNT_PERCENT, REFERRED_CLIENT_DISCOUNT_PERCENT } from '../constants';
-import { printInvoiceDocument } from '../lib/printInvoice.js';
+import { printInvoiceDocument, printShippingGuideDocument } from '../lib/printInvoice.js';
 import { playSound } from '../lib/soundService';
 import { computeInvoiceTotals } from '../lib/invoiceTotals.js';
 
@@ -649,21 +649,22 @@ export function PaymentSummary({
     if (!paymentMethodsWithOther.includes(mixedModeB)) setMixedModeB(fallbackB);
   }, [isMixed, paymentMethodsWithOther, mixedModeA, mixedModeB]);
 
-	  const handlePrintInvoice = (mode) => {
-	    const previewInvoice = {
+  const buildPreviewInvoice = () => ({
       id: `PRE-${Date.now()}`,
       clientName,
       clientDoc: selectedClient?.document || 'N/A',
+      clientAddress: selectedClient?.address || '',
+      clientPhone: selectedClient?.phone || '',
       items,
       subtotal,
       deliveryFee: Number(deliveryFee || 0),
-	      automaticDiscountPercent,
-	      automaticDiscountAmount,
+      automaticDiscountPercent,
+      automaticDiscountAmount,
         promoDiscountAmount: Number(promoDiscountAmount || 0),
         promoName: String(promoName || '').trim(),
-	      extraDiscount: Number(effectiveExtraDiscount || 0),
-	      totalDiscount,
-	      total,
+      extraDiscount: Number(effectiveExtraDiscount || 0),
+      totalDiscount,
+      total,
       paymentMode: isMixed ? `Mixto (${mixedModeA} + ${mixedModeB})` : paymentMode,
       authorization: buildAuthorizationMeta(),
       mixedDetails: {
@@ -678,8 +679,16 @@ export function PaymentSummary({
         authorization: buildAuthorizationMeta(),
       },
       date: new Date().toISOString(),
-    };
+    });
+
+	  const handlePrintInvoice = (mode) => {
+	    const previewInvoice = buildPreviewInvoice();
     printInvoiceDocument(previewInvoice, mode);
+  };
+
+  const handlePrintShippingGuide = (paymentStatus) => {
+    const previewInvoice = buildPreviewInvoice();
+    printShippingGuideDocument(previewInvoice, { paymentStatus });
   };
 
   const handleFacturarCero = () => {
@@ -1011,6 +1020,8 @@ export function PaymentSummary({
         </button>
         <button className="btn" style={{ flex: '0 1 88px' }} onClick={() => handlePrintInvoice('58mm')} title="Imprimir 58mm">58mm</button>
         <button className="btn" style={{ flex: '0 1 88px' }} onClick={() => handlePrintInvoice('a4')} title="Imprimir A4">A4</button>
+        <button className="btn" style={{ flex: '1 1 150px' }} onClick={() => handlePrintShippingGuide('pagado')} title="Imprimir guia de envio pagada">Guia pagada</button>
+        <button className="btn" style={{ flex: '1 1 165px' }} onClick={() => handlePrintShippingGuide('pendiente')} title="Imprimir guia de envio pendiente">Guia pendiente</button>
         <button
           className="btn"
           style={{ flex: '0 1 120px' }}

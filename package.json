@@ -25,7 +25,7 @@
         "lint": "eslint .",
         "preview": "vite preview",
         "electron:dev": "set ELECTRON_RUN_AS_NODE=&& electron .",
-        "electron:build": "set ELECTRON_RUN_AS_NODE=&& vite build && electron-builder",
+        "electron:build": "set ELECTRON_RUN_AS_NODE=&& set ELECTRON_BUILD=1&& vite build && electron-builder",
         "electron:dev:all": "node scripts/electron-dev.mjs"
     },
     "dependencies": {

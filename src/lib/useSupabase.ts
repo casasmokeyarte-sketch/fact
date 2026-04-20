@@ -261,12 +261,13 @@ export function useProfile(userId?: UID) {
         if (!isMounted) return
 
         const tokenAlg = parseJwtAlg(accessToken)
-        if (tokenAlg !== 'ES256' && tokenAlg !== 'ES384' && tokenAlg !== 'ES512') {
+        const UNSUPPORTED_REALTIME_ALGS = ['ES256', 'ES384', 'ES512']
+        if (tokenAlg && !UNSUPPORTED_REALTIME_ALGS.includes(tokenAlg)) {
           await supabase.realtime.setAuth(accessToken)
         } else {
-          console.warn('Skipping realtime.setAuth for unsupported JWT algorithm', {
+          console.warn('Skipping realtime.setAuth: empty or unsupported JWT algorithm', {
             userId,
-            tokenAlg,
+            tokenAlg: tokenAlg || '(vacío)',
           })
         }
 

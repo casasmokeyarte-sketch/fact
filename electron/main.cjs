@@ -1,11 +1,13 @@
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { spawnSync } = require('child_process');
 
 let mainWindow = null;
 const ASK_CHANNEL = 'company-ai:ask';
 const PRINTERS_CHANNEL = 'system-printers:list';
 const NFC_CHANNEL = 'system-nfc:status';
+const PROMPT_CHANNEL = 'system-prompt:ask';
 
 const SCOPE_KEYWORDS = [
   'sistema', 'modulo', 'facturacion', 'factura', 'inventario', 'stock', 'compras', 'clientes',
@@ -79,6 +81,35 @@ function findFirstExistingPath(candidates) {
     if (candidate && fs.existsSync(candidate)) return candidate;
   }
   return null;
+}
+
+function askWindowsInputBox({ message = '', defaultValue = '', title = 'Fact' } = {}) {
+  const script = `
+Add-Type -AssemblyName Microsoft.VisualBasic
+$message = @'
+${String(message || '').replace(/\r/g, '')}
+'@
+$title = @'
+${String(title || 'Fact').replace(/\r/g, '')}
+'@
+$default = @'
+${String(defaultValue || '').replace(/\r/g, '')}
+'@
+$result = [Microsoft.VisualBasic.Interaction]::InputBox($message, $title, $default)
+Write-Output $result
+`;
+
+  const encoded = Buffer.from(script, 'utf16le').toString('base64');
+  const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], {
+    encoding: 'utf8',
+    windowsHide: true,
+  });
+
+  if (result.error) {
+    throw result.error;
+  }
+
+  return String(result.stdout || '').replace(/\r?\n$/, '');
 }
 
 function createWindow() {
@@ -246,6 +277,19 @@ ipcMain.handle(NFC_CHANNEL, async () => {
     available: false,
     message: 'La lectura NFC requiere integracion nativa o hardware compatible. Aun no esta enlazada a este instalador.',
   };
+});
+
+ipcMain.on(PROMPT_CHANNEL, (event, payload) => {
+  try {
+    event.returnValue = askWindowsInputBox({
+      message: String(payload?.message || ''),
+      defaultValue: String(payload?.defaultValue || ''),
+      title: 'Fact',
+    });
+  } catch (error) {
+    console.error('[main] PROMPT_CHANNEL error:', error);
+    event.returnValue = '';
+  }
 });
 
 app.whenReady().then(createWindow);

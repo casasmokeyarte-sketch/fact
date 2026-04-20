@@ -1,4 +1,9 @@
-import { supabase } from './supabaseClient'
+import { clearSupabaseAuthStorage, supabase } from './supabaseClient'
+
+function isInvalidRefreshTokenError(error) {
+  const blob = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`.toLowerCase()
+  return blob.includes('invalid refresh token') || blob.includes('refresh token not found')
+}
 
 // AUTENTICACIAN
 export async function signUp(email, password) {
@@ -19,10 +24,19 @@ export async function signUp(email, password) {
 
 export async function signIn(email, password) {
   try {
-    const { data, error } = await supabase.auth.signInWithPassword({
+    let { data, error } = await supabase.auth.signInWithPassword({
       email,
       password,
     })
+    if (error && isInvalidRefreshTokenError(error)) {
+      clearSupabaseAuthStorage()
+      const retry = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      })
+      data = retry.data
+      error = retry.error
+    }
     if (error) throw error
     return { data, error: null }
   } catch (error) {
@@ -47,14 +61,26 @@ export async function getCurrentUser() {
       error: sessionError,
     } = await supabase.auth.getSession()
 
-    if (sessionError) throw sessionError
+    if (sessionError) {
+      if (isInvalidRefreshTokenError(sessionError)) {
+        clearSupabaseAuthStorage()
+        return { user: null, error: null }
+      }
+      throw sessionError
+    }
 
     if (session?.user) {
       return { user: session.user, error: null }
     }
 
     const { data: { user }, error } = await supabase.auth.getUser()
-    if (error) throw error
+    if (error) {
+      if (isInvalidRefreshTokenError(error)) {
+        clearSupabaseAuthStorage()
+        return { user: null, error: null }
+      }
+      throw error
+    }
     return { user, error: null }
   } catch (error) {
     return { user: null, error: error.message }

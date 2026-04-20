@@ -1,4 +1,5 @@
 import { COMPANY_INFO } from '../constants';
+import { getAssetUrl } from './runtime.js';
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -75,7 +76,7 @@ function printInHiddenIframe(html) {
 }
 
 function renderDocument({ title, subtitle, contentHtml, mode }) {
-  const logoUrl = new URL(COMPANY_INFO.logo, window.location.origin).href;
+  const logoUrl = getAssetUrl(COMPANY_INFO.logo);
   const pageCss = buildPageCss(mode);
 
   return `

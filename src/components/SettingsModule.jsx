@@ -5,6 +5,7 @@ import { usePagination } from '../lib/usePagination';
 import { supabase } from '../lib/supabaseClient';
 import { useTableSort } from '../lib/useTableSort';
 import { SortButton } from './SortButton';
+import { getAdminUsersUrl, isElectronFileRuntime } from '../lib/runtime.js';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -90,8 +91,7 @@ export function SettingsModule({
     const [usersLoading, setUsersLoading] = useState(false);
     const [usersError, setUsersError] = useState('');
 
-    const adminApiBase = String(import.meta.env?.VITE_ADMIN_API_BASE_URL || '').trim();
-    const adminUsersUrl = `${adminApiBase}/api/admin-users`;
+    const adminUsersUrl = getAdminUsersUrl();
 
     React.useEffect(() => {
         setDayOffsetInput(Number(operationalDateSettings?.daysOffset || 0));
@@ -142,6 +142,13 @@ export function SettingsModule({
         setUsersError('');
         setUsersLoading(true);
         try {
+            if (!adminUsersUrl) {
+                throw new Error(
+                    isElectronFileRuntime()
+                        ? 'La app de escritorio necesita VITE_ADMIN_API_BASE_URL para administrar usuarios.'
+                        : 'No se configuro la URL del API de usuarios.'
+                );
+            }
             const { data: { session } } = await supabase.auth.getSession();
             const token = session?.access_token;
             if (!token) throw new Error('Sesion no valida. Inicia sesion nuevamente.');
@@ -206,6 +213,7 @@ export function SettingsModule({
         setUsersLoading(true);
 
         try {
+            if (!adminUsersUrl) throw new Error('La administracion de usuarios no esta disponible en este entorno.');
             const permissions = defaultPermissions[newUser.role] || defaultPermissions.Cajero;
             const rawUsername = String(newUser.username || '').trim();
             const normalizedUsername = rawUsername.includes('@') ? rawUsername.split('@')[0].trim() : rawUsername;
@@ -258,6 +266,7 @@ export function SettingsModule({
         setUsers(nextUsers);
 
         try {
+            if (!adminUsersUrl) throw new Error('La administracion de usuarios no esta disponible en este entorno.');
             const { data: { session } } = await supabase.auth.getSession();
             const token = session?.access_token;
             if (!token) throw new Error('Sesion no valida.');
@@ -296,6 +305,7 @@ export function SettingsModule({
 
         setUsersLoading(true);
         try {
+            if (!adminUsersUrl) throw new Error('La administracion de usuarios no esta disponible en este entorno.');
             const { data: { session } } = await supabase.auth.getSession();
             const token = session?.access_token;
             if (!token) throw new Error('Sesion no valida.');
@@ -339,6 +349,7 @@ export function SettingsModule({
         setUsersLoading(true);
         setUsersError('');
         try {
+            if (!adminUsersUrl) throw new Error('La administracion de usuarios no esta disponible en este entorno.');
             const { data: { session } } = await supabase.auth.getSession();
             const token = session?.access_token;
             if (!token) throw new Error('Sesion no valida.');

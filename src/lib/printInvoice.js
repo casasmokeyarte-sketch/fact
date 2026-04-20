@@ -1,4 +1,6 @@
+import JsBarcode from 'jsbarcode';
 import { COMPANY_INFO } from '../constants';
+import { getAssetUrl } from './runtime.js';
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -7,6 +9,233 @@ function escapeHtml(value) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+function buildShippingGuideNumber(invoice) {
+  const stored = String(
+    invoice?.shippingGuideNumber ||
+    invoice?.mixedDetails?.shippingGuide?.number ||
+    ''
+  ).trim();
+  if (stored) return stored;
+
+  const invoiceCode = String(
+    invoice?.invoiceCode ||
+    invoice?.mixedDetails?.invoiceCode ||
+    invoice?.mixedDetails?.invoice_code ||
+    invoice?.id ||
+    'SN'
+  ).trim().replace(/\s+/g, '');
+
+  return `GE-${invoiceCode || 'SN'}`;
+}
+
+function getShippingPaymentStatus(invoice, override) {
+  const normalizedOverride = String(override || '').trim().toLowerCase();
+  if (normalizedOverride === 'pagado' || normalizedOverride === 'pendiente') return normalizedOverride;
+
+  const normalizedStatus = String(invoice?.status || '').trim().toLowerCase();
+  if (normalizedStatus === 'pendiente') return 'pendiente';
+  if (Number(invoice?.balance || 0) > 0) return 'pendiente';
+
+  const paymentMode = String(invoice?.paymentMode || '').trim().toLowerCase();
+  if (paymentMode.includes('credito') || paymentMode.includes('crédito')) return 'pendiente';
+
+  return 'pagado';
+}
+
+function buildBarcodeSvgMarkup(value) {
+  if (typeof document === 'undefined') return '';
+
+  try {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    JsBarcode(svg, String(value || 'SIN-CODIGO'), {
+      format: 'CODE128',
+      displayValue: true,
+      fontSize: 14,
+      height: 52,
+      margin: 0,
+      width: 1.6,
+    });
+    return svg.outerHTML;
+  } catch {
+    return `<div style="font-weight:700; letter-spacing:1px;">${escapeHtml(value || 'SIN-CODIGO')}</div>`;
+  }
+}
+
+export function printShippingGuideDocument(invoice, options = {}) {
+  const guideNumber = buildShippingGuideNumber(invoice);
+  const barcodeMarkup = buildBarcodeSvgMarkup(guideNumber);
+  const paymentStatus = getShippingPaymentStatus(invoice, options.paymentStatus);
+  const isPaid = paymentStatus === 'pagado';
+  const invoiceCode = String(
+    invoice?.invoiceCode ||
+    invoice?.mixedDetails?.invoiceCode ||
+    invoice?.mixedDetails?.invoice_code ||
+    invoice?.id ||
+    'N/A'
+  );
+  const invoiceDate = invoice?.date ? new Date(invoice.date) : new Date();
+  const invoiceUser = String(
+    invoice?.user_name ||
+    invoice?.user ||
+    invoice?.mixedDetails?.user_name ||
+    invoice?.mixedDetails?.user ||
+    'Sistema'
+  );
+  const recipientName = String(invoice?.clientName || invoice?.client_name || 'Cliente Ocasional').trim() || 'Cliente Ocasional';
+  const recipientDocument = String(invoice?.clientDoc || invoice?.client_doc || 'N/A').trim() || 'N/A';
+  const recipientAddress = String(
+    invoice?.shippingAddress ||
+    invoice?.address ||
+    invoice?.clientAddress ||
+    invoice?.mixedDetails?.shippingGuide?.address ||
+    'Direccion pendiente por registrar'
+  ).trim();
+  const recipientPhone = String(
+    invoice?.phone ||
+    invoice?.clientPhone ||
+    invoice?.mixedDetails?.shippingGuide?.phone ||
+    'No registrado'
+  ).trim();
+  const packageCount = Math.max(1, Number(options.packageCount ?? invoice?.mixedDetails?.shippingGuide?.packageCount ?? 1) || 1);
+  const declaredContent = String(
+    options.declaredContent ||
+    invoice?.mixedDetails?.shippingGuide?.declaredContent ||
+    (invoice?.items || []).map((item) => `${item?.name || 'Producto'} x${Number(item?.quantity || 0)}`).join(', ') ||
+    'Mercancia segun factura'
+  ).trim();
+  const amountToCollect = isPaid ? 0 : Math.max(0, Number(options.amountToCollect ?? invoice?.balance ?? invoice?.total ?? 0));
+  const policyLines = [
+    'Verifique que el paquete este sellado antes de entregarlo.',
+    'No entregar a terceros sin validacion del destinatario.',
+    'Si el envio va pendiente, recaudar el valor indicado antes de la entrega.',
+    'Registrar novedad si el destinatario rechaza, reprograma o no se ubica.',
+  ];
+  const logoUrl = getAssetUrl(COMPANY_INFO.logo);
+  const copies = [
+    { title: 'Copia paquete' },
+    { title: 'Copia control' },
+  ];
+
+  const popup = window.open('', '_blank', 'width=1200,height=900');
+  if (!popup) {
+    alert('Permita ventanas emergentes para imprimir la guia de envio.');
+    return;
+  }
+
+  const cardsHtml = copies.map((copy) => `
+    <section class="guide-card">
+      <div class="guide-topbar">
+        <div>
+          <div class="mini-label">GUIA DE ENVIO</div>
+          <div class="guide-number">${escapeHtml(guideNumber)}</div>
+        </div>
+        <div class="copy-tag">${escapeHtml(copy.title)}</div>
+      </div>
+
+      <div class="company-box">
+        <img src="${escapeHtml(logoUrl)}" alt="Logo" class="logo" />
+        <div>
+          <div class="company-name">${escapeHtml(COMPANY_INFO.name)}</div>
+          <div>NIT: ${escapeHtml(COMPANY_INFO.nit)}</div>
+          <div>${escapeHtml(COMPANY_INFO.address)}</div>
+          <div>Tel: ${escapeHtml(COMPANY_INFO.phone)}</div>
+        </div>
+      </div>
+
+      <div class="status-row">
+        <div class="status-pill ${isPaid ? 'paid' : 'pending'}">${isPaid ? 'PAGADO' : 'PENDIENTE POR COBRAR'}</div>
+        <div class="meta-chip">Factura: ${escapeHtml(invoiceCode)}</div>
+        <div class="meta-chip">Fecha: ${escapeHtml(invoiceDate.toLocaleDateString())}</div>
+      </div>
+
+      <div class="two-col">
+        <div class="box">
+          <div class="box-title">Destinatario</div>
+          <div><strong>${escapeHtml(recipientName)}</strong></div>
+          <div>Documento: ${escapeHtml(recipientDocument)}</div>
+          <div>Direccion: ${escapeHtml(recipientAddress)}</div>
+          <div>Telefono: ${escapeHtml(recipientPhone)}</div>
+        </div>
+        <div class="box">
+          <div class="box-title">Datos del envio</div>
+          <div>Asesor: ${escapeHtml(invoiceUser)}</div>
+          <div>Bultos: ${packageCount}</div>
+          <div>Total factura: $${Number(invoice?.total || 0).toLocaleString('es-CO')}</div>
+          <div>Valor a recaudar: $${amountToCollect.toLocaleString('es-CO')}</div>
+        </div>
+      </div>
+
+      <div class="box" style="margin-top: 10px;">
+        <div class="box-title">Contenido declarado</div>
+        <div>${escapeHtml(declaredContent)}</div>
+      </div>
+
+      <div class="barcode-box">
+        ${barcodeMarkup}
+      </div>
+
+      <div class="two-col" style="margin-top: 10px;">
+        <div class="box">
+          <div class="box-title">Politicas operativas</div>
+          <ul>
+            ${policyLines.map((line) => `<li>${escapeHtml(line)}</li>`).join('')}
+          </ul>
+        </div>
+        <div class="box signature-box">
+          <div class="box-title">Control de entrega</div>
+          <div class="signature-line">Recibe: __________________________</div>
+          <div class="signature-line">CC/NIT: __________________________</div>
+          <div class="signature-line">Fecha: ___________________________</div>
+          <div class="signature-line">Observaciones: __________________</div>
+        </div>
+      </div>
+    </section>
+  `).join('');
+
+  popup.document.open();
+  popup.document.write(`
+    <html>
+      <head>
+        <title>Guia de envio ${escapeHtml(guideNumber)}</title>
+        <style>
+          @page { size: A4 portrait; margin: 10mm; }
+          * { box-sizing: border-box; }
+          body { margin: 0; font-family: Arial, sans-serif; color: #111827; background: #fff; }
+          .sheet { display: grid; grid-template-columns: 1fr 1fr; gap: 10mm; }
+          .guide-card { border: 2px solid #111827; padding: 10px; min-height: 270mm; display: flex; flex-direction: column; }
+          .guide-topbar { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #111827; padding-bottom: 8px; margin-bottom: 10px; }
+          .mini-label { font-size: 12px; font-weight: 700; letter-spacing: 1.2px; }
+          .guide-number { font-size: 22px; font-weight: 800; letter-spacing: 1px; }
+          .copy-tag { font-size: 11px; border: 1px solid #111827; padding: 4px 8px; font-weight: 700; }
+          .company-box { display: grid; grid-template-columns: 92px 1fr; gap: 10px; align-items: center; margin-bottom: 10px; }
+          .logo { width: 88px; max-height: 58px; object-fit: contain; }
+          .company-name { font-size: 16px; font-weight: 800; }
+          .status-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+          .status-pill { padding: 6px 10px; font-size: 12px; font-weight: 800; letter-spacing: 0.8px; border: 2px solid #111827; }
+          .status-pill.paid { background: #dcfce7; color: #166534; border-color: #166534; }
+          .status-pill.pending { background: #fef3c7; color: #92400e; border-color: #92400e; }
+          .meta-chip { padding: 6px 10px; background: #f3f4f6; font-size: 12px; border: 1px solid #d1d5db; }
+          .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+          .box { border: 1px solid #111827; padding: 8px; min-height: 82px; }
+          .box-title { font-size: 12px; font-weight: 800; text-transform: uppercase; margin-bottom: 6px; }
+          .barcode-box { margin-top: 10px; border: 1px solid #111827; padding: 10px; display: flex; justify-content: center; align-items: center; min-height: 110px; }
+          .barcode-box svg { width: 100%; height: auto; }
+          ul { margin: 0; padding-left: 16px; font-size: 12px; line-height: 1.45; }
+          .signature-box { display: flex; flex-direction: column; justify-content: flex-start; }
+          .signature-line { margin-top: 12px; font-size: 12px; }
+        </style>
+      </head>
+      <body>
+        <div class="sheet">${cardsHtml}</div>
+        <script>
+          setTimeout(() => { window.focus(); window.print(); }, 220);
+        </script>
+      </body>
+    </html>
+  `);
+  popup.document.close();
 }
 
 export function printInvoiceDocument(invoice, mode = '58mm') {
@@ -25,7 +254,7 @@ export function printInvoiceDocument(invoice, mode = '58mm') {
     invoice?.mixedDetails?.user ||
     'Sistema'
   );
-  const logoUrl = new URL(COMPANY_INFO.logo, window.location.origin).href;
+  const logoUrl = getAssetUrl(COMPANY_INFO.logo);
   const itemsRows = (invoice?.items || [])
     .map((it) => `
       <tr>

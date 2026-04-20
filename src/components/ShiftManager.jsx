@@ -82,6 +82,21 @@ export function ShiftManager({
     return totalDeclared - systemNet;
   }, [reconciliationPreview?.netSystemTotal, totalDeclared]);
 
+  const accountMismatchPreview = useMemo(() => {
+    const previewAccounts = reconciliationPreview?.systemAccounts || {};
+    return ACCOUNT_FIELDS.map((field) => {
+      const declared = Number(parsedAccounts?.[field.key] || 0);
+      const system = Number(previewAccounts?.[field.key] || 0);
+      return {
+        key: field.key,
+        label: field.label,
+        declared,
+        system,
+        diff: declared - system,
+      };
+    }).filter((row) => Math.abs(Number(row.diff || 0)) > 1);
+  }, [parsedAccounts, reconciliationPreview?.systemAccounts]);
+
   const allRequiredFilled = useMemo(() => (
     ACCOUNT_FIELDS.every((f) => String(accounts[f.key]).trim() !== '')
   ), [accounts]);
@@ -152,7 +167,7 @@ export function ShiftManager({
     resetStartState();
   };
 
-  const handleEndAttempt = () => {
+  const handleEndAttempt = async () => {
     if (!allRequiredFilled) {
       alert('Debe diligenciar todas las cuentas. Si no hubo movimiento, escriba 0.');
       return;
@@ -182,7 +197,7 @@ export function ShiftManager({
       differenceQty: Number(row.returnedQty || 0) - Number(row.expectedQty || 0),
     }));
 
-    onEndShift({
+    const result = await onEndShift({
       reconciliation: {
         ...parsedAccounts,
         totalDeclarado: totalDeclared,
@@ -193,7 +208,9 @@ export function ShiftManager({
       },
     });
 
-    resetCloseState();
+    if (result !== false) {
+      resetCloseState();
+    }
   };
 
   if (!shift) {
@@ -348,6 +365,11 @@ export function ShiftManager({
                 <p style={{ margin: '0.45rem 0 0', fontWeight: 700, color: differenceAmount < 0 ? '#b91c1c' : '#15803d' }}>
                   {differenceAmount < 0 ? 'Faltante' : 'Sobrante'}: ${Math.abs(Number(differenceAmount || 0)).toLocaleString()}
                 </p>
+              )}
+              {accountMismatchPreview.length > 0 && (
+                <div style={{ marginTop: '0.55rem', color: '#f59e0b', fontWeight: 700, fontSize: '0.92rem' }}>
+                  Hay diferencia por cuenta en: {accountMismatchPreview.map((row) => row.label).join(', ')}.
+                </div>
               )}
             </div>
 

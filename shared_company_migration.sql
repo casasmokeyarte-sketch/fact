@@ -265,6 +265,9 @@ create policy "Company can view shift_history" on public.shift_history
   for select using (company_id = public.current_company_id());
 create policy "Company can insert shift_history" on public.shift_history
   for insert with check (company_id = public.current_company_id());
+create policy "Company can update shift_history" on public.shift_history
+  for update using (company_id = public.current_company_id())
+  with check (company_id = public.current_company_id());
 
 -- AUDIT LOGS
 create policy "Company can view audit_logs" on public.audit_logs
@@ -295,6 +298,17 @@ create policy "Users/admin can update profile" on public.profiles
     or current_user = 'supabase_auth_admin'
   );
 
--- 6) Verificacion rapida
+-- 6) Asegurar que RLS esta habilitado en todas las tablas clave (idempotente)
+alter table public.clients       enable row level security;
+alter table public.products      enable row level security;
+alter table public.invoices      enable row level security;
+alter table public.invoice_items enable row level security;
+alter table public.expenses      enable row level security;
+alter table public.purchases     enable row level security;
+alter table public.shift_history enable row level security;
+alter table public.audit_logs    enable row level security;
+alter table public.profiles      enable row level security;
+
+-- 7) Verificacion rapida
 -- select user_id, email, company_id from public.profiles;
 -- select count(*) from public.products where company_id = public.current_company_id();

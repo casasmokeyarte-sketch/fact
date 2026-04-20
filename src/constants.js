@@ -6,7 +6,7 @@ export const COMPANY_INFO = {
     address: "Cl 63 B No. 22 - 16, BogotA D.C.",
     phone: "3022784938",
     email: "casasmokeyarte@casasmokeyarte.com",
-    logo: "/logo.png"
+    logo: "logo.png"
 };
 
 export const PAYMENT_MODES = {

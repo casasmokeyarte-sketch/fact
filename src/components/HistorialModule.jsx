@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { printInvoiceDocument } from '../lib/printInvoice.js';
+import { printInvoiceDocument, printShippingGuideDocument } from '../lib/printInvoice.js';
 import { PaginationControls } from './PaginationControls';
 import { usePagination } from '../lib/usePagination';
 import { useTableSort } from '../lib/useTableSort';
@@ -444,6 +444,13 @@ export function HistorialModule({
     setOpenInvoiceMenuId(null);
   };
 
+  const handlePrintShippingGuide = (invoice, paymentStatus = '') => {
+    const code = getInvoiceCode(invoice);
+    printShippingGuideDocument(invoice, { paymentStatus });
+    onLog?.({ module: 'Historial', action: 'Reimpresion Guia', details: `Guia ${paymentStatus || 'auto'} de factura ${code}` });
+    setOpenInvoiceMenuId(null);
+  };
+
   const handlePreview = (invoice) => {
     setPreviewInvoice(invoice);
     const code = getInvoiceCode(invoice);
@@ -744,6 +751,8 @@ export function HistorialModule({
                               <button className="btn" style={{ width: '100%', marginBottom: '0.3rem' }} onClick={() => handlePreview(s)}>Ver factura</button>
                               <button className="btn" style={{ width: '100%', marginBottom: '0.3rem' }} onClick={() => handlePrint(s, '58mm')}>Imprimir 58mm</button>
                               <button className="btn" style={{ width: '100%', marginBottom: '0.3rem' }} onClick={() => handlePrint(s, 'a4')}>Imprimir A4</button>
+                              <button className="btn" style={{ width: '100%', marginBottom: '0.3rem' }} onClick={() => handlePrintShippingGuide(s, 'pagado')}>Guia de envio pagada</button>
+                              <button className="btn" style={{ width: '100%', marginBottom: '0.3rem' }} onClick={() => handlePrintShippingGuide(s, 'pendiente')}>Guia de envio pendiente</button>
                               {isAdmin && !['anulada', 'devuelta'].includes(String(s?.status || '').toLowerCase()) && (
                                 <>
                                   <button className="btn" style={{ width: '100%', marginBottom: '0.3rem', borderColor: '#b45309', color: '#b45309' }} onClick={() => handleCancel(s)}>Anular</button>
@@ -972,6 +981,8 @@ export function HistorialModule({
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.75rem' }}>
                   <button className="btn" onClick={() => handlePrint(previewInvoice, '58mm')}>Imprimir 58mm</button>
                   <button className="btn btn-primary" onClick={() => handlePrint(previewInvoice, 'a4')}>Imprimir A4</button>
+                  <button className="btn" onClick={() => handlePrintShippingGuide(previewInvoice, 'pagado')}>Guia pagada</button>
+                  <button className="btn" onClick={() => handlePrintShippingGuide(previewInvoice, 'pendiente')}>Guia pendiente</button>
                 </div>
               </div>
             </div>

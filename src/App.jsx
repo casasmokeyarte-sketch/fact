@@ -36,6 +36,7 @@ import { ShiftHistoryModule } from './components/ShiftHistoryModule'
 import { SystemHelpBubble } from './components/SystemHelpBubble'
 import { OperationsBoardBubble } from './components/OperationsBoardBubble'
 import { printShiftClosure, printShiftOpening } from './lib/printReports'
+import { getAdminApiBase, getAdminUsersUrl } from './lib/runtime.js'
 
 import { dataService } from './lib/dataService'
 import { getProfile } from './lib/databaseService'
@@ -1018,8 +1019,8 @@ function App() {
       return [];
     }
   });
-  const adminApiBase = String(import.meta.env?.VITE_ADMIN_API_BASE_URL || '').trim();
-  const adminUsersUrl = `${adminApiBase}/api/admin-users`;
+  const adminApiBase = getAdminApiBase();
+  const adminUsersUrl = getAdminUsersUrl();
   const [invoiceDrafts, setInvoiceDrafts] = useState(() => {
     try {
       const raw = localStorage.getItem(INVOICE_DRAFTS_STORAGE_KEY);
@@ -1451,7 +1452,7 @@ function App() {
   };
 
   const refreshUsersFromCloud = useCallback(async ({ silent = true } = {}) => {
-    if (!adminApiBase || !currentUser?.id) return;
+    if (!adminUsersUrl || !currentUser?.id) return;
 
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -1474,7 +1475,7 @@ function App() {
         console.error('No se pudo refrescar usuarios:', error);
       }
     }
-  }, [adminApiBase, adminUsersUrl, currentUser]);
+  }, [adminUsersUrl, currentUser]);
 
   // Keep current role/permissions in sync with realtime profile updates.
   useEffect(() => {
@@ -1759,10 +1760,13 @@ function App() {
     const setup = async () => {
       try {
         const { data: { session } } = await supabase.auth.getSession();
-        const accessToken = session?.access_token ?? '';
-        const tokenAlg = parseJwtAlg(accessToken);
-        if (tokenAlg !== 'ES256' && tokenAlg !== 'ES384' && tokenAlg !== 'ES512') {
-          await supabase.realtime.setAuth(accessToken);
+        const accessToken = session?.access_token;
+        if (accessToken) {
+          const tokenAlg = parseJwtAlg(accessToken);
+          const UNSUPPORTED_REALTIME_ALGS = ['ES256', 'ES384', 'ES512'];
+          if (tokenAlg && !UNSUPPORTED_REALTIME_ALGS.includes(tokenAlg)) {
+            await supabase.realtime.setAuth(accessToken);
+          }
         }
 
         channel = supabase
@@ -1844,6 +1848,23 @@ function App() {
       setShiftRestored(false);
     }
   }
+
+  const forceRelogin = useCallback(async (message = 'Sesion no valida o expirada. Inicie sesion nuevamente.') => {
+    try {
+      await signOut();
+    } catch {}
+
+    setIsLoggedIn(false);
+    setCurrentUser(null);
+    setIsAdminAuth(false);
+    setProfileLoaded(false);
+    setShiftRestored(false);
+    setShift(null);
+
+    try {
+      alert(message);
+    } catch {}
+  }, []);
 
   // Cash Management State
   const [cajaMayor, setCajaMayor] = useState(5000000);
@@ -2642,9 +2663,12 @@ function App() {
 
   const getOperationalNowIso = useCallback(() => getOperationalNow().toISOString(), [getOperationalNow]);
 
-  const adminSystemUrl = `${adminApiBase}/api/admin-system`;
+  const adminSystemUrl = adminApiBase ? `${adminApiBase}/api/admin-system` : null;
 
   const runAdminSystemAction = async (action) => {
+    if (!adminSystemUrl) {
+      throw new Error('Las acciones administrativas del sistema requieren VITE_ADMIN_API_BASE_URL.');
+    }
     const { data: { session } } = await supabase.auth.getSession();
     const token = session?.access_token;
     if (!token) throw new Error('Sesion no valida. Inicia sesion nuevamente.');
@@ -3483,7 +3507,12 @@ function App() {
         console.error('No se pudo abrir impresion automatica de la apertura:', e);
       }
     } catch (err) {
-      console.error('Error persistiendo jornada abierta en nube:', err);
+      console.error('Error persistiendo jornada abierta en nube:', {
+        message: err?.message || String(err || ''),
+        code: err?.code || null,
+        details: err?.details || null,
+        hint: err?.hint || null,
+      });
       try {
         printShiftOpening(openShift, '58mm');
       } catch (e) {
@@ -3602,9 +3631,21 @@ function App() {
     if (safeAmount <= 0) return acc;
 
     const normalizedMethod = normalizePaymentMethodLabel(method);
+    const isTransferAlias =
+      normalizedMethod.includes('transfer') ||
+      normalizedMethod.includes('bancolombia') ||
+      normalizedMethod.includes('nequi') ||
+      normalizedMethod.includes('daviplata') ||
+      normalizedMethod.includes('daviplat') ||
+      normalizedMethod.includes('llave') ||
+      normalizedMethod.includes('qr') ||
+      normalizedMethod.includes('pse') ||
+      normalizedMethod.includes('cuenta internacional') ||
+      normalizedMethod.includes('consign') ||
+      normalizedMethod.includes('deposito');
     if (normalizedMethod.includes('efectivo') || normalizedMethod.includes('contado') || normalizedMethod.includes('cash')) {
       acc.cash += safeAmount;
-    } else if (normalizedMethod.includes('transfer')) {
+    } else if (isTransferAlias) {
       acc.transfer += safeAmount;
     } else if (normalizedMethod.includes('tarjeta') || normalizedMethod.includes('card')) {
       acc.card += safeAmount;
@@ -3883,7 +3924,7 @@ function App() {
   });
 
   const onEndShift = async (data) => {
-    if (!shift?.startTime) return;
+    if (!shift?.startTime) return false;
     const shiftStartMsReal = new Date(shift.startTime).getTime();
     const openShiftAgeMs = Date.now() - shiftStartMsReal;
     const staleOpenShift = Number.isFinite(shiftStartMsReal) && !Number.isNaN(shiftStartMsReal) && openShiftAgeMs > MAX_OPEN_SHIFT_MS;
@@ -3895,11 +3936,11 @@ function App() {
           ? `La jornada abierta supero ${MAX_OPEN_SHIFT_HOURS} horas y fue descartada para evitar arrastre de dias anteriores. Inicie una nueva jornada.`
           : 'La jornada abierta es invalida y fue descartada. Inicie una nueva jornada.'
       );
-      return;
+      return false;
     }
     if (shiftCloseBlockers.length > 0) {
       alert(`No puede cerrar la jornada hasta resolver lo siguiente:\n\n- ${shiftCloseBlockers.join('\n- ')}`);
-      return;
+      return false;
     }
     const shiftEndIso = getOperationalNowIso();
     const shiftOwnerRef = buildShiftOwnerReference(shift, currentUser);
@@ -3924,13 +3965,13 @@ function App() {
     if (!hasAnyUserMovement) {
       if (!isAdminUser) {
         alert('No se puede cerrar la jornada: este usuario no tiene movimientos en su turno.');
-        return;
+        return false;
       }
 
       const reason = String(prompt('No hay movimientos en la jornada. Como administrador, ingrese motivo obligatorio para cerrar:') || '').trim();
       if (reason.length < 10) {
         alert('Debe ingresar un motivo valido (minimo 10 caracteres) para cerrar sin movimientos.');
-        return;
+        return false;
       }
       emptyCloseReason = reason;
     }
@@ -3968,13 +4009,13 @@ function App() {
     const requiredAccountKeys = ['efectivo', 'transferencia', 'tarjeta', 'credito', 'otros', 'gastos', 'inversion'];
     if (!reconciliation) {
       alert('Debe diligenciar el formato de cuadre por cuentas.');
-      return;
+      return false;
     }
 
     const missingRequired = requiredAccountKeys.some((key) => reconciliation[key] === undefined || reconciliation[key] === null || reconciliation[key] === '');
     if (missingRequired) {
       alert('Debe diligenciar todas las cuentas. Si no hubo movimiento, escriba 0.');
-      return;
+      return false;
     }
 
     const enteredAccounts = {
@@ -4031,13 +4072,13 @@ function App() {
         .filter((row) => Math.abs(Number(row.differenceQty || 0)) > 0)
         .map((row) => `${row.productName} (${Number(row.differenceQty || 0) > 0 ? '+' : ''}${Number(row.differenceQty || 0)})`);
       alert(`No se puede cerrar la jornada porque el inventario fisico no coincide con el sistema.\n\nRevise estos productos:\n- ${mismatchedProducts.join('\n- ')}`);
-      return;
+      return false;
     }
 
     if (Math.abs(discrepancy) > 1 || hasAccountMismatch) {
       const approved = await requestAdminAuthorization();
       if (!approved) {
-        return;
+        return false;
       }
       authorizedMismatch = true;
     }
@@ -4135,6 +4176,17 @@ function App() {
     setShiftHistory(prev => [shiftData, ...prev]);
     console.log(reportText);
 
+    setUserCashBalance(currentUser, enteredAccounts.efectivo);
+    setShift(null);
+    clearOpenShift();
+    const closeMap = readLastShiftCloseByUser();
+    const userKey = String(currentUser?.id || '');
+    if (userKey) {
+      closeMap[userKey] = getRealDateKey();
+      writeLastShiftCloseByUser(closeMap);
+    }
+    addLog({ module: 'Jornada', action: 'Cierre Jornada', details: reportText });
+
     const persistShift = async () => {
       try {
         await dataService.saveShift(shiftData);
@@ -4157,26 +4209,19 @@ function App() {
         console.error("Error persistiendo cierre en Supabase:", err);
       }
     };
-    persistShift();
+    void persistShift();
 
-    try {
-      printShiftClosure(shiftData, '58mm');
-    } catch (e) {
-      console.error('No se pudo abrir impresion automatica del cierre:', e);
-    }
+    setTimeout(() => {
+      try {
+        printShiftClosure(shiftData, '58mm');
+      } catch (e) {
+        console.error('No se pudo abrir impresion automatica del cierre:', e);
+      }
 
-    alert(`Jornada cerrada con exito. Horas trabajadas: ${workedDurationLabel}. Se envio a impresion automaticamente.`);
+      alert(`Jornada cerrada con exito. Horas trabajadas: ${workedDurationLabel}. Se envio a impresion automaticamente.`);
+    }, 0);
 
-    setUserCashBalance(currentUser, enteredAccounts.efectivo);
-    setShift(null);
-    clearOpenShift();
-    const closeMap = readLastShiftCloseByUser();
-    const userKey = String(currentUser?.id || '');
-    if (userKey) {
-      closeMap[userKey] = getRealDateKey();
-      writeLastShiftCloseByUser(closeMap);
-    }
-    addLog({ module: 'Jornada', action: 'Cierre Jornada', details: reportText });
+    return true;
   };
 
   const getRealDateKey = () => new Date().toISOString().slice(0, 10);
@@ -5007,6 +5052,18 @@ function App() {
 
     const summary = getShiftFinancialSnapshot(shift.startTime, getOperationalNowIso(), activeShiftOwnerRef);
     const systemAccounts = buildShiftSystemAccounts(summary);
+    const accountDiffs = [
+      'efectivo',
+      'transferencia',
+      'tarjeta',
+      'credito',
+      'otros',
+      'gastos',
+      'inversion',
+    ].map((key) => ({
+      key,
+      system: Number(systemAccounts?.[key] || 0),
+    }));
     const netSystemTotal =
       Number(systemAccounts.efectivo || 0) +
       Number(systemAccounts.transferencia || 0) +
@@ -5014,7 +5071,7 @@ function App() {
       Number(systemAccounts.credito || 0) +
       Number(systemAccounts.otros || 0);
 
-    return { systemAccounts, netSystemTotal };
+    return { systemAccounts, netSystemTotal, accountDiffs };
   }, [shift, activeShiftOwnerRef, salesHistory, expenses, purchases, auditLogs, allExternalCashReceipts, getOperationalNowIso]);
 
   const activeShiftInventorySummary = useMemo(() => {
@@ -5692,6 +5749,10 @@ function App() {
                 } catch (e) {
                   console.error("Error sincronizando clientes en Supabase:", e);
                   const message = e?.message || 'Error desconocido';
+                  if (String(e?.code || '') === 'SESSION_INVALID' || /sesion no valida|sesion no valida o expirada/i.test(message)) {
+                    await forceRelogin(message);
+                    return;
+                  }
                   alert(`No se pudieron sincronizar clientes en la nube.\n\nDetalle: ${message}`);
                   // Rollback local changes so the UI doesn't "flip" and then revert on the next refresh.
                   setRegisteredClients(previousClients);
@@ -5765,6 +5826,10 @@ function App() {
                 } catch (e) {
                   console.error("Error guardando productos en Supabase:", e);
                   const message = e?.message || 'Error desconocido';
+                  if (String(e?.code || '') === 'SESSION_INVALID' || /sesion no valida|sesion no valida o expirada/i.test(message)) {
+                    await forceRelogin(message);
+                    return;
+                  }
                   alert(`No se pudieron guardar productos en la nube (conexion inestable).\n\nDetalle: ${message}`);
                 } finally {
                   pendingProductsSyncRef.current = false;

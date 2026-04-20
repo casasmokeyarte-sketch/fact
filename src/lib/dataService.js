@@ -41,6 +41,28 @@ function isNetworkFetchError(error) {
   return msg.includes('failed to fetch') || msg.includes('networkerror') || msg.includes('fetch');
 }
 
+function isAuthSessionError(error) {
+  const blob = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`.toLowerCase();
+  const code = String(error?.code || '').toLowerCase();
+  return (
+    blob.includes('no hay sesion activa') ||
+    blob.includes('auth.getsession') ||
+    blob.includes('auth.getuser') ||
+    blob.includes('jwt') ||
+    blob.includes('token') ||
+    blob.includes('session') ||
+    blob.includes('invalid refresh token') ||
+    code === 'pgrst301'
+  );
+}
+
+function raiseSessionExpired(error) {
+  const wrapped = new Error('Sesion no valida o expirada. Cierre sesion e inicie nuevamente.');
+  wrapped.code = 'SESSION_INVALID';
+  wrapped.cause = error || null;
+  throw wrapped;
+}
+
 function isUndefinedColumnError(error) {
   const code = String(error?.code || '');
   const blob = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`.toLowerCase();
@@ -126,6 +148,15 @@ function reportClientSyncIssue(scope, payload, error) {
   }
 }
 
+function buildClientUpdateDebugMessage(payload, userId) {
+  return [
+    `client.id=${String(payload?.id || '').trim() || 'N/A'}`,
+    `client.document=${String(payload?.document || '').trim() || 'N/A'}`,
+    `client.user_id=${String(payload?.user_id || '').trim() || 'N/A'}`,
+    `auth.user_id=${String(userId || '').trim() || 'N/A'}`,
+  ].join(' | ');
+}
+
 async function withRetry(operation, retries = 2, delayMs = 450) {
   let lastError;
   for (let attempt = 0; attempt <= retries; attempt += 1) {
@@ -141,21 +172,28 @@ async function withRetry(operation, retries = 2, delayMs = 450) {
 }
 
 async function getAuthUserId() {
-  const {
-    data: { session },
-    error: sessionError,
-  } = await supabase.auth.getSession();
+  try {
+    const {
+      data: { session },
+      error: sessionError,
+    } = await supabase.auth.getSession();
 
-  if (sessionError) throw formatDbError(sessionError, 'auth.getSession');
+    if (sessionError) throw formatDbError(sessionError, 'auth.getSession');
 
-  const sessionUserId = session?.user?.id;
-  if (sessionUserId) return sessionUserId;
+    const sessionUserId = session?.user?.id;
+    if (sessionUserId) return sessionUserId;
 
-  const { data, error } = await supabase.auth.getUser();
-  if (error) throw formatDbError(error, 'auth.getUser');
-  const userId = data?.user?.id;
-  if (!userId) throw new Error('No hay sesion activa');
-  return userId;
+    const { data, error } = await supabase.auth.getUser();
+    if (error) throw formatDbError(error, 'auth.getUser');
+    const userId = data?.user?.id;
+    if (!userId) throw new Error('No hay sesion activa');
+    return userId;
+  } catch (error) {
+    if (isAuthSessionError(error)) {
+      raiseSessionExpired(error);
+    }
+    throw error;
+  }
 }
 
 function removeInvalidUuidId(payload) {
@@ -341,9 +379,13 @@ export const dataService = {
       barcode: normalizeNumericBarcode(product.barcode) || null,
       status: String(product?.status || 'activo'),
       reorder_level: Number(product?.reorder_level ?? 10),
-      is_visible: product?.is_visible !== false,
       user_id: product.user_id || userId,
     };
+    
+    // Add is_visible only if explicitly provided in product to avoid schema cache errors (PGRST204)
+    if (Object.prototype.hasOwnProperty.call(product, 'is_visible')) {
+      payload.is_visible = product.is_visible;
+    }
 
     if (isUuid(payload.id)) {
       // Do not overwrite owner on existing products. Update first; insert only if missing.
@@ -669,9 +711,43 @@ export const dataService = {
         supabase.from('clients').update(updatePayload).eq('id', payload.id).select()
       );
       if (!error && Array.isArray(data) && data.length === 0) {
+        let authUserIdForDebug = '';
+        try {
+          authUserIdForDebug = await getAuthUserId();
+        } catch (authError) {
+          if (String(authError?.code || '') === 'SESSION_INVALID') throw authError;
+        }
+        if (payload.document) {
+          let byDocResult = await withRetry(() =>
+            supabase.from('clients').update(updatePayload).eq('document', payload.document).select()
+          );
+          if (byDocResult?.error && isUndefinedColumnError(byDocResult.error)) {
+            const {
+              referrer_document,
+              referrer_name,
+              referral_reward_granted,
+              referral_credits_available,
+              referral_points,
+              successful_referral_count,
+              ...legacyPayload
+            } = updatePayload;
+            byDocResult = await withRetry(() =>
+              supabase.from('clients').update(legacyPayload).eq('document', payload.document).select()
+            );
+          }
+          if (!byDocResult?.error && Array.isArray(byDocResult?.data) && byDocResult.data.length > 0) {
+            console.warn('[SYNC:clients] update por id no encontro fila; recuperado por document.', {
+              clientId: payload.id,
+              document: payload.document,
+              authUserId: authUserIdForDebug || null,
+            });
+            return byDocResult.data;
+          }
+        }
         throw new Error(
           'No se pudo actualizar el cliente en Supabase (0 filas afectadas). Esto suele pasar por permisos/RLS cuando el cliente fue creado por otro usuario. ' +
-          'Solucion: aplicar la migracion de empresa compartida (ver shared_company_migration.sql) o ajustar policies de clients.'
+          'Solucion: aplicar la migracion de empresa compartida (ver shared_company_migration.sql) o ajustar policies de clients. ' +
+          buildClientUpdateDebugMessage(payload, authUserIdForDebug)
         );
       }
       if (error && isUndefinedColumnError(error)) {
@@ -685,14 +761,33 @@ export const dataService = {
           ...fallbackPayload
         } = payload;
         const legacyUpdatePayload = { ...fallbackPayload };
-        delete legacyUpdatePayload.user_id;
         const retry = await withRetry(() => supabase.from('clients').update(legacyUpdatePayload).eq('id', payload.id).select());
         data = retry.data;
         error = retry.error;
         if (!error && Array.isArray(data) && data.length === 0) {
+          let authUserIdForDebug = '';
+          try {
+            authUserIdForDebug = await getAuthUserId();
+          } catch (authError) {
+            if (String(authError?.code || '') === 'SESSION_INVALID') throw authError;
+          }
+          if (payload.document) {
+            const byDocRetry = await withRetry(() =>
+              supabase.from('clients').update(legacyUpdatePayload).eq('document', payload.document).select()
+            );
+            if (!byDocRetry?.error && Array.isArray(byDocRetry?.data) && byDocRetry.data.length > 0) {
+              console.warn('[SYNC:clients] legacy update por id no encontro fila; recuperado por document.', {
+                clientId: payload.id,
+                document: payload.document,
+                authUserId: authUserIdForDebug || null,
+              });
+              return byDocRetry.data;
+            }
+          }
           throw new Error(
             'No se pudo actualizar el cliente en Supabase (0 filas afectadas). Esto suele pasar por permisos/RLS. ' +
-            'Solucion: aplicar shared_company_migration.sql o ajustar policies.'
+            'Solucion: aplicar shared_company_migration.sql o ajustar policies. ' +
+            buildClientUpdateDebugMessage(payload, authUserIdForDebug)
           );
         }
       }
@@ -712,7 +807,8 @@ export const dataService = {
           successful_referral_count,
           ...fallbackPayload
         } = insertWithIdPayload;
-        const retry = await withRetry(() => supabase.from('clients').insert(fallbackPayload).select());
+        const legacyInsertPayload = { ...fallbackPayload };
+        const retry = await withRetry(() => supabase.from('clients').insert(legacyInsertPayload).select());
         insertedData = retry.data;
         insertError = retry.error;
       }
@@ -1247,11 +1343,12 @@ export const dataService = {
     const resolvedEndTime = Object.prototype.hasOwnProperty.call(shift || {}, 'end_time')
       ? shift.end_time
       : (Object.prototype.hasOwnProperty.call(shift || {}, 'endTime') ? shift.endTime : new Date().toISOString());
+    const rawCompanyId = shift.company_id ?? shift.companyId;
+    const companyId = isUuid(rawCompanyId) ? rawCompanyId : null;
     const payload = {
       id: shift.id ?? shift.db_id,
       user_id: shift.user_id || userId,
       user_name: shift.user_name ?? shift.user ?? null,
-      company_id: isUuid(shift.company_id ?? shift.companyId) ? (shift.company_id ?? shift.companyId) : null,
       start_time: shift.start_time ?? shift.startTime ?? null,
       end_time: hasEndTime ? resolvedEndTime : new Date().toISOString(),
       initial_cash: Number(shift.initial_cash ?? shift.initialCash ?? 0),
@@ -1267,6 +1364,10 @@ export const dataService = {
       inventory_closure: shift.inventory_closure ?? shift.inventoryClosure ?? null,
       inventory_status: shift.inventory_status ?? shift.inventoryStatus ?? null,
     };
+
+    if (companyId) {
+      payload.company_id = companyId;
+    }
 
     if (isUuid(payload.id)) {
       let { data, error } = await withRetry(() => supabase.from('shift_history').upsert(payload).select());
