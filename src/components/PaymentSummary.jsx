@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { CLIENT_OCASIONAL, PAYMENT_MODES, REFERRAL_DISCOUNT_PERCENT, REFERRED_CLIENT_DISCOUNT_PERCENT } from '../constants';
 import { printInvoiceDocument, printShippingGuideDocument } from '../lib/printInvoice.js';
 import { playSound } from '../lib/soundService';
+import { ShippingGuideFormModal } from './ShippingGuideFormModal';
 import { computeInvoiceTotals } from '../lib/invoiceTotals.js';
 
 const CASH_MODE = PAYMENT_MODES.CONTADO;
@@ -686,9 +687,31 @@ export function PaymentSummary({
     printInvoiceDocument(previewInvoice, mode);
   };
 
+  const [shippingModal, setShippingModal] = React.useState(null);
+
   const handlePrintShippingGuide = (paymentStatus) => {
     const previewInvoice = buildPreviewInvoice();
-    printShippingGuideDocument(previewInvoice, { paymentStatus });
+    const senderNameDefault =
+      currentUser?.name ||
+      currentUser?.display_name ||
+      currentUser?.displayName ||
+      currentUser?.email ||
+      previewInvoice?.user_name ||
+      'No registrado';
+    setShippingModal({
+      paymentStatus,
+      invoice: previewInvoice,
+      initialValues: {
+        senderName:        senderNameDefault,
+        senderDocument:    '',
+        senderPhone:       selectedClient?.phone || '',
+        senderAddress:     '',
+        recipientName:     previewInvoice?.clientName || clientName || 'Cliente Ocasional',
+        recipientDocument: previewInvoice?.clientDoc || '',
+        recipientAddress:  previewInvoice?.clientAddress || selectedClient?.address || '',
+        recipientPhone:    previewInvoice?.clientPhone || selectedClient?.phone || '',
+      },
+    });
   };
 
   const handleFacturarCero = () => {
@@ -1058,6 +1081,20 @@ export function PaymentSummary({
       >
         Factura Interna $0 (sin ingreso)
       </button>
+
+      {shippingModal && (
+        <ShippingGuideFormModal
+          initialValues={shippingModal.initialValues}
+          onConfirm={(overrides) => {
+            printShippingGuideDocument(shippingModal.invoice, {
+              paymentStatus: shippingModal.paymentStatus,
+              ...overrides,
+            });
+            setShippingModal(null);
+          }}
+          onCancel={() => setShippingModal(null)}
+        />
+      )}
 
       <button
         className="btn"

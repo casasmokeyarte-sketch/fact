@@ -83,9 +83,48 @@ export function printShippingGuideDocument(invoice, options = {}) {
     invoice?.mixedDetails?.user ||
     'Sistema'
   );
-  const recipientName = String(invoice?.clientName || invoice?.client_name || 'Cliente Ocasional').trim() || 'Cliente Ocasional';
-  const recipientDocument = String(invoice?.clientDoc || invoice?.client_doc || 'N/A').trim() || 'N/A';
+  const senderName = String(
+    options.senderName ||
+    invoice?.senderName ||
+    invoice?.mixedDetails?.shippingGuide?.senderName ||
+    invoiceUser ||
+    'No registrado'
+  ).trim() || 'No registrado';
+  const senderDocument = String(
+    options.senderDocument ||
+    invoice?.senderDocument ||
+    invoice?.mixedDetails?.shippingGuide?.senderDocument ||
+    'N/A'
+  ).trim() || 'N/A';
+  const senderPhone = String(
+    options.senderPhone ||
+    invoice?.senderPhone ||
+    invoice?.mixedDetails?.shippingGuide?.senderPhone ||
+    COMPANY_INFO.phone ||
+    'No registrado'
+  ).trim() || 'No registrado';
+  const senderAddress = String(
+    options.senderAddress ||
+    invoice?.senderAddress ||
+    invoice?.mixedDetails?.shippingGuide?.senderAddress ||
+    COMPANY_INFO.address ||
+    'No registrado'
+  ).trim() || 'No registrado';
+
+  const recipientName = String(
+    options.recipientName ||
+    invoice?.clientName ||
+    invoice?.client_name ||
+    'Cliente Ocasional'
+  ).trim() || 'Cliente Ocasional';
+  const recipientDocument = String(
+    options.recipientDocument ||
+    invoice?.clientDoc ||
+    invoice?.client_doc ||
+    'N/A'
+  ).trim() || 'N/A';
   const recipientAddress = String(
+    options.recipientAddress ||
     invoice?.shippingAddress ||
     invoice?.address ||
     invoice?.clientAddress ||
@@ -93,6 +132,7 @@ export function printShippingGuideDocument(invoice, options = {}) {
     'Direccion pendiente por registrar'
   ).trim();
   const recipientPhone = String(
+    options.recipientPhone ||
     invoice?.phone ||
     invoice?.clientPhone ||
     invoice?.mixedDetails?.shippingGuide?.phone ||
@@ -160,7 +200,11 @@ export function printShippingGuideDocument(invoice, options = {}) {
         </div>
         <div class="box">
           <div class="box-title">Datos del envio</div>
-          <div>Asesor: ${escapeHtml(invoiceUser)}</div>
+          <div>Remite: ${escapeHtml(senderName)}</div>
+          <div>Documento: ${escapeHtml(senderDocument)}</div>
+          <div>Telefono: ${escapeHtml(senderPhone)}</div>
+          <div>Direccion: ${escapeHtml(senderAddress)}</div>
+          <div>Asesor sistema: ${escapeHtml(invoiceUser)}</div>
           <div>Bultos: ${packageCount}</div>
           <div>Total factura: $${Number(invoice?.total || 0).toLocaleString('es-CO')}</div>
           <div>Valor a recaudar: $${amountToCollect.toLocaleString('es-CO')}</div>

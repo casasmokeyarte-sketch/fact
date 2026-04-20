@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { printInvoiceDocument, printShippingGuideDocument } from '../lib/printInvoice.js';
+import { ShippingGuideFormModal } from './ShippingGuideFormModal';
 import { PaginationControls } from './PaginationControls';
 import { usePagination } from '../lib/usePagination';
 import { useTableSort } from '../lib/useTableSort';
@@ -444,10 +445,35 @@ export function HistorialModule({
     setOpenInvoiceMenuId(null);
   };
 
+  const [shippingModal, setShippingModal] = useState(null);
+
+  const openShippingModal = (invoice, paymentStatus) => {
+    const senderNameDefault =
+      currentUser?.name ||
+      currentUser?.display_name ||
+      currentUser?.displayName ||
+      currentUser?.email ||
+      invoice?.user_name ||
+      invoice?.user ||
+      'No registrado';
+    setShippingModal({
+      paymentStatus,
+      invoice,
+      initialValues: {
+        senderName:        invoice?.senderName || senderNameDefault,
+        senderDocument:    invoice?.senderDocument || '',
+        senderPhone:       invoice?.senderPhone || '',
+        senderAddress:     invoice?.senderAddress || '',
+        recipientName:     invoice?.clientName || invoice?.client_name || 'Cliente Ocasional',
+        recipientDocument: invoice?.clientDoc || invoice?.client_doc || '',
+        recipientAddress:  invoice?.shippingAddress || invoice?.address || invoice?.clientAddress || '',
+        recipientPhone:    invoice?.phone || invoice?.clientPhone || '',
+      },
+    });
+  };
+
   const handlePrintShippingGuide = (invoice, paymentStatus = '') => {
-    const code = getInvoiceCode(invoice);
-    printShippingGuideDocument(invoice, { paymentStatus });
-    onLog?.({ module: 'Historial', action: 'Reimpresion Guia', details: `Guia ${paymentStatus || 'auto'} de factura ${code}` });
+    openShippingModal(invoice, paymentStatus);
     setOpenInvoiceMenuId(null);
   };
 
@@ -988,6 +1014,26 @@ export function HistorialModule({
             </div>
           );
         })()
+      )}
+
+      {shippingModal && (
+        <ShippingGuideFormModal
+          initialValues={shippingModal.initialValues}
+          onConfirm={(overrides) => {
+            const code = getInvoiceCode(shippingModal.invoice);
+            printShippingGuideDocument(shippingModal.invoice, {
+              paymentStatus: shippingModal.paymentStatus,
+              ...overrides,
+            });
+            onLog?.({
+              module: 'Historial',
+              action: 'Reimpresion Guia',
+              details: `Guia ${shippingModal.paymentStatus || 'auto'} de factura ${code}`,
+            });
+            setShippingModal(null);
+          }}
+          onCancel={() => setShippingModal(null)}
+        />
       )}
     </div>
   );
