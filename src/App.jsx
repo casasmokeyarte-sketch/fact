@@ -1895,25 +1895,6 @@ function App() {
     return () => window.removeEventListener('focus', retryRestore);
   }, [currentUser?.id, shift?.startTime]);
 
-  useEffect(() => {
-    if (!currentUser?.id) return undefined;
-
-    const trySyncPendingShift = () => {
-      if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
-      const pendingShift = readPendingOpenShiftSync(currentUser.id);
-      if (!pendingShift?.startTime) return;
-      void syncPendingOpenShift(currentUser.id, shift || pendingShift);
-    };
-
-    trySyncPendingShift();
-    window.addEventListener('online', trySyncPendingShift);
-    window.addEventListener('focus', trySyncPendingShift);
-    return () => {
-      window.removeEventListener('online', trySyncPendingShift);
-      window.removeEventListener('focus', trySyncPendingShift);
-    };
-  }, [currentUser?.id, shift, syncPendingOpenShift]);
-
   // Handle logout
   const handleLogout = async () => {
     const { error } = await signOut();
@@ -1982,6 +1963,25 @@ function App() {
       pendingOpenShiftSyncRef.current = false;
     }
   }, [currentUser?.email, currentUser?.id, currentUser?.name, forceRelogin, liveProfile?.company_id, shift]);
+
+  useEffect(() => {
+    if (!currentUser?.id) return undefined;
+
+    const trySyncPendingShift = () => {
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+      const pendingShift = readPendingOpenShiftSync(currentUser.id);
+      if (!pendingShift?.startTime) return;
+      void syncPendingOpenShift(currentUser.id, shift || pendingShift);
+    };
+
+    trySyncPendingShift();
+    window.addEventListener('online', trySyncPendingShift);
+    window.addEventListener('focus', trySyncPendingShift);
+    return () => {
+      window.removeEventListener('online', trySyncPendingShift);
+      window.removeEventListener('focus', trySyncPendingShift);
+    };
+  }, [currentUser?.id, shift, syncPendingOpenShift]);
 
   // Cash Management State
   const [cajaMayor, setCajaMayor] = useState(5000000);
