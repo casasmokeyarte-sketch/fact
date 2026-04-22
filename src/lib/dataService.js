@@ -86,6 +86,12 @@ function isMissingFullPriceOnlyColumnError(error) {
   return code === '42703' || code === 'PGRST204' || blob.includes('full_price_only');
 }
 
+function isMissingImageUrlColumnError(error) {
+  const code = String(error?.code || '');
+  const blob = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`.toLowerCase();
+  return code === '42703' || code === 'PGRST204' || blob.includes('image_url');
+}
+
 function stripUnsupportedProductFields(payload, error) {
   if (!payload || typeof payload !== 'object') return payload;
 
@@ -100,6 +106,12 @@ function stripUnsupportedProductFields(payload, error) {
 
   if (Object.prototype.hasOwnProperty.call(nextPayload, 'full_price_only') && isMissingFullPriceOnlyColumnError(error)) {
     const { full_price_only, ...rest } = nextPayload;
+    nextPayload = rest;
+    changed = true;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(nextPayload, 'image_url') && isMissingImageUrlColumnError(error)) {
+    const { image_url, ...rest } = nextPayload;
     nextPayload = rest;
     changed = true;
   }
@@ -369,6 +381,7 @@ export const dataService = {
       status: String(p?.status || 'activo'),
       reorder_level: Number(p?.reorder_level ?? 10),
       is_visible: p?.is_visible !== false,
+      image_url: String(p?.image_url || '').trim(),
     }));
   },
 
@@ -385,6 +398,9 @@ export const dataService = {
     // Add is_visible only if explicitly provided in product to avoid schema cache errors (PGRST204)
     if (Object.prototype.hasOwnProperty.call(product, 'is_visible')) {
       payload.is_visible = product.is_visible;
+    }
+    if (Object.prototype.hasOwnProperty.call(product, 'image_url')) {
+      payload.image_url = String(product?.image_url || '').trim() || null;
     }
 
     if (isUuid(payload.id)) {

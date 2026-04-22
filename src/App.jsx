@@ -251,6 +251,7 @@ const QUICK_LOOKUP_HISTORY_STORAGE_KEY = 'fact_quick_lookup_history';
 const PRODUCTS_CACHE_STORAGE_KEY = 'fact_products_cache';
 const CLIENTS_CACHE_STORAGE_KEY = 'fact_clients_cache';
 const INVOICE_SEQUENCE_STORAGE_KEY = 'fact_invoice_sequence';
+const OPEN_SHIFT_PENDING_SYNC_STORAGE_KEY = 'fact_open_shift_pending_sync';
 const REMOTE_AUTH_REQUESTS_STORAGE_KEY = 'fact_remote_auth_requests';
 const SOUND_SETTINGS_STORAGE_KEY = 'fact_sound_settings';
 const AUTH_REQUEST_LOG_PREFIX = 'AUTH_REQUEST_EVENT::';
@@ -269,6 +270,8 @@ const USERS_CACHE_STORAGE_KEY = 'fact_users_cache';
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_OPEN_SHIFT_HOURS = 24;
 const MAX_OPEN_SHIFT_MS = MAX_OPEN_SHIFT_HOURS * 60 * 60 * 1000;
+const SHIFT_RESTORE_ALERT_THROTTLE_MS = 15000;
+const SHIFT_CLOUD_SYNC_ALERT_THROTTLE_MS = 15000;
 
 const isUuid = (value) => typeof value === 'string' && UUID_REGEX.test(value);
 
@@ -306,6 +309,15 @@ const readBootstrappedOpenShift = () => {
   } catch {
     return null;
   }
+};
+
+const shouldShowShiftAlert = (key, throttleMs) => {
+  if (typeof window === 'undefined') return false;
+  const now = Date.now();
+  const lastAt = Number(window[key] || 0);
+  if (now - lastAt < throttleMs) return false;
+  window[key] = now;
+  return true;
 };
 
 const normalizeBarcodeKey = (value) => {
@@ -897,6 +909,7 @@ function App() {
   const queuedRealtimeRefreshRef = useRef(false);
   const lastAuthEventRef = useRef({ event: null, userId: null, at: 0 });
   const pendingProductsSyncRef = useRef(false);
+  const pendingOpenShiftSyncRef = useRef(false);
   const pendingClientsSyncRef = useRef(false);
   const recentClientWritesRef = useRef({});
   const userCashBalancesHydratedRef = useRef(false);
@@ -1074,6 +1087,7 @@ function App() {
   const getQuickPanelPositionStorageKey = (userId) => `fact_quick_panel_pos_${userId || 'anon'}`;
   const getPromoPanelPositionStorageKey = (userId) => `fact_promo_panel_pos_${userId || 'anon'}`;
   const getOpenShiftStorageKey = (userId) => `${OPEN_SHIFT_STORAGE_KEY}_${userId || 'anon'}`;
+  const getPendingOpenShiftSyncStorageKey = (userId) => `${OPEN_SHIFT_PENDING_SYNC_STORAGE_KEY}_${userId || 'anon'}`;
   const getProductsCacheStorageKey = (userId) => `${PRODUCTS_CACHE_STORAGE_KEY}_${userId || 'anon'}`;
   const getClientsCacheStorageKey = (userId) => `${CLIENTS_CACHE_STORAGE_KEY}_${userId || 'anon'}`;
   const getSoundSettingsStorageKey = (userId) => `${SOUND_SETTINGS_STORAGE_KEY}_${userId || 'anon'}`;
@@ -1092,9 +1106,37 @@ function App() {
     );
   };
 
+  const savePendingOpenShiftSync = (userId, openShift) => {
+    if (!userId || !openShift) return;
+    localStorage.setItem(getPendingOpenShiftSyncStorageKey(userId), JSON.stringify({
+      userId,
+      shift: openShift,
+      updatedAt: new Date().toISOString()
+    }));
+  };
+
+  const readPendingOpenShiftSync = (userId) => {
+    if (!userId) return null;
+    try {
+      const raw = localStorage.getItem(getPendingOpenShiftSyncStorageKey(userId));
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (String(parsed?.userId || '') !== String(userId || '')) return null;
+      return normalizeStoredOpenShift(parsed?.shift);
+    } catch {
+      return null;
+    }
+  };
+
+  const clearPendingOpenShiftSync = (userId = currentUser?.id) => {
+    if (!userId) return;
+    localStorage.removeItem(getPendingOpenShiftSyncStorageKey(userId));
+  };
+
   const clearOpenShift = (userId = currentUser?.id) => {
     if (userId) {
       localStorage.removeItem(getOpenShiftStorageKey(userId));
+      clearPendingOpenShiftSync(userId);
     }
     localStorage.removeItem(OPEN_SHIFT_STORAGE_KEY);
   };
@@ -1198,8 +1240,23 @@ function App() {
 
       setShift(cloudShift);
       saveOpenShift(userId, cloudShift);
+      clearPendingOpenShiftSync(userId);
     } catch (e) {
       console.error('Error restaurando jornada abierta:', e);
+      const message = String(e?.message || e || '').trim();
+      const isSessionIssue = String(e?.code || '') === 'SESSION_INVALID' || /sesion no valida|token|jwt|refresh token/i.test(message);
+      const isNetworkIssue = /failed to fetch|networkerror|fetch|conexion|connection/i.test(message);
+      if (shouldShowShiftAlert('__factLastShiftRestoreAlertAt', SHIFT_RESTORE_ALERT_THROTTLE_MS)) {
+        try {
+          alert(
+            isSessionIssue
+              ? 'No se pudo validar la jornada abierta porque la sesion ya no es valida. Inicie sesion nuevamente antes de abrir otra jornada.'
+              : isNetworkIssue
+                ? 'No se pudo validar la jornada abierta en la nube por un problema de conexion. No abra una nueva jornada hasta confirmar que la conexion regreso.'
+                : `No se pudo validar la jornada abierta.\n\nDetalle: ${message || 'Error desconocido'}`
+          );
+        } catch {}
+      }
     }
   };
 
@@ -1838,6 +1895,25 @@ function App() {
     return () => window.removeEventListener('focus', retryRestore);
   }, [currentUser?.id, shift?.startTime]);
 
+  useEffect(() => {
+    if (!currentUser?.id) return undefined;
+
+    const trySyncPendingShift = () => {
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+      const pendingShift = readPendingOpenShiftSync(currentUser.id);
+      if (!pendingShift?.startTime) return;
+      void syncPendingOpenShift(currentUser.id, shift || pendingShift);
+    };
+
+    trySyncPendingShift();
+    window.addEventListener('online', trySyncPendingShift);
+    window.addEventListener('focus', trySyncPendingShift);
+    return () => {
+      window.removeEventListener('online', trySyncPendingShift);
+      window.removeEventListener('focus', trySyncPendingShift);
+    };
+  }, [currentUser?.id, shift, syncPendingOpenShift]);
+
   // Handle logout
   const handleLogout = async () => {
     const { error } = await signOut();
@@ -1865,6 +1941,47 @@ function App() {
       alert(message);
     } catch {}
   }, []);
+
+  const syncPendingOpenShift = useCallback(async (userId = currentUser?.id, fallbackShift = shift) => {
+    if (!userId || pendingOpenShiftSyncRef.current) return false;
+    const pendingShift = readPendingOpenShiftSync(userId) || normalizeStoredOpenShift(fallbackShift);
+    if (!pendingShift?.startTime) return false;
+
+    pendingOpenShiftSyncRef.current = true;
+    try {
+      const savedShift = await dataService.saveShift({
+        ...pendingShift,
+        user_id: pendingShift?.user_id || userId,
+        user_name: pendingShift?.user_name || currentUser?.name || currentUser?.email || 'Sistema',
+        companyId: liveProfile?.company_id || null,
+        endTime: null,
+        salesTotal: Number(pendingShift?.salesTotal ?? 0),
+        theoreticalBalance: Number(pendingShift?.theoreticalBalance ?? 0),
+        physicalCash: Number(pendingShift?.physicalCash ?? 0),
+        discrepancy: Number(pendingShift?.discrepancy ?? 0),
+        authorized: !!pendingShift?.authorized,
+        reportText: pendingShift?.reportText || '',
+        openingReportText: pendingShift?.openingReportText || '',
+        inventoryAssignment: pendingShift?.inventoryAssignments || pendingShift?.inventoryAssignment || [],
+        inventoryAssignedAt: pendingShift?.inventoryAssignedAt || pendingShift?.startTime || null,
+        inventoryStatus: pendingShift?.inventoryStatus || 'OPEN'
+      });
+      const persistedRow = Array.isArray(savedShift) ? savedShift[0] : savedShift;
+      const persistedShift = persistedRow?.id ? { ...pendingShift, db_id: persistedRow.id } : pendingShift;
+      setShift(persistedShift);
+      saveOpenShift(userId, persistedShift);
+      clearPendingOpenShiftSync(userId);
+      return true;
+    } catch (error) {
+      const message = String(error?.message || error || '');
+      if (String(error?.code || '') === 'SESSION_INVALID' || /sesion no valida|sesion no valida o expirada/i.test(message)) {
+        await forceRelogin(message);
+      }
+      return false;
+    } finally {
+      pendingOpenShiftSyncRef.current = false;
+    }
+  }, [currentUser?.email, currentUser?.id, currentUser?.name, forceRelogin, liveProfile?.company_id, shift]);
 
   // Cash Management State
   const [cajaMayor, setCajaMayor] = useState(5000000);
@@ -3494,6 +3611,7 @@ function App() {
         const persistedShift = { ...openShift, db_id: persistedRow.id };
         setShift(persistedShift);
         saveOpenShift(currentUser?.id, persistedShift);
+        clearPendingOpenShiftSync(currentUser?.id);
         try {
           printShiftOpening(persistedShift, '58mm');
         } catch (e) {
@@ -3513,10 +3631,21 @@ function App() {
         details: err?.details || null,
         hint: err?.hint || null,
       });
+      savePendingOpenShiftSync(currentUser?.id, openShift);
       try {
         printShiftOpening(openShift, '58mm');
       } catch (e) {
         console.error('No se pudo abrir impresion automatica de la apertura:', e);
+      }
+      const syncMessage = String(err?.message || err || '').trim();
+      if (shouldShowShiftAlert('__factLastOpenShiftCloudSyncAlertAt', SHIFT_CLOUD_SYNC_ALERT_THROTTLE_MS)) {
+        try {
+          alert(
+            'La jornada se abrio en este equipo, pero no se pudo guardar en la nube.\n\n' +
+            'Mientras no se sincronice, en otros equipos puede volver a pedir Apertura de Jornada.\n\n' +
+            `Detalle: ${syncMessage || 'Error desconocido'}`
+          );
+        } catch {}
       }
     }
   };

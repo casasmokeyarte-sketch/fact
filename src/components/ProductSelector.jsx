@@ -5,6 +5,7 @@ export function ProductSelector({ onAddItem, isAdmin, products }) {
   const [quantity, setQuantity] = useState(1);
   const [isGift, setIsGift] = useState(false);
   const [barcodeInput, setBarcodeInput] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
   const scannerInputRef = useRef(null);
   const scanBufferRef = useRef('');
   const scanLastKeyAtRef = useRef(0);
@@ -12,6 +13,17 @@ export function ProductSelector({ onAddItem, isAdmin, products }) {
   const isProductVisibleForSale = (product) => product?.is_visible !== false;
   const isProductOutOfStockFlag = (product) => String(product?.status || '').toLowerCase() === 'agotado';
   const saleableProducts = (products || []).filter((p) => isProductVisibleForSale(p));
+  const normalizedSearchTerm = String(searchTerm || '').trim().toLowerCase();
+  const filteredProducts = saleableProducts.filter((product) => {
+    if (!normalizedSearchTerm) return true;
+    const haystack = [
+      product?.name || '',
+      product?.barcode || '',
+      product?.category || '',
+    ].join(' ').toLowerCase();
+    return haystack.includes(normalizedSearchTerm);
+  });
+  const selectedProduct = saleableProducts.find((p) => String(p.id) === String(selectedProductId)) || null;
 
   const normalizeCode = (value) => String(value ?? '').trim().replace(/\s+/g, '');
   const findProductByBarcode = (value) => {
@@ -142,6 +154,7 @@ export function ProductSelector({ onAddItem, isAdmin, products }) {
     setSelectedProductId('');
     setQuantity(1);
     setIsGift(false);
+    setSearchTerm('');
   };
 
   return (
@@ -168,13 +181,21 @@ export function ProductSelector({ onAddItem, isAdmin, products }) {
             <span>YZ Buscar Producto o Escanear</span>
             <button className="btn" onClick={focusScanner} style={{ padding: '2px 8px', fontSize: '0.7rem', backgroundColor: '#e2e8f0' }}>Focus Scanner (F2)</button>
           </label>
+          <input
+            type="text"
+            className="input-field"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            placeholder="Buscar por nombre, categoria o codigo"
+            style={{ marginBottom: '0.5rem' }}
+          />
           <select
             className="input-field"
             value={selectedProductId}
             onChange={(e) => setSelectedProductId(e.target.value)}
           >
             <option value="">Seleccione o pase el escAner...</option>
-            {saleableProducts.map((p, idx) => (
+            {filteredProducts.map((p, idx) => (
               <option key={`${p.id}-${idx}`} value={p.id}>
                 {p.name} - ${p.price} [Codigo: {p.barcode}]
               </option>
@@ -207,6 +228,75 @@ export function ProductSelector({ onAddItem, isAdmin, products }) {
           Agregar
         </button>
       </div>
+
+      {(selectedProduct || normalizedSearchTerm) && (
+        <div style={{ marginTop: '1rem', display: 'grid', gridTemplateColumns: 'minmax(220px, 280px) 1fr', gap: '1rem' }}>
+          <div className="card card--muted" style={{ padding: '0.9rem', minHeight: '220px' }}>
+            {selectedProduct ? (
+              <>
+                {selectedProduct.image_url ? (
+                  <img
+                    src={selectedProduct.image_url}
+                    alt={selectedProduct.name || 'Producto'}
+                    style={{ width: '100%', height: '180px', objectFit: 'contain', borderRadius: '0.9rem', backgroundColor: 'var(--surface-muted)', marginBottom: '0.75rem' }}
+                  />
+                ) : (
+                  <div style={{ width: '100%', height: '180px', borderRadius: '0.9rem', border: '1px dashed var(--border-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>
+                    Sin imagen
+                  </div>
+                )}
+                <div style={{ fontWeight: 800 }}>{selectedProduct.name}</div>
+                <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>{selectedProduct.category || 'General'}</div>
+                <div style={{ marginTop: '0.4rem', fontWeight: 700 }}>${Number(selectedProduct.price || 0).toLocaleString()}</div>
+              </>
+            ) : (
+              <div style={{ color: 'var(--text-secondary)' }}>Seleccione un producto para ver su imagen.</div>
+            )}
+          </div>
+
+          <div className="card card--muted" style={{ padding: '0.9rem' }}>
+            <div style={{ fontWeight: 700, marginBottom: '0.75rem' }}>
+              Resultados visibles: {filteredProducts.length}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(145px, 1fr))', gap: '0.75rem', maxHeight: '260px', overflowY: 'auto' }}>
+              {filteredProducts.slice(0, 18).map((product) => {
+                const isSelected = String(product.id) === String(selectedProductId);
+                const isOut = isProductOutOfStockFlag(product);
+                return (
+                  <button
+                    key={product.id}
+                    type="button"
+                    className="btn"
+                    onClick={() => setSelectedProductId(product.id)}
+                    style={{
+                      textAlign: 'left',
+                      padding: '0.55rem',
+                      borderColor: isSelected ? '#2563eb' : 'var(--border-soft)',
+                      backgroundColor: isSelected ? 'rgba(37, 99, 235, 0.08)' : 'transparent',
+                      opacity: isOut ? 0.65 : 1
+                    }}
+                  >
+                    {product.image_url ? (
+                      <img
+                        src={product.image_url}
+                        alt={product.name || 'Producto'}
+                        style={{ width: '100%', height: '96px', objectFit: 'cover', borderRadius: '0.7rem', marginBottom: '0.5rem', backgroundColor: 'var(--surface-muted)' }}
+                      />
+                    ) : (
+                      <div style={{ width: '100%', height: '96px', borderRadius: '0.7rem', marginBottom: '0.5rem', border: '1px dashed var(--border-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
+                        Sin imagen
+                      </div>
+                    )}
+                    <div style={{ fontWeight: 700, fontSize: '0.9rem', lineHeight: 1.2 }}>{product.name}</div>
+                    <div style={{ color: 'var(--text-secondary)', fontSize: '0.78rem', marginTop: '0.2rem' }}>{product.category || 'General'}</div>
+                    <div style={{ marginTop: '0.35rem', fontWeight: 700 }}>${Number(product.price || 0).toLocaleString()}</div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

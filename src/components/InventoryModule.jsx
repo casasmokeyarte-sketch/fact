@@ -9,6 +9,8 @@ import { printReportHtml } from '../lib/printReports';
 export function InventoryModule({ currentUser, products, setProducts, onDeleteProduct, onAdjustStock, onApplyInventoryCount, stock, categories, onLog, setActiveTab, setPreselectedProductId, shift }) {
     const [view, setView] = useState('list'); // 'list', 'edit', 'count'
     const [editingProduct, setEditingProduct] = useState(null);
+    const [productImageDraft, setProductImageDraft] = useState('');
+    const [productImageError, setProductImageError] = useState('');
     const [physicalCounts, setPhysicalCounts] = useState({});
     const [countSessionRows, setCountSessionRows] = useState([]);
     const [countScanCode, setCountScanCode] = useState('');
@@ -38,6 +40,7 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
         const raw = String(value ?? '').trim();
         return /^\d+$/.test(raw) ? raw : '';
     };
+    const normalizeImageUrl = (value) => String(value || '').trim();
     const createProductId = () => {
         if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
             return crypto.randomUUID();
@@ -57,6 +60,7 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
         precio: Number(product?.price || 0),
         costo: Number(product?.cost || 0),
         unidad: String(product?.unit || 'un'),
+        image_url: normalizeImageUrl(product?.image_url),
         estado: String(product?.status || 'activo'),
         reorder_level: Number(product?.reorder_level ?? 10),
         is_visible: product?.is_visible !== false
@@ -72,6 +76,7 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
             cost: Number(raw?.cost ?? raw?.costo ?? 0) || 0,
             unit: String(raw?.unit ?? raw?.unidad ?? 'un').trim() || 'un',
             barcode,
+            image_url: normalizeImageUrl(raw?.image_url ?? raw?.imagen ?? raw?.foto),
             category: String(raw?.category ?? raw?.categoria ?? 'General').trim() || 'General',
             reorder_level: Number(raw?.reorder_level ?? raw?.minimo ?? 10) || 10,
             status: String(raw?.status ?? raw?.estado ?? 'activo').trim() || 'activo',
@@ -137,6 +142,57 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
         if (!currentUser?.id) return;
         localStorage.setItem(filterStorageKey, searchTerm);
     }, [searchTerm, currentUser?.id]);
+
+    useEffect(() => {
+        setProductImageDraft(normalizeImageUrl(editingProduct?.image_url));
+        setProductImageError('');
+    }, [editingProduct, view]);
+
+    const resizeImageFile = (file, maxSize = 720, quality = 0.82) => (
+        new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => {
+                const image = new Image();
+                image.onload = () => {
+                    const canvas = document.createElement('canvas');
+                    const scale = Math.min(1, maxSize / Math.max(image.width || 1, image.height || 1));
+                    canvas.width = Math.max(1, Math.round(image.width * scale));
+                    canvas.height = Math.max(1, Math.round(image.height * scale));
+                    const ctx = canvas.getContext('2d');
+                    if (!ctx) {
+                        reject(new Error('No se pudo procesar la imagen.'));
+                        return;
+                    }
+                    ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+                    resolve(canvas.toDataURL('image/jpeg', quality));
+                };
+                image.onerror = () => reject(new Error('La imagen seleccionada no es valida.'));
+                image.src = String(reader.result || '');
+            };
+            reader.onerror = () => reject(new Error('No se pudo leer el archivo seleccionado.'));
+            reader.readAsDataURL(file);
+        })
+    );
+
+    const handleProductImageChange = async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        setProductImageError('');
+        try {
+            if (!String(file.type || '').startsWith('image/')) {
+                throw new Error('Seleccione un archivo de imagen.');
+            }
+            const resized = await resizeImageFile(file);
+            if (resized.length > 1_600_000) {
+                throw new Error('La imagen quedo demasiado pesada. Use una imagen mas liviana.');
+            }
+            setProductImageDraft(resized);
+        } catch (error) {
+            setProductImageError(error?.message || 'No se pudo adjuntar la imagen.');
+        } finally {
+            e.target.value = '';
+        }
+    };
 
     const filteredProducts = useMemo(() => (
         (products || []).filter((p) => {
@@ -281,6 +337,7 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
             cost: Number(formData.get('cost')) || 0,
             unit: formData.get('unit') || 'un',
             barcode: normalizeBarcode(formData.get('barcode')),
+            image_url: normalizeImageUrl(productImageDraft),
             category: formData.get('category'),
             reorder_level: Number(formData.get('reorder_level')) || 10,
             status: String(formData.get('status') || 'activo'),
@@ -297,6 +354,8 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
         }
         setView('list');
         setEditingProduct(null);
+        setProductImageDraft('');
+        setProductImageError('');
     };
 
     const handleDelete = async (id) => {
@@ -371,6 +430,7 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
                                 cost: Number(find(['COSTO', 'COST'])) || 0,
                                 unit: find(['UNIDAD', 'UNIT', 'UNIDADES', 'MEDIDA']) || 'un',
                                 barcode: normalizeBarcode(find(['BARCODE', 'CODIGO BARRAS', 'BARRAS', 'CODE'])),
+                                image_url: normalizeImageUrl(find(['IMAGE_URL', 'IMAGEN', 'FOTO', 'IMAGE'])),
                                 category: find(['CATEGORIA', 'CATEGORY']) || 'General',
                                 reorder_level: Number(find(['REORDER_LEVEL', 'MINIMO', 'ALERTA_MINIMA'])) || 10,
                                 status: String(find(['STATUS', 'ESTADO']) || 'activo'),
@@ -767,6 +827,40 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
                             <label className="input-label">Codigo de Barras</label>
                             <input name="barcode" defaultValue={editingProduct?.barcode} className="input-field" placeholder="Escanear o ingresar manual" />
                         </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 1.1fr) minmax(220px, 0.9fr)', gap: '1rem', alignItems: 'start' }}>
+                            <div className="input-group">
+                                <label className="input-label">Imagen del producto</label>
+                                <input type="file" accept="image/*" className="input-field" onChange={handleProductImageChange} />
+                                <div style={{ marginTop: '0.35rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                                    Se guarda comprimida para reconocer el producto en inventario.
+                                </div>
+                                {!!productImageError && (
+                                    <div className="alert alert-danger" style={{ marginTop: '0.5rem' }}>
+                                        {productImageError}
+                                    </div>
+                                )}
+                            </div>
+                            <div className="card card--muted" style={{ minHeight: '190px', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+                                {productImageDraft ? (
+                                    <img
+                                        src={productImageDraft}
+                                        alt={editingProduct?.name || 'Vista previa del producto'}
+                                        style={{ width: '100%', maxHeight: '240px', objectFit: 'contain', borderRadius: '0.75rem' }}
+                                    />
+                                ) : (
+                                    <div style={{ textAlign: 'center', color: 'var(--text-secondary)', fontSize: '0.92rem' }}>
+                                        Sin imagen cargada
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                        {!!productImageDraft && (
+                            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '-0.25rem', marginBottom: '0.75rem' }}>
+                                <button type="button" className="btn" onClick={() => setProductImageDraft('')}>
+                                    Quitar imagen
+                                </button>
+                            </div>
+                        )}
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                             <div className="input-group">
                                 <label className="input-label">Estado del Articulo</label>
@@ -1033,6 +1127,7 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
 	                    <table>
 	                        <thead>
 	                            <tr>
+	                                <th>Imagen</th>
 	                                <th><SortButton label="Nombre" sortKey="name" sortConfig={productsSort} onChange={setProductsSortKey} /></th>
 	                                <th><SortButton label="Venta ($)" sortKey="price" sortConfig={productsSort} onChange={setProductsSortKey} /></th>
 	                                <th><SortButton label="Bodega" sortKey="bodega" sortConfig={productsSort} onChange={setProductsSortKey} /></th>
@@ -1053,7 +1148,23 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
                                     const isVisible = p.is_visible !== false;
                                     return (
                                 <tr key={`${p.id}-${productsPagination.startItem}-${idx}`}>
-                                    <td>{p.name}</td>
+                                    <td style={{ width: '84px' }}>
+                                        {p.image_url ? (
+                                            <img
+                                                src={p.image_url}
+                                                alt={p.name || 'Producto'}
+                                                style={{ width: '56px', height: '56px', objectFit: 'cover', borderRadius: '0.75rem', border: '1px solid var(--border-soft)', backgroundColor: 'var(--surface-muted)' }}
+                                            />
+                                        ) : (
+                                            <div style={{ width: '56px', height: '56px', borderRadius: '0.75rem', border: '1px dashed var(--border-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)', fontSize: '0.72rem' }}>
+                                                Sin foto
+                                            </div>
+                                        )}
+                                    </td>
+                                    <td>
+                                        <div style={{ fontWeight: 700 }}>{p.name}</div>
+                                        <div style={{ color: 'var(--text-secondary)', fontSize: '0.84rem' }}>{p.category || 'General'}</div>
+                                    </td>
                                     <td>{(p.price || 0).toLocaleString()}</td>
                                     <td>{stock.bodega[p.id] || 0}</td>
                                     <td>{stock.ventas[p.id] || 0}</td>

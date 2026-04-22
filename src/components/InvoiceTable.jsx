@@ -25,6 +25,7 @@ export function InvoiceTable({ items, onRemoveItem }) {
             <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
                 <thead>
                     <tr style={{ borderBottom: '1px solid #e2e8f0' }}>
+                        <th style={{ padding: '0.75rem' }}>Img.</th>
                         <th style={{ padding: '0.75rem' }}><SortButton label="Producto" sortKey="name" sortConfig={sortConfig} onChange={setSortKey} /></th>
                         <th style={{ padding: '0.75rem' }}><SortButton label="Cant." sortKey="quantity" sortConfig={sortConfig} onChange={setSortKey} /></th>
                         <th style={{ padding: '0.75rem' }}><SortButton label="Precio Unit." sortKey="price" sortConfig={sortConfig} onChange={setSortKey} /></th>
@@ -35,6 +36,19 @@ export function InvoiceTable({ items, onRemoveItem }) {
                 <tbody>
                     {sortedRows.map((item) => (
                         <tr key={item.__rowIndex} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                            <td style={{ padding: '0.75rem', width: '78px' }}>
+                                {item.image_url ? (
+                                    <img
+                                        src={item.image_url}
+                                        alt={item.name || 'Producto'}
+                                        style={{ width: '48px', height: '48px', objectFit: 'cover', borderRadius: '0.65rem', backgroundColor: 'var(--surface-muted)' }}
+                                    />
+                                ) : (
+                                    <div style={{ width: '48px', height: '48px', borderRadius: '0.65rem', border: '1px dashed #cbd5e1', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.65rem', color: '#64748b' }}>
+                                        Sin
+                                    </div>
+                                )}
+                            </td>
                             <td style={{ padding: '0.75rem' }}>
                                 {item.name} {item.isGift && <span style={{ backgroundColor: '#fee2e2', color: '#b91c1c', fontSize: '0.7em', padding: '1px 4px', borderRadius: '4px', marginLeft: '5px' }}>REGALO</span>}
                             </td>
