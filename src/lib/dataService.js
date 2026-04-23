@@ -1412,6 +1412,19 @@ export const dataService = {
     const resolvedEndTime = Object.prototype.hasOwnProperty.call(shift || {}, 'end_time')
       ? shift.end_time
       : (Object.prototype.hasOwnProperty.call(shift || {}, 'endTime') ? shift.endTime : null);
+    const normalizedInventoryClosure = (() => {
+      const raw = shift.inventory_closure ?? shift.inventoryClosure;
+      if (raw && typeof raw === 'object') {
+        return {
+          rows: normalizeShiftInventoryRows(raw.rows),
+          supervisorNote: String(raw.supervisorNote ?? raw.supervisor_note ?? '').trim(),
+        };
+      }
+      return {
+        rows: [],
+        supervisorNote: '',
+      };
+    })();
     const payload = {
       id: shift.id ?? shift.db_id,
       user_id: shift.user_id || userId,
@@ -1429,7 +1442,7 @@ export const dataService = {
       report_text: shift.report_text ?? shift.reportText ?? '',
       inventory_assignment: normalizeShiftInventoryRows(shift.inventory_assignment ?? shift.inventoryAssignment),
       inventory_assigned_at: shift.inventory_assigned_at ?? shift.inventoryAssignedAt ?? null,
-      inventory_closure: shift.inventory_closure ?? shift.inventoryClosure ?? null,
+      inventory_closure: normalizedInventoryClosure,
       inventory_status: shift.inventory_status ?? shift.inventoryStatus ?? null,
     };
 
