@@ -165,6 +165,7 @@ function buildClientUpdateDebugMessage(payload, userId) {
     `client.id=${String(payload?.id || '').trim() || 'N/A'}`,
     `client.document=${String(payload?.document || '').trim() || 'N/A'}`,
     `client.user_id=${String(payload?.user_id || '').trim() || 'N/A'}`,
+    `client.company_id=${String(payload?.company_id || '').trim() || 'N/A'}`,
     `auth.user_id=${String(userId || '').trim() || 'N/A'}`,
   ].join(' | ');
 }
@@ -205,6 +206,29 @@ async function getAuthUserId() {
       raiseSessionExpired(error);
     }
     throw error;
+  }
+}
+
+async function getCurrentCompanyId(userId) {
+  try {
+    const { data, error } = await supabase.rpc('current_company_id');
+    if (!error && isUuid(data)) return data;
+  } catch {
+    // noop
+  }
+
+  if (!isUuid(userId)) return null;
+
+  try {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('company_id')
+      .eq('user_id', userId)
+      .maybeSingle();
+    if (error) throw error;
+    return isUuid(data?.company_id) ? data.company_id : null;
+  } catch {
+    return null;
   }
 }
 
@@ -635,6 +659,7 @@ export const dataService = {
 
   async saveClient(client) {
     const userId = client?.user_id || await getAuthUserId();
+    const companyId = await getCurrentCompanyId(userId);
     const document = String(client?.document ?? '').trim();
     let existingByDocument = null;
     const existingClientId = isUuid(client?.id) ? client.id : null;
@@ -720,6 +745,17 @@ export const dataService = {
       active: client.active ?? (client.blocked === true ? false : undefined) ?? existingRecord?.active ?? true,
       updated_at: new Date().toISOString(),
     };
+
+    if (isUuid(existingRecord?.company_id)) {
+      payload.company_id = existingRecord.company_id;
+    } else {
+      const incomingCompanyId = client?.company_id ?? client?.companyId;
+      if (isUuid(incomingCompanyId)) {
+        payload.company_id = incomingCompanyId;
+      } else if (isUuid(companyId)) {
+        payload.company_id = companyId;
+      }
+    }
 
     if (isUuid(payload.id)) {
       const { user_id, ...updatePayload } = payload;
