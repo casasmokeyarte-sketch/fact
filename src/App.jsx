@@ -437,7 +437,7 @@ const protectRecentClientWrites = (incomingRows, protectedRowsByKey) => {
   Object.entries(protectedRowsByKey || {}).forEach(([key, entry]) => {
     if (!entry?.row) return;
     const writtenAt = Number(entry.writtenAt || 0);
-    if (!writtenAt || now - writtenAt > 15000) return;
+    if (!writtenAt || now - writtenAt > 60000) return;
 
     const protectedRow = normalizeClientDraft(entry.row);
     const incomingRow = result.get(key);
@@ -5925,7 +5925,6 @@ function App() {
                   }
 
                   pendingClientsSyncRef.current = false;
-                  await refreshCloudData({ silent: true });
                 } catch (e) {
                   console.error("Error sincronizando clientes en Supabase:", e);
                   const message = e?.message || 'Error desconocido';
