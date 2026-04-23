@@ -249,6 +249,7 @@ const USER_CASH_BALANCES_STORAGE_KEY = 'fact_user_cash_balances';
 const QUICK_TRAY_OPEN_STORAGE_KEY = 'fact_quick_tray_open';
 const QUICK_LOOKUP_HISTORY_STORAGE_KEY = 'fact_quick_lookup_history';
 const PRODUCTS_CACHE_STORAGE_KEY = 'fact_products_cache';
+const PRODUCT_IMAGES_STORAGE_KEY = 'fact_product_images';
 const CLIENTS_CACHE_STORAGE_KEY = 'fact_clients_cache';
 const INVOICE_SEQUENCE_STORAGE_KEY = 'fact_invoice_sequence';
 const OPEN_SHIFT_PENDING_SYNC_STORAGE_KEY = 'fact_open_shift_pending_sync';
@@ -502,6 +503,30 @@ const dedupeProducts = (rows) => {
     ...bySignature.values()
   ]));
 };
+
+const normalizeProductImageUrl = (value) => String(value || '').trim();
+
+const buildProductImageCacheMap = (rows) => {
+  const result = {};
+  (rows || []).forEach((row) => {
+    const idKey = String(row?.id || '').trim();
+    const imageUrl = normalizeProductImageUrl(row?.image_url);
+    if (idKey && imageUrl) {
+      result[idKey] = imageUrl;
+    }
+  });
+  return result;
+};
+
+const mergeProductsWithImageCache = (rows, imageCache) => (
+  (rows || []).map((row) => {
+    const idKey = String(row?.id || '').trim();
+    const cachedImage = normalizeProductImageUrl(imageCache?.[idKey]);
+    const currentImage = normalizeProductImageUrl(row?.image_url);
+    if (!idKey || currentImage || !cachedImage) return row;
+    return { ...row, image_url: cachedImage };
+  })
+);
 
 const normalizeAppUser = (user) => {
   if (!user || typeof user !== 'object') return null;
@@ -1089,6 +1114,7 @@ function App() {
   const getOpenShiftStorageKey = (userId) => `${OPEN_SHIFT_STORAGE_KEY}_${userId || 'anon'}`;
   const getPendingOpenShiftSyncStorageKey = (userId) => `${OPEN_SHIFT_PENDING_SYNC_STORAGE_KEY}_${userId || 'anon'}`;
   const getProductsCacheStorageKey = (userId) => `${PRODUCTS_CACHE_STORAGE_KEY}_${userId || 'anon'}`;
+  const getProductImagesStorageKey = (userId) => `${PRODUCT_IMAGES_STORAGE_KEY}_${userId || 'anon'}`;
   const getClientsCacheStorageKey = (userId) => `${CLIENTS_CACHE_STORAGE_KEY}_${userId || 'anon'}`;
   const getSoundSettingsStorageKey = (userId) => `${SOUND_SETTINGS_STORAGE_KEY}_${userId || 'anon'}`;
   const getCompanyPromotionsStorageKey = (cid) => `fact_company_promotions_${cid || 'local'}`;
@@ -1139,6 +1165,23 @@ function App() {
       clearPendingOpenShiftSync(userId);
     }
     localStorage.removeItem(OPEN_SHIFT_STORAGE_KEY);
+  };
+
+  const readProductImageCache = (userId) => {
+    if (!userId) return {};
+    try {
+      const raw = localStorage.getItem(getProductImagesStorageKey(userId));
+      const parsed = raw ? JSON.parse(raw) : {};
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+      return {};
+    }
+  };
+
+  const saveProductImageCache = (userId, rows) => {
+    if (!userId) return;
+    const nextCache = buildProductImageCacheMap(rows);
+    localStorage.setItem(getProductImagesStorageKey(userId), JSON.stringify(nextCache));
   };
 
   const selectedClientPendingBalance = selectedClient
@@ -1339,7 +1382,10 @@ function App() {
       const rawProducts = localStorage.getItem(getProductsCacheStorageKey(userId));
       if (rawProducts) {
         const parsedProducts = JSON.parse(rawProducts);
-        if (Array.isArray(parsedProducts)) setProducts(parsedProducts);
+        if (Array.isArray(parsedProducts)) {
+          const imageCache = readProductImageCache(userId);
+          setProducts(mergeProductsWithImageCache(parsedProducts, imageCache));
+        }
       }
     } catch (e) {
       console.error('Error restaurando cache local de productos:', e);
@@ -2009,7 +2055,8 @@ function App() {
         dataService.getUserCashBalances()
       ]);
 
-      const safeProducts = dedupeProducts(dbProducts || []);
+      const imageCache = readProductImageCache(currentUser?.id);
+      const safeProducts = dedupeProducts(mergeProductsWithImageCache(dbProducts || [], imageCache));
       const safeClients = dedupeClients(
         protectRecentClientWrites(dbClients || [], recentClientWritesRef.current)
       );
@@ -2035,6 +2082,9 @@ function App() {
         vStock[p.id] = p.stock || 0;
       });
       setStock({ bodega: bStock, ventas: vStock });
+      if (currentUser?.id) {
+        saveProductImageCache(currentUser.id, safeProducts);
+      }
 
       const userNameById = {};
       const inferredUsers = [];
@@ -2319,6 +2369,7 @@ function App() {
   useEffect(() => {
     if (!currentUser?.id) return;
     localStorage.setItem(getProductsCacheStorageKey(currentUser.id), JSON.stringify(dedupeProducts(products || [])));
+    saveProductImageCache(currentUser.id, products || []);
   }, [products, currentUser?.id]);
 
   useEffect(() => {
@@ -5937,10 +5988,13 @@ function App() {
               products={products}
               setProducts={async (newProducts) => {
                 pendingProductsSyncRef.current = true;
-                setProducts(newProducts);
+                const mergedProducts = currentUser?.id
+                  ? mergeProductsWithImageCache(newProducts, readProductImageCache(currentUser.id))
+                  : newProducts;
+                setProducts(mergedProducts);
 
                 try {
-                  const changedProducts = newProducts.filter((np) => {
+                  const changedProducts = mergedProducts.filter((np) => {
                     const op = products.find((p) => String(p.id) === String(np.id));
                     if (!op) return true;
                     return JSON.stringify(op) !== JSON.stringify(np);
@@ -6047,9 +6101,12 @@ function App() {
               setProducts={async (update) => {
                 const newProducts = typeof update === 'function' ? update(products) : update;
                 pendingProductsSyncRef.current = true;
-                setProducts(dedupeProducts(newProducts));
+                const mergedProducts = currentUser?.id
+                  ? mergeProductsWithImageCache(dedupeProducts(newProducts), readProductImageCache(currentUser.id))
+                  : dedupeProducts(newProducts);
+                setProducts(mergedProducts);
 
-                const changedProducts = newProducts.filter((np) => {
+                const changedProducts = mergedProducts.filter((np) => {
                   const op = products.find((p) => String(p.id) === String(np.id));
                   if (!op) return true;
                   return JSON.stringify(op) !== JSON.stringify(np);
