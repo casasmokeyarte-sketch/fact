@@ -411,6 +411,7 @@ export const dataService = {
 
   async saveProduct(product) {
     const userId = product?.user_id || await getAuthUserId();
+    const companyId = await getCurrentCompanyId(userId);
     const payload = {
       ...product,
       barcode: normalizeNumericBarcode(product.barcode) || null,
@@ -418,6 +419,10 @@ export const dataService = {
       reorder_level: Number(product?.reorder_level ?? 10),
       user_id: product.user_id || userId,
     };
+    
+    if (isUuid(companyId)) {
+      payload.company_id = companyId;
+    }
     
     // Add is_visible only if explicitly provided in product to avoid schema cache errors (PGRST204)
     if (Object.prototype.hasOwnProperty.call(product, 'is_visible')) {
@@ -1059,8 +1064,10 @@ export const dataService = {
         null,
     };
 
+    const companyId = await getCurrentCompanyId(userId);
     const invoicePayload = {
       user_id: invoice.user_id || userId,
+      company_id: isUuid(invoice.company_id) ? invoice.company_id : (isUuid(companyId) ? companyId : null),
       client_id: isUuid(invoice.client_id) ? invoice.client_id : null,
       client_name: invoice.client_name ?? invoice.clientName ?? null,
       client_doc: invoice.client_doc ?? invoice.clientDoc ?? null,
@@ -1128,9 +1135,11 @@ export const dataService = {
     const userId = expense?.user_id || await getAuthUserId();
     const amount = Number(expense.amount ?? 0);
     const paidAmount = Math.max(0, Number(expense.paid_amount ?? expense.paidAmount ?? amount));
+    const companyId = await getCurrentCompanyId(userId);
     const payload = {
       id: expense.id,
       user_id: expense.user_id || userId,
+      company_id: isUuid(expense.company_id) ? expense.company_id : (isUuid(companyId) ? companyId : null),
       user_name: expense.user_name ?? expense.user ?? null,
       date: expense.date || new Date().toISOString(),
       category: expense.category ?? expense.type ?? 'Otros',
@@ -1217,9 +1226,11 @@ export const dataService = {
 
   async saveExternalCashReceipt(receipt) {
     const userId = receipt?.user_id || await getAuthUserId();
+    const companyId = await getCurrentCompanyId(userId);
     const payload = {
       id: receipt?.id,
       user_id: receipt?.user_id || userId,
+      company_id: isUuid(receipt?.company_id) ? receipt?.company_id : (isUuid(companyId) ? companyId : null),
       user_name: receipt?.user_name ?? receipt?.user ?? null,
       date: receipt?.date || new Date().toISOString(),
       receipt_code: receipt?.receipt_code ?? receipt?.receiptCode ?? null,
@@ -1260,9 +1271,11 @@ export const dataService = {
 
   async savePurchase(purchase) {
     const userId = purchase?.user_id || await getAuthUserId();
+    const companyId = await getCurrentCompanyId(userId);
     const payload = {
       id: purchase.id,
       user_id: purchase.user_id || userId,
+      company_id: isUuid(purchase.company_id) ? purchase.company_id : (isUuid(companyId) ? companyId : null),
       user_name: purchase.user_name ?? purchase.user ?? null,
       invoice_number: purchase.invoice_number ?? purchase.invoiceNumber ?? null,
       supplier: purchase.supplier ?? null,
@@ -1301,8 +1314,11 @@ export const dataService = {
   },
 
   async saveAuditLog(log) {
+    const userId = log?.user_id || await getAuthUserId();
+    const companyId = await getCurrentCompanyId(userId);
     const payload = {
-      user_id: log.user_id,
+      user_id: log.user_id || userId,
+      company_id: isUuid(log.company_id) ? log.company_id : (isUuid(companyId) ? companyId : null),
       timestamp: log.timestamp ?? new Date().toISOString(),
       module: log.module ?? null,
       action: log.action ?? null,
@@ -1391,15 +1407,15 @@ export const dataService = {
 
   async saveShift(shift) {
     const userId = shift?.user_id || await getAuthUserId();
+    const companyId = await getCurrentCompanyId(userId);
     const hasEndTime = Object.prototype.hasOwnProperty.call(shift || {}, 'end_time') || Object.prototype.hasOwnProperty.call(shift || {}, 'endTime');
     const resolvedEndTime = Object.prototype.hasOwnProperty.call(shift || {}, 'end_time')
       ? shift.end_time
-      : (Object.prototype.hasOwnProperty.call(shift || {}, 'endTime') ? shift.endTime : new Date().toISOString());
-    const rawCompanyId = shift.company_id ?? shift.companyId;
-    const companyId = isUuid(rawCompanyId) ? rawCompanyId : null;
+      : (Object.prototype.hasOwnProperty.call(shift || {}, 'endTime') ? shift.endTime : null);
     const payload = {
       id: shift.id ?? shift.db_id,
       user_id: shift.user_id || userId,
+      company_id: isUuid(shift.company_id) ? shift.company_id : (isUuid(companyId) ? companyId : null),
       user_name: shift.user_name ?? shift.user ?? null,
       start_time: shift.start_time ?? shift.startTime ?? null,
       end_time: hasEndTime ? resolvedEndTime : new Date().toISOString(),
@@ -1569,9 +1585,10 @@ export const dataService = {
 
   async saveInventoryTransferRequest(request) {
     const authUserId = await getAuthUserId();
+    const companyId = await getCurrentCompanyId(authUserId);
     const payload = {
       id: request?.id,
-      company_id: isUuid(request?.companyId) ? request.companyId : null,
+      company_id: isUuid(request?.companyId) ? request.companyId : (isUuid(companyId) ? companyId : null),
       product_id: isUuid(request?.productId) ? request.productId : null,
       product_name: request?.productName ?? 'Producto',
       quantity: Number(request?.quantity ?? 0),
@@ -1652,9 +1669,10 @@ export const dataService = {
 
   async saveCommercialNote(note) {
     const authUserId = await getAuthUserId();
+    const companyId = await getCurrentCompanyId(authUserId);
     const payload = {
       id: note?.id,
-      company_id: isUuid(note?.companyId) ? note.companyId : null,
+      company_id: isUuid(note?.companyId) ? note.companyId : (isUuid(companyId) ? companyId : null),
       user_id: isUuid(note?.createdBy?.id) ? note.createdBy.id : authUserId,
       user_name: note?.createdBy?.name ?? null,
       date: note?.date ?? new Date().toISOString(),

@@ -2356,13 +2356,21 @@ function App() {
 
   useEffect(() => {
     if (!currentUser?.id) return;
-    localStorage.setItem(getProductsCacheStorageKey(currentUser.id), JSON.stringify(dedupeProducts(products || [])));
-    saveProductImageCache(currentUser.id, products || []);
+    try {
+      localStorage.setItem(getProductsCacheStorageKey(currentUser.id), JSON.stringify(dedupeProducts(products || [])));
+      saveProductImageCache(currentUser.id, products || []);
+    } catch (e) {
+      console.warn('Error guardando cache de productos en localStorage:', e);
+    }
   }, [products, currentUser?.id]);
 
   useEffect(() => {
     if (!currentUser?.id) return;
-    localStorage.setItem(getClientsCacheStorageKey(currentUser.id), JSON.stringify(dedupeClients(registeredClients || [])));
+    try {
+      localStorage.setItem(getClientsCacheStorageKey(currentUser.id), JSON.stringify(dedupeClients(registeredClients || [])));
+    } catch (e) {
+      console.warn('Error guardando cache de clientes en localStorage:', e);
+    }
   }, [registeredClients, currentUser?.id]);
 
   useEffect(() => {
@@ -5974,13 +5982,14 @@ function App() {
               currentUser={currentUser}
               products={products}
               setProducts={async (newProducts) => {
+                const previousProducts = products;
                 pendingProductsSyncRef.current = true;
                 const mergedProducts = newProducts;
                 setProducts(mergedProducts);
-
+                
                 try {
                   const changedProducts = mergedProducts.filter((np) => {
-                    const op = products.find((p) => String(p.id) === String(np.id));
+                    const op = previousProducts.find((p) => String(p.id) === String(np.id));
                     if (!op) return true;
                     return JSON.stringify(op) !== JSON.stringify(np);
                   });
@@ -5994,11 +6003,15 @@ function App() {
                 } catch (e) {
                   console.error("Error guardando productos en Supabase:", e);
                   const message = e?.message || 'Error desconocido';
+                  
+                  // ROLLBACK
+                  setProducts(previousProducts);
+                  
                   if (String(e?.code || '') === 'SESSION_INVALID' || /sesion no valida|sesion no valida o expirada/i.test(message)) {
                     await forceRelogin(message);
                     return;
                   }
-                  alert(`No se pudieron guardar productos en la nube (conexion inestable).\n\nDetalle: ${message}`);
+                  alert(`No se pudieron guardar productos en la nube (conexion inestable).\n\nLos cambios locales han sido revertidos.\n\nDetalle: ${message}`);
                 } finally {
                   pendingProductsSyncRef.current = false;
                 }
@@ -6084,13 +6097,14 @@ function App() {
               userId={currentUser?.id}
               canManageCodes={normalizeRole(currentUser?.role) !== 'Cajero'}
               setProducts={async (update) => {
-                const newProducts = typeof update === 'function' ? update(products) : update;
+                const previousProducts = products;
+                const newProducts = typeof update === 'function' ? update(previousProducts) : update;
                 pendingProductsSyncRef.current = true;
                 const mergedProducts = dedupeProducts(newProducts);
                 setProducts(mergedProducts);
 
                 const changedProducts = mergedProducts.filter((np) => {
-                  const op = products.find((p) => String(p.id) === String(np.id));
+                  const op = previousProducts.find((p) => String(p.id) === String(np.id));
                   if (!op) return true;
                   return JSON.stringify(op) !== JSON.stringify(np);
                 });
@@ -6103,6 +6117,9 @@ function App() {
                   await refreshCloudData({ silent: true });
                 } catch (e) {
                   console.error('Error sync producto desde codigos:', e);
+                  // ROLLBACK
+                  setProducts(previousProducts);
+                  alert(`No se pudo sincronizar el cambio de codigos en la nube: ${e?.message || 'Error desconocido'}`);
                 } finally {
                   pendingProductsSyncRef.current = false;
                 }

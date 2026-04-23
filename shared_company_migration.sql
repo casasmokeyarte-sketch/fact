@@ -1,4 +1,4 @@
-﻿-- ============================================================
+-- ============================================================
 -- MIGRACION: MODO EMPRESA COMPARTIDA (multiusuario en misma BD)
 -- Ejecutar en Supabase SQL Editor
 -- Fecha: 2026-02-15
@@ -58,6 +58,7 @@ alter table public.expenses add column if not exists company_id uuid;
 alter table public.purchases add column if not exists company_id uuid;
 alter table public.audit_logs add column if not exists company_id uuid;
 alter table public.shift_history add column if not exists company_id uuid;
+alter table public.external_cash_receipts add column if not exists company_id uuid;
 
 -- Backfill por user_id -> profiles.company_id
 update public.products t
@@ -95,6 +96,11 @@ set company_id = p.company_id
 from public.profiles p
 where t.company_id is null and t.user_id = p.user_id;
 
+update public.external_cash_receipts t
+set company_id = p.company_id
+from public.profiles p
+where t.company_id is null and t.user_id = p.user_id;
+
 -- Completar nulos remanentes con una empresa global existente
 update public.products set company_id = (select company_id from public.profiles limit 1) where company_id is null;
 update public.clients set company_id = (select company_id from public.profiles limit 1) where company_id is null;
@@ -103,6 +109,7 @@ update public.expenses set company_id = (select company_id from public.profiles 
 update public.purchases set company_id = (select company_id from public.profiles limit 1) where company_id is null;
 update public.audit_logs set company_id = (select company_id from public.profiles limit 1) where company_id is null;
 update public.shift_history set company_id = (select company_id from public.profiles limit 1) where company_id is null;
+update public.external_cash_receipts set company_id = (select company_id from public.profiles limit 1) where company_id is null;
 
 -- Defaults y not null
 alter table public.products alter column company_id set default public.current_company_id();
@@ -112,6 +119,7 @@ alter table public.expenses alter column company_id set default public.current_c
 alter table public.purchases alter column company_id set default public.current_company_id();
 alter table public.audit_logs alter column company_id set default public.current_company_id();
 alter table public.shift_history alter column company_id set default public.current_company_id();
+alter table public.external_cash_receipts alter column company_id set default public.current_company_id();
 
 alter table public.products alter column company_id set not null;
 alter table public.clients alter column company_id set not null;
@@ -120,6 +128,7 @@ alter table public.expenses alter column company_id set not null;
 alter table public.purchases alter column company_id set not null;
 alter table public.audit_logs alter column company_id set not null;
 alter table public.shift_history alter column company_id set not null;
+alter table public.external_cash_receipts alter column company_id set not null;
 
 create index if not exists idx_products_company_id on public.products(company_id);
 create index if not exists idx_clients_company_id on public.clients(company_id);
@@ -128,6 +137,7 @@ create index if not exists idx_expenses_company_id on public.expenses(company_id
 create index if not exists idx_purchases_company_id on public.purchases(company_id);
 create index if not exists idx_audit_logs_company_id on public.audit_logs(company_id);
 create index if not exists idx_shift_history_company_id on public.shift_history(company_id);
+create index if not exists idx_external_cash_receipts_company_id on public.external_cash_receipts(company_id);
 
 -- 4) Trigger de signup: todos los nuevos usuarios caen en la misma empresa existente
 create or replace function public.handle_new_user()
@@ -177,7 +187,7 @@ declare
   t text;
   p record;
   tabs text[] := array[
-    'products','clients','invoices','invoice_items','expenses','purchases','shift_history','audit_logs','profiles'
+    'products','clients','invoices','invoice_items','expenses','purchases','shift_history','audit_logs','profiles','external_cash_receipts'
   ];
 begin
   foreach t in array tabs loop
@@ -275,6 +285,17 @@ create policy "Company can view audit_logs" on public.audit_logs
 create policy "Company can insert audit_logs" on public.audit_logs
   for insert with check (company_id = public.current_company_id());
 
+-- EXTERNAL CASH RECEIPTS
+create policy "Company can view external_cash_receipts" on public.external_cash_receipts
+  for select using (company_id = public.current_company_id());
+create policy "Company can insert external_cash_receipts" on public.external_cash_receipts
+  for insert with check (company_id = public.current_company_id());
+create policy "Company can update external_cash_receipts" on public.external_cash_receipts
+  for update using (company_id = public.current_company_id())
+  with check (company_id = public.current_company_id());
+create policy "Company can delete external_cash_receipts" on public.external_cash_receipts
+  for delete using (company_id = public.current_company_id());
+
 -- PROFILES (visibles en misma empresa)
 create policy "Company can view profiles" on public.profiles
   for select using (company_id = public.current_company_id());
@@ -308,6 +329,7 @@ alter table public.purchases     enable row level security;
 alter table public.shift_history enable row level security;
 alter table public.audit_logs    enable row level security;
 alter table public.profiles      enable row level security;
+alter table public.external_cash_receipts enable row level security;
 
 -- 7) Verificacion rapida
 -- select user_id, email, company_id from public.profiles;
