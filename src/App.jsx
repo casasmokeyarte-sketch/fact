@@ -518,16 +518,6 @@ const buildProductImageCacheMap = (rows) => {
   return result;
 };
 
-const mergeProductsWithImageCache = (rows, imageCache) => (
-  (rows || []).map((row) => {
-    const idKey = String(row?.id || '').trim();
-    const cachedImage = normalizeProductImageUrl(imageCache?.[idKey]);
-    const currentImage = normalizeProductImageUrl(row?.image_url);
-    if (!idKey || currentImage || !cachedImage) return row;
-    return { ...row, image_url: cachedImage };
-  })
-);
-
 const normalizeAppUser = (user) => {
   if (!user || typeof user !== 'object') return null;
 
@@ -1383,8 +1373,7 @@ function App() {
       if (rawProducts) {
         const parsedProducts = JSON.parse(rawProducts);
         if (Array.isArray(parsedProducts)) {
-          const imageCache = readProductImageCache(userId);
-          setProducts(mergeProductsWithImageCache(parsedProducts, imageCache));
+          setProducts(parsedProducts);
         }
       }
     } catch (e) {
@@ -2055,8 +2044,7 @@ function App() {
         dataService.getUserCashBalances()
       ]);
 
-      const imageCache = readProductImageCache(currentUser?.id);
-      const safeProducts = dedupeProducts(mergeProductsWithImageCache(dbProducts || [], imageCache));
+      const safeProducts = dedupeProducts(dbProducts || []);
       const safeClients = dedupeClients(
         protectRecentClientWrites(dbClients || [], recentClientWritesRef.current)
       );
@@ -5987,9 +5975,7 @@ function App() {
               products={products}
               setProducts={async (newProducts) => {
                 pendingProductsSyncRef.current = true;
-                const mergedProducts = currentUser?.id
-                  ? mergeProductsWithImageCache(newProducts, readProductImageCache(currentUser.id))
-                  : newProducts;
+                const mergedProducts = newProducts;
                 setProducts(mergedProducts);
 
                 try {
@@ -6100,9 +6086,7 @@ function App() {
               setProducts={async (update) => {
                 const newProducts = typeof update === 'function' ? update(products) : update;
                 pendingProductsSyncRef.current = true;
-                const mergedProducts = currentUser?.id
-                  ? mergeProductsWithImageCache(dedupeProducts(newProducts), readProductImageCache(currentUser.id))
-                  : dedupeProducts(newProducts);
+                const mergedProducts = dedupeProducts(newProducts);
                 setProducts(mergedProducts);
 
                 const changedProducts = mergedProducts.filter((np) => {
