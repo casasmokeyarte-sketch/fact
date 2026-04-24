@@ -5345,6 +5345,38 @@ function App() {
     );
   }
 
+  if (isLoggedIn && !companyId && profileLoaded) {
+    return (
+      <div style={{
+        height: '100vh', 
+        display: 'flex', 
+        alignItems: 'center', 
+        justifyContent: 'center', 
+        background: '#0f172a',
+        color: 'white',
+        textAlign: 'center',
+        padding: '2rem',
+        fontFamily: 'Inter, system-ui, sans-serif'
+      }}>
+        <div style={{ maxWidth: '400px', background: '#1e293b', padding: '2.5rem', borderRadius: '1.5rem', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)' }}>
+          <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>🏢</div>
+          <h2 style={{ fontSize: '1.5rem', fontWeight: '700', marginBottom: '1rem' }}>Sin Organización</h2>
+          <p style={{ color: '#94a3b8', lineHeight: '1.6', marginBottom: '2rem' }}>
+            Tu usuario no está enlazado a ninguna empresa en la base de datos. 
+            Contacta al administrador para que asigne un <strong>company_id</strong> a tu perfil.
+          </p>
+          <button 
+            className="btn btn-primary" 
+            style={{ width: '100%', padding: '1rem' }} 
+            onClick={() => supabase.auth.signOut()}
+          >
+            Cerrar Sesión
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   const headerNavItems = getAllowedMenuItemsForUser(currentUser);
   const canViewShiftSystemResults = ['Administrador', 'Supervisor'].includes(normalizeRole(currentUser?.role));
 
