@@ -291,16 +291,10 @@ export function useProfile(userId?: UID) {
           )
 
         channel.subscribe((status, err) => {
+          console.log('Realtime profile status:', { userId, status, err: err ?? null })
+
           if (status === 'SUBSCRIBED' && isMounted) {
             qc.invalidateQueries({ queryKey: profileKey(userId) })
-          }
-
-          if (status === 'CHANNEL_ERROR') {
-            console.error('Realtime profile channel error:', {
-              userId,
-              status,
-              error: err ?? null,
-            })
           }
         })
       } catch (err) {
