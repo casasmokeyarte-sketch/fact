@@ -273,6 +273,17 @@ const MAX_OPEN_SHIFT_HOURS = 24;
 const MAX_OPEN_SHIFT_MS = MAX_OPEN_SHIFT_HOURS * 60 * 60 * 1000;
 const SHIFT_RESTORE_ALERT_THROTTLE_MS = 15000;
 const SHIFT_CLOUD_SYNC_ALERT_THROTTLE_MS = 15000;
+const RECENT_WRITE_PROTECTION_MS = 5 * 60 * 1000;
+const REALTIME_REFRESH_DEBOUNCE_MS = 1400;
+const REALTIME_LOCAL_WRITE_HOLD_MS = 8000;
+const REALTIME_ACTIVE_INPUT_HOLD_MS = 2500;
+
+const isEditableElementFocused = () => {
+  if (typeof document === 'undefined') return false;
+  const el = document.activeElement;
+  if (!el || !(el instanceof HTMLElement)) return false;
+  return ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName) || el.isContentEditable;
+};
 
 const isUuid = (value) => typeof value === 'string' && UUID_REGEX.test(value);
 
@@ -437,7 +448,7 @@ const protectRecentClientWrites = (incomingRows, protectedRowsByKey) => {
   Object.entries(protectedRowsByKey || {}).forEach(([key, entry]) => {
     if (!entry?.row) return;
     const writtenAt = Number(entry.writtenAt || 0);
-    if (!writtenAt || now - writtenAt > 60000) return;
+    if (!writtenAt || now - writtenAt > RECENT_WRITE_PROTECTION_MS) return;
 
     const protectedRow = normalizeClientDraft(entry.row);
     const incomingRow = result.get(key);
@@ -472,7 +483,7 @@ const protectRecentProductWrites = (incomingRows, protectedRowsById) => {
   Object.entries(protectedRowsById || {}).forEach(([id, entry]) => {
     if (!entry?.row) return;
     const writtenAt = Number(entry.writtenAt || 0);
-    if (!writtenAt || now - writtenAt > 60000) return;
+    if (!writtenAt || now - writtenAt > RECENT_WRITE_PROTECTION_MS) return;
 
     const protectedRow = entry.row;
     const incomingRow = result.get(String(id));
@@ -483,7 +494,7 @@ const protectRecentProductWrites = (incomingRows, protectedRowsById) => {
 
     const protectedUpdatedAt = getProductUpdatedAtMs(protectedRow);
     const incomingUpdatedAt = getProductUpdatedAtMs(incomingRow);
-    if (protectedUpdatedAt > incomingUpdatedAt) {
+    if (protectedUpdatedAt >= incomingUpdatedAt) {
       result.set(String(id), protectedRow);
     }
   });
@@ -957,6 +968,9 @@ function App() {
   const realtimeRefreshTimeoutRef = useRef(null);
   const realtimeRefreshInFlightRef = useRef(false);
   const queuedRealtimeRefreshRef = useRef(false);
+  const lastLocalCloudWriteAtRef = useRef(0);
+  const cloudDataHydratedRef = useRef(false);
+  const cloudDataHydratedUserIdRef = useRef('');
   const lastAuthEventRef = useRef({ event: null, userId: null, at: 0 });
   const pendingProductsSyncRef = useRef(false);
   const pendingOpenShiftSyncRef = useRef(false);
@@ -1947,6 +1961,8 @@ function App() {
         setIsAdminAuth(false);
         setProfileLoaded(false);
         setShiftRestored(false);
+        cloudDataHydratedRef.current = false;
+        cloudDataHydratedUserIdRef.current = '';
       }
     });
 
@@ -1974,6 +1990,8 @@ function App() {
       setCurrentUser(null);
       setActiveTab('home');
       setShiftRestored(false);
+      cloudDataHydratedRef.current = false;
+      cloudDataHydratedUserIdRef.current = '';
     }
   }
 
@@ -1988,6 +2006,8 @@ function App() {
     setProfileLoaded(false);
     setShiftRestored(false);
     setShift(null);
+    cloudDataHydratedRef.current = false;
+    cloudDataHydratedUserIdRef.current = '';
 
     try {
       alert(message);
@@ -2248,7 +2268,17 @@ function App() {
   // Initial Data Sync (only when authenticated user exists)
   useEffect(() => {
     if (!isLoggedIn || !currentUser?.id) return;
-    refreshCloudData({ showLoader: true });
+    const userId = String(currentUser.id);
+    if (cloudDataHydratedUserIdRef.current !== userId) {
+      cloudDataHydratedRef.current = false;
+      cloudDataHydratedUserIdRef.current = userId;
+    }
+
+    const showInitialLoader = !cloudDataHydratedRef.current;
+    refreshCloudData({ showLoader: showInitialLoader })
+      .finally(() => {
+        cloudDataHydratedRef.current = true;
+      });
   }, [isLoggedIn, currentUser?.id, refreshCloudData]);
 
   // Realtime sync for shared modules
@@ -2260,6 +2290,22 @@ function App() {
         clearTimeout(realtimeRefreshTimeoutRef.current);
       }
       realtimeRefreshTimeoutRef.current = setTimeout(() => {
+        realtimeRefreshTimeoutRef.current = null;
+
+        const elapsedSinceLocalWrite = Date.now() - Number(lastLocalCloudWriteAtRef.current || 0);
+        if (elapsedSinceLocalWrite < REALTIME_LOCAL_WRITE_HOLD_MS) {
+          realtimeRefreshTimeoutRef.current = setTimeout(
+            scheduleRealtimeRefresh,
+            REALTIME_LOCAL_WRITE_HOLD_MS - elapsedSinceLocalWrite
+          );
+          return;
+        }
+
+        if (isEditableElementFocused()) {
+          realtimeRefreshTimeoutRef.current = setTimeout(scheduleRealtimeRefresh, REALTIME_ACTIVE_INPUT_HOLD_MS);
+          return;
+        }
+
         if (realtimeRefreshInFlightRef.current) {
           queuedRealtimeRefreshRef.current = true;
           return;
@@ -2275,7 +2321,7 @@ function App() {
               scheduleRealtimeRefresh();
             }
           });
-      }, 1400);
+      }, REALTIME_REFRESH_DEBOUNCE_MS);
     };
 
     const channel = supabase
@@ -2600,6 +2646,7 @@ function App() {
     if (!prod) return;
     try {
       const field = type === 'bodega' ? 'warehouse_stock' : 'stock';
+      lastLocalCloudWriteAtRef.current = Date.now();
       await dataService.updateProductStockById(prod.id, { [field]: Number(newValue) || 0 }, currentUser?.id);
     } catch (e) {
       console.error(`Sync ${type} error:`, e);
@@ -2941,6 +2988,7 @@ function App() {
     setAuditLogs(prev => [fullLog, ...prev]);
     if (!currentUser?.id) return;
     try {
+      lastLocalCloudWriteAtRef.current = Date.now();
       await dataService.saveAuditLog(fullLog);
     } catch (err) {
       console.error("Error guardando bitacora en la nube:", err);
@@ -5935,6 +5983,7 @@ function App() {
                   if (leftId && rightId) return leftId === rightId;
                   return String(left?.document || '').trim() === String(right?.document || '').trim();
                 };
+                lastLocalCloudWriteAtRef.current = Date.now();
                 pendingClientsSyncRef.current = true;
                 setRegisteredClients(normalizedNextClients);
                 const removedClients = previousClients.filter(
@@ -6053,6 +6102,7 @@ function App() {
               products={products}
               setProducts={async (newProducts) => {
                 const previousProducts = products;
+                lastLocalCloudWriteAtRef.current = Date.now();
                 pendingProductsSyncRef.current = true;
                 const mergedProducts = newProducts;
                 setProducts(mergedProducts);
@@ -6076,7 +6126,6 @@ function App() {
                   }
 
                   pendingProductsSyncRef.current = false;
-                  await refreshCloudData({ silent: true });
                 } catch (e) {
                   console.error("Error guardando productos en Supabase:", e);
                   const message = e?.message || 'Error desconocido';
@@ -6097,6 +6146,7 @@ function App() {
                 const removed = products.find((p) => String(p.id) === String(productId));
                 if (!removed) return;
 
+                lastLocalCloudWriteAtRef.current = Date.now();
                 pendingProductsSyncRef.current = true;
                 try {
                   await dataService.deleteProduct(removed);
@@ -6176,6 +6226,7 @@ function App() {
               setProducts={async (update) => {
                 const previousProducts = products;
                 const newProducts = typeof update === 'function' ? update(previousProducts) : update;
+                lastLocalCloudWriteAtRef.current = Date.now();
                 pendingProductsSyncRef.current = true;
                 const mergedProducts = dedupeProducts(newProducts);
                 setProducts(mergedProducts);
@@ -6198,7 +6249,6 @@ function App() {
                     }
                   }
                   pendingProductsSyncRef.current = false;
-                  await refreshCloudData({ silent: true });
                 } catch (e) {
                   console.error('Error sync producto desde codigos:', e);
                   // ROLLBACK
