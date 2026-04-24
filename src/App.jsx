@@ -1912,13 +1912,7 @@ function App() {
             }
           );
 
-        channel.subscribe((status, err) => {
-          console.log('Realtime company_settings status:', {
-            userId: currentUser?.id,
-            status,
-            err: err ?? null,
-          });
-        });
+        channel.subscribe();
       } catch (err) {
         console.error('Realtime company_settings error:', err);
       }
@@ -2302,13 +2296,7 @@ function App() {
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'user_cash_balances' }, scheduleRealtimeRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'audit_logs' }, scheduleRealtimeRefresh)
-      .subscribe((status, err) => {
-        console.log('Realtime fact-realtime status:', {
-          userId: currentUser?.id,
-          status,
-          err: err ?? null,
-        });
-      });
+      .subscribe();
 
     return () => {
       if (realtimeRefreshTimeoutRef.current) {

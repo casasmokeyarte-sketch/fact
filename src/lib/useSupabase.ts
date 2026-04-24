@@ -252,9 +252,6 @@ export function useProfile(userId?: UID) {
 
         const accessToken = session?.access_token ?? ''
         if (!accessToken) {
-          console.warn('Skipping profile realtime subscription: missing Supabase access token', {
-            userId,
-          })
           return
         }
 
@@ -264,11 +261,6 @@ export function useProfile(userId?: UID) {
         const UNSUPPORTED_REALTIME_ALGS = ['ES256', 'ES384', 'ES512']
         if (tokenAlg && !UNSUPPORTED_REALTIME_ALGS.includes(tokenAlg)) {
           await supabase.realtime.setAuth(accessToken)
-        } else {
-          console.warn('Skipping realtime.setAuth: empty or unsupported JWT algorithm', {
-            userId,
-            tokenAlg: tokenAlg || '(vacío)',
-          })
         }
 
         if (!isMounted) return
@@ -290,9 +282,7 @@ export function useProfile(userId?: UID) {
             }
           )
 
-        channel.subscribe((status, err) => {
-          console.log('Realtime profile status:', { userId, status, err: err ?? null })
-
+        channel.subscribe((status) => {
           if (status === 'SUBSCRIBED' && isMounted) {
             qc.invalidateQueries({ queryKey: profileKey(userId) })
           }
