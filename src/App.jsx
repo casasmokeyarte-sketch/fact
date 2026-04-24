@@ -456,6 +456,41 @@ const protectRecentClientWrites = (incomingRows, protectedRowsByKey) => {
   return Array.from(result.values());
 };
 
+const getProductUpdatedAtMs = (p) => {
+  if (!p?.updatedAt && !p?.updated_at) return 0;
+  return new Date(p.updatedAt || p.updated_at).getTime();
+};
+
+const protectRecentProductWrites = (incomingRows, protectedRowsById) => {
+  const now = Date.now();
+  const result = new Map();
+
+  (incomingRows || []).forEach((row) => {
+    if (row?.id) result.set(String(row.id), row);
+  });
+
+  Object.entries(protectedRowsById || {}).forEach(([id, entry]) => {
+    if (!entry?.row) return;
+    const writtenAt = Number(entry.writtenAt || 0);
+    if (!writtenAt || now - writtenAt > 60000) return;
+
+    const protectedRow = entry.row;
+    const incomingRow = result.get(String(id));
+    if (!incomingRow) {
+      result.set(String(id), protectedRow);
+      return;
+    }
+
+    const protectedUpdatedAt = getProductUpdatedAtMs(protectedRow);
+    const incomingUpdatedAt = getProductUpdatedAtMs(incomingRow);
+    if (protectedUpdatedAt > incomingUpdatedAt) {
+      result.set(String(id), protectedRow);
+    }
+  });
+
+  return Array.from(result.values());
+};
+
 const dedupeProducts = (rows) => {
   const byId = new Map();
   const byBarcode = new Map();
@@ -927,6 +962,7 @@ function App() {
   const pendingOpenShiftSyncRef = useRef(false);
   const pendingClientsSyncRef = useRef(false);
   const recentClientWritesRef = useRef({});
+  const recentProductWritesRef = useRef({});
   const userCashBalancesHydratedRef = useRef(false);
   const lastSyncedUserCashBalancesRef = useRef('');
   const usersRef = useRef([]);
@@ -2044,7 +2080,9 @@ function App() {
         dataService.getUserCashBalances()
       ]);
 
-      const safeProducts = dedupeProducts(dbProducts || []);
+      const safeProducts = dedupeProducts(
+        protectRecentProductWrites(dbProducts || [], recentProductWritesRef.current)
+      );
       const safeClients = dedupeClients(
         protectRecentClientWrites(dbClients || [], recentClientWritesRef.current)
       );
@@ -4485,11 +4523,11 @@ function App() {
   };
 
   const subtotal = items.reduce((sum, item) => sum + item.total, 0);
-  const DISCOUNT_MIN_UNIT_PRICE = 50000;
+  const MIN_INVOICE_SUBTOTAL_FOR_DISCOUNT = 50000;
   const isDiscountEligibleItem = (item) => {
+    // Items marked as "full_price_only" are excluded from automatic discounts
     const fullPriceOnly = item?.full_price_only === true || item?.fullPriceOnly === true;
-    const unitPrice = Number(item?.price || 0);
-    return !fullPriceOnly && unitPrice > DISCOUNT_MIN_UNIT_PRICE;
+    return !fullPriceOnly;
   };
   const discountableSubtotal = items.reduce(
     (sum, item) => sum + (isDiscountEligibleItem(item) ? Number(item?.total || 0) : 0),
@@ -5995,7 +6033,14 @@ function App() {
                   });
 
                   for (const changed of changedProducts) {
-                    await dataService.saveProduct({ ...changed, user_id: currentUser?.id });
+                    const saved = await dataService.saveProduct({ ...changed, user_id: currentUser?.id });
+                    const savedRow = Array.isArray(saved) ? saved[0] : saved;
+                    if (savedRow?.id) {
+                      recentProductWritesRef.current[String(savedRow.id)] = {
+                        row: { ...changed, ...savedRow, updatedAt: new Date().toISOString() },
+                        writtenAt: Date.now(),
+                      };
+                    }
                   }
 
                   pendingProductsSyncRef.current = false;
@@ -6111,7 +6156,14 @@ function App() {
 
                 try {
                   for (const changed of changedProducts) {
-                    await dataService.saveProduct({ ...changed, user_id: currentUser?.id });
+                    const saved = await dataService.saveProduct({ ...changed, user_id: currentUser?.id });
+                    const savedRow = Array.isArray(saved) ? saved[0] : saved;
+                    if (savedRow?.id) {
+                      recentProductWritesRef.current[String(savedRow.id)] = {
+                        row: { ...changed, ...savedRow, updatedAt: new Date().toISOString() },
+                        writtenAt: Date.now(),
+                      };
+                    }
                   }
                   pendingProductsSyncRef.current = false;
                   await refreshCloudData({ silent: true });

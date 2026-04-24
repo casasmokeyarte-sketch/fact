@@ -1,6 +1,6 @@
 import { REFERRAL_DISCOUNT_PERCENT, REFERRED_CLIENT_DISCOUNT_PERCENT } from '../constants';
 
-const DISCOUNT_MIN_UNIT_PRICE = 50000;
+const MIN_INVOICE_SUBTOTAL_FOR_DISCOUNT = 50000;
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
@@ -11,9 +11,9 @@ export const getItemProductId = (item) => (
 const isFullPriceOnly = (item) => item?.full_price_only === true || item?.fullPriceOnly === true;
 
 export const isClientDiscountEligibleItem = (item) => {
+  // Items marked as "full_price_only" never receive automatic discounts
   if (isFullPriceOnly(item)) return false;
-  const unitPrice = Number(item?.price || 0);
-  return unitPrice > DISCOUNT_MIN_UNIT_PRICE;
+  return true;
 };
 
 export function normalizePromotion(raw) {
@@ -128,7 +128,10 @@ export function computeInvoiceTotals({
   const safeReferralCreditsAvailable = Math.max(0, Number(referralCreditsAvailable || 0) || 0);
   const referredCurrentPurchasePercent = referredClientDiscountEligible ? REFERRED_CLIENT_DISCOUNT_PERCENT : 0;
   const referralDiscountPercent = safeReferralCreditsAvailable > 0 ? REFERRAL_DISCOUNT_PERCENT : 0;
-  const automaticPercent = Math.max(clientDiscountPercent, referralDiscountPercent, referredCurrentPurchasePercent);
+  const isInvoiceEligibleForDiscount = subtotal >= MIN_INVOICE_SUBTOTAL_FOR_DISCOUNT;
+  const automaticPercent = isInvoiceEligibleForDiscount
+    ? Math.max(clientDiscountPercent, referralDiscountPercent, referredCurrentPurchasePercent)
+    : 0;
   const automaticDiscountSource = automaticPercent <= 0
     ? ''
     : (
@@ -136,7 +139,7 @@ export function computeInvoiceTotals({
         ? 'client'
         : (referralDiscountPercent >= referredCurrentPurchasePercent ? 'referral_credit' : 'referred_purchase')
     );
-  const allowPromotion = automaticPercent <= 0;
+  const allowPromotion = isInvoiceEligibleForDiscount && automaticPercent <= 0;
 
   const { promotion, eligibleSubtotal: promoEligibleSubtotal, discountAmount: promoDiscountAmount } =
     allowPromotion
@@ -166,7 +169,9 @@ export function computeInvoiceTotals({
   const maxAutomaticAllowed = Math.max(0, discountableSubtotal - promoDiscountOnDiscountableItems);
   const automaticDiscountAmount = Math.max(0, Math.min(rawAutomatic, maxAutomaticAllowed));
 
-  const maxExtraDiscount = Math.max(0, discountableSubtotal - promoDiscountOnDiscountableItems - automaticDiscountAmount);
+  const maxExtraDiscount = isInvoiceEligibleForDiscount
+    ? Math.max(0, discountableSubtotal - promoDiscountOnDiscountableItems - automaticDiscountAmount)
+    : 0;
   const requestedExtraDiscount = Math.max(0, Number(extraDiscount || 0) || 0);
   const effectiveExtraDiscount = Math.max(0, Math.min(requestedExtraDiscount, maxExtraDiscount));
 
