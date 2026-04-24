@@ -98,20 +98,41 @@ function stripUnsupportedProductFields(payload, error) {
   let nextPayload = { ...payload };
   let changed = false;
 
-  if (Object.prototype.hasOwnProperty.call(nextPayload, 'is_visible') && isMissingIsVisibleColumnError(error)) {
+  const errorBlob = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`.toLowerCase();
+  const errorCode = String(error?.code || '');
+  const isMissingColumn = errorCode === '42703' || errorCode === 'PGRST204' || errorBlob.includes('does not exist') || errorBlob.includes('not found');
+
+  if (!isMissingColumn) return null;
+
+  // If any missing column error is detected, we strip all known "optional/newer" columns
+  // that might be missing from the schema to ensure the update succeeds.
+  
+  if (Object.prototype.hasOwnProperty.call(nextPayload, 'is_visible')) {
     const { is_visible, ...rest } = nextPayload;
     nextPayload = rest;
     changed = true;
   }
 
-  if (Object.prototype.hasOwnProperty.call(nextPayload, 'full_price_only') && isMissingFullPriceOnlyColumnError(error)) {
+  if (Object.prototype.hasOwnProperty.call(nextPayload, 'full_price_only')) {
     const { full_price_only, ...rest } = nextPayload;
     nextPayload = rest;
     changed = true;
   }
 
-  if (Object.prototype.hasOwnProperty.call(nextPayload, 'image_url') && isMissingImageUrlColumnError(error)) {
+  if (Object.prototype.hasOwnProperty.call(nextPayload, 'image_url')) {
     const { image_url, ...rest } = nextPayload;
+    nextPayload = rest;
+    changed = true;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(nextPayload, 'stock')) {
+    const { stock, ...rest } = nextPayload;
+    nextPayload = rest;
+    changed = true;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(nextPayload, 'warehouse_stock')) {
+    const { warehouse_stock, ...rest } = nextPayload;
     nextPayload = rest;
     changed = true;
   }
@@ -424,9 +445,12 @@ export const dataService = {
       payload.company_id = companyId;
     }
     
-    // Add is_visible only if explicitly provided in product to avoid schema cache errors (PGRST204)
+    // Add optional columns only if explicitly provided to minimize schema cache errors (PGRST204)
     if (Object.prototype.hasOwnProperty.call(product, 'is_visible')) {
       payload.is_visible = product.is_visible;
+    }
+    if (Object.prototype.hasOwnProperty.call(product, 'full_price_only')) {
+      payload.full_price_only = product.full_price_only;
     }
     if (Object.prototype.hasOwnProperty.call(product, 'image_url')) {
       payload.image_url = String(product?.image_url || '').trim() || null;
@@ -593,11 +617,21 @@ export const dataService = {
     // Stock updates must not reassign product owner.
     const payload = { ...changes };
 
-    const { data, error } = await supabase
-      .from('products')
-      .update(payload)
-      .eq('id', productId)
-      .select();
+    const { id, user_id, created_at, ...updatePayload } = payload;
+    let { data, error } = await withRetry(() =>
+      supabase.from('products').update(updatePayload).eq('id', productId).select()
+    );
+
+    if (error) {
+      const fallbackPayload = stripUnsupportedProductFields(updatePayload, error);
+      if (fallbackPayload) {
+        const retry = await withRetry(() =>
+          supabase.from('products').update(fallbackPayload).eq('id', productId).select()
+        );
+        data = retry.data;
+        error = retry.error;
+      }
+    }
 
     if (error) throw error;
     return data;

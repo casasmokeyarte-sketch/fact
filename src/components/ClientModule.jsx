@@ -10,6 +10,7 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
     const [newClient, setNewClient] = useState(INITIAL_REGISTERED_CLIENT);
     const [isEditing, setIsEditing] = useState(false);
     const [editingDocument, setEditingDocument] = useState('');
+    const [isSaving, setIsSaving] = useState(false);
     const [selectedClientReport, setSelectedClientReport] = useState(null);
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState('');
@@ -110,8 +111,9 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
         });
     };
 
-    const handleSave = (e) => {
+    const handleSave = async (e) => {
         e.preventDefault();
+        if (isSaving) return;
         if (!newClient.name || !newClient.document) return alert("Nombre y Documento son obligatorios");
 
         const { credit_level, credit_limit, approved_term, ...cleanClient } = (newClient || {});
@@ -130,28 +132,33 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
             return alert("Para 'Linea de Credito (Sin descuento)' debe definir un cupo mayor a 0.");
         }
 
-        if (isEditing) {
-            const matchDoc = editingDocument || normalizedClient.document;
-            setClients(clients.map((c) => (
-                String(c.document || '').trim() === String(matchDoc || '').trim()
-                    ? {
-                        ...c,
-                        ...normalizedClient,
-                        id: normalizedClient.id || c.id,
-                        updatedAt: new Date().toISOString()
-                    }
-                    : c
-            )));
-            setIsEditing(false);
-            setEditingDocument('');
-            onLog?.({ module: 'Clientes', action: 'Editar Cliente', details: `Se editA a: ${newClient.name}` });
-        } else {
-            if (clients.find(c => String(c.document || '').trim() === normalizedClient.document)) return alert("Documento ya existe");
-            const clientToAdd = { ...normalizedClient, id: createClientId(), blocked: false, updatedAt: new Date().toISOString() };
-            setClients([...clients, clientToAdd]);
-            onLog?.({ module: 'Clientes', action: 'Crear Cliente', details: `Se creA a: ${newClient.name}` });
+        setIsSaving(true);
+        try {
+            if (isEditing) {
+                const matchDoc = editingDocument || normalizedClient.document;
+                await setClients(clients.map((c) => (
+                    String(c.document || '').trim() === String(matchDoc || '').trim()
+                        ? {
+                            ...c,
+                            ...normalizedClient,
+                            id: normalizedClient.id || c.id,
+                            updatedAt: new Date().toISOString()
+                        }
+                        : c
+                )));
+                setIsEditing(false);
+                setEditingDocument('');
+                onLog?.({ module: 'Clientes', action: 'Editar Cliente', details: `Se editA a: ${newClient.name}` });
+            } else {
+                if (clients.find(c => String(c.document || '').trim() === normalizedClient.document)) return alert("Documento ya existe");
+                const clientToAdd = { ...normalizedClient, id: createClientId(), blocked: false, updatedAt: new Date().toISOString() };
+                await setClients([...clients, clientToAdd]);
+                onLog?.({ module: 'Clientes', action: 'Crear Cliente', details: `Se creA a: ${newClient.name}` });
+            }
+            setNewClient(INITIAL_REGISTERED_CLIENT);
+        } finally {
+            setIsSaving(false);
         }
-        setNewClient(INITIAL_REGISTERED_CLIENT);
     };
 
     const toggleClientBlock = (client) => {
@@ -407,8 +414,10 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
                         </div>
                         </>
                         )}
-                        <button type="submit" className="btn btn-primary" style={{ width: '100%' }}>{isEditing ? 'Actualizar' : 'Guardar Cliente'}</button>
-                        {isEditing && <button className="btn" onClick={() => { setIsEditing(false); setEditingDocument(''); setNewClient(INITIAL_REGISTERED_CLIENT) }} style={{ width: '100%', marginTop: '0.5rem' }}>Cancelar</button>}
+                        <button type="submit" className="btn btn-primary" disabled={isSaving} style={{ width: '100%' }}>
+                            {isSaving ? 'Guardando...' : isEditing ? 'Actualizar' : 'Guardar Cliente'}
+                        </button>
+                        {isEditing && <button type="button" className="btn" disabled={isSaving} onClick={() => { setIsEditing(false); setEditingDocument(''); setNewClient(INITIAL_REGISTERED_CLIENT) }} style={{ width: '100%', marginTop: '0.5rem' }}>Cancelar</button>}
                     </form>
                 </div>
 
