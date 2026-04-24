@@ -433,8 +433,8 @@ export const dataService = {
     }
 
     if (isUuid(payload.id)) {
-      // Do not overwrite owner on existing products. Update first; insert only if missing.
-      const { user_id, ...updatePayload } = payload;
+      // Do not overwrite primary key, owner or creation timestamp on existing products.
+      const { id, user_id, created_at, ...updatePayload } = payload;
       let { data: updatedData, error: updateError } = await withRetry(() =>
         supabase.from('products').update(updatePayload).eq('id', payload.id).select()
       );
@@ -763,7 +763,8 @@ export const dataService = {
     }
 
     if (isUuid(payload.id)) {
-      const { user_id, ...updatePayload } = payload;
+      // Exclude primary key, owner and creation timestamp from update payload to avoid 400 errors.
+      const { id, user_id, created_at, ...updatePayload } = payload;
       let { data, error } = await withRetry(() =>
         supabase.from('clients').update(updatePayload).eq('id', payload.id).select()
       );
@@ -874,8 +875,9 @@ export const dataService = {
       if (!isClientDocumentUniqueError(insertError) || !payload.document) throw insertError;
 
       const fallbackUpdatePayload = removeInvalidUuidId(updatePayload);
+      const { id: _i, user_id: _u, created_at: _c, ...updateBody } = fallbackUpdatePayload;
       let { data: byDocData, error: byDocError } = await withRetry(() =>
-        supabase.from('clients').update(fallbackUpdatePayload).eq('document', payload.document).select()
+        supabase.from('clients').update(updateBody).eq('document', payload.document).select()
       );
       if (byDocError && isUndefinedColumnError(byDocError)) {
         const {
@@ -887,8 +889,10 @@ export const dataService = {
           successful_referral_count,
           ...legacyPayload
         } = fallbackUpdatePayload;
+        // Strip PK/metadata from legacy body too
+        const { id: _i, user_id: _u, created_at: _c, ...legacyUpdateBody } = legacyPayload;
         const retry = await withRetry(() =>
-          supabase.from('clients').update(legacyPayload).eq('document', payload.document).select()
+          supabase.from('clients').update(legacyUpdateBody).eq('document', payload.document).select()
         );
         byDocData = retry.data;
         byDocError = retry.error;
@@ -925,8 +929,9 @@ export const dataService = {
 
     if (!isClientDocumentUniqueError(error) || !insertPayload.document) throw error;
 
+    const { id: _i, user_id: _u, created_at: _c, ...insertUpdateBody } = insertPayload;
     let { data: byDocData, error: byDocError } = await withRetry(() =>
-      supabase.from('clients').update(insertPayload).eq('document', insertPayload.document).select()
+      supabase.from('clients').update(insertUpdateBody).eq('document', insertPayload.document).select()
     );
     if (byDocError && isUndefinedColumnError(byDocError)) {
       const {
@@ -938,8 +943,10 @@ export const dataService = {
         successful_referral_count,
         ...legacyPayload
       } = insertPayload;
+      // Strip PK/metadata from legacy body too
+      const { id: _i, user_id: _u, created_at: _c, ...legacyInsertUpdateBody } = legacyPayload;
       const retry = await withRetry(() =>
-        supabase.from('clients').update(legacyPayload).eq('document', insertPayload.document).select()
+        supabase.from('clients').update(legacyInsertUpdateBody).eq('document', insertPayload.document).select()
       );
       byDocData = retry.data;
       byDocError = retry.error;
