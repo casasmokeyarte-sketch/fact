@@ -7,6 +7,8 @@ import { useTableSort } from '../lib/useTableSort';
 import { SortButton } from './SortButton';
 import { getAdminUsersUrl, isElectronFileRuntime } from '../lib/runtime.js';
 
+import { mergeUsersByIdentity, normalizeAppUser } from '../lib/userUtils';
+
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export function SettingsModule({
@@ -162,17 +164,16 @@ export function SettingsModule({
                 throw new Error(data?.error || 'No se pudo cargar usuarios.');
             }
 
-            const mapped = (data?.users || []).map((u) => ({
-                id: u.user_id || u.id,
-                name: u.name || u.display_name || u.username || u.email || 'Usuario',
-                username: u.username || (String(u.email || '').split('@')[0] || ''),
-                email: u.email || null,
-                role: u.role || 'Cajero',
-                permissions: u.permissions || {},
-                authorization_key: String(u.authorization_key || u?.permissions?.authorizationKey || '').trim(),
-            }));
+            const mapped = (data?.users || []).map(normalizeAppUser).filter(Boolean);
 
-            setUsers(mapped);
+            setUsers((prev) => {
+                const localAdmin = (prev || []).find(u => String(u.id) === '1' || u.username === 'Admin');
+                return mergeUsersByIdentity(
+                    localAdmin ? [localAdmin] : [],
+                    mapped,
+                    [currentUser]
+                );
+            });
         } catch (err) {
             setUsersError(err?.message || 'Error cargando usuarios.');
         } finally {

@@ -191,6 +191,64 @@ function buildClientUpdateDebugMessage(payload, userId) {
   ].join(' | ');
 }
 
+async function getAuthDebugSnapshot() {
+  let user = null;
+  let session = null;
+  let userError = null;
+  let sessionError = null;
+  let currentCompanyId = null;
+  let currentCompanyIdError = null;
+
+  try {
+    const userResult = await supabase.auth.getUser();
+    user = userResult?.data?.user || null;
+    userError = userResult?.error?.message || null;
+  } catch (error) {
+    userError = String(error?.message || error || 'Error desconocido');
+  }
+
+  try {
+    const sessionResult = await supabase.auth.getSession();
+    session = sessionResult?.data?.session || null;
+    sessionError = sessionResult?.error?.message || null;
+  } catch (error) {
+    sessionError = String(error?.message || error || 'Error desconocido');
+  }
+
+  try {
+    const { data, error } = await supabase.rpc('current_company_id');
+    if (!error && isUuid(data)) {
+      currentCompanyId = data;
+    } else if (error) {
+      currentCompanyIdError = error?.message || null;
+    }
+  } catch (error) {
+    currentCompanyIdError = String(error?.message || error || 'Error desconocido');
+  }
+
+  return {
+    user: user
+      ? {
+          id: user.id || null,
+          email: user.email || null,
+          role: user.role || null,
+        }
+      : null,
+    session: session
+      ? {
+          userId: session.user?.id || null,
+          expiresAt: session.expires_at || null,
+          tokenType: session.token_type || null,
+          hasAccessToken: !!session.access_token,
+        }
+      : null,
+    userError,
+    sessionError,
+    currentCompanyId,
+    currentCompanyIdError,
+  };
+}
+
 async function withRetry(operation, retries = 2, delayMs = 450) {
   let lastError;
   for (let attempt = 0; attempt <= retries; attempt += 1) {
@@ -728,7 +786,20 @@ export const dataService = {
       existingById = existing || null;
     }
 
-    const existingRecord = existingById || existingByDocument || null;
+    const hasConflictingExistingByDocument =
+      !!existingClientId &&
+      !!existingByDocument?.id &&
+      String(existingByDocument.id) !== String(existingClientId);
+
+    if (hasConflictingExistingByDocument) {
+      console.warn('[SYNC:clients] Conflicto id/documento detectado; se prioriza client.id para evitar actualizar otra fila.', {
+        incomingClientId: existingClientId,
+        existingByDocumentId: existingByDocument?.id || null,
+        document,
+      });
+    }
+
+    const existingRecord = existingById || (hasConflictingExistingByDocument ? null : existingByDocument) || null;
 
     const providedCreditLevel = client.creditLevel ?? client.credit_level;
     const providedCreditLimit = client.creditLimit ?? client.credit_limit;
@@ -809,6 +880,14 @@ export const dataService = {
         } catch (authError) {
           if (String(authError?.code || '') === 'SESSION_INVALID') throw authError;
         }
+        const authDebugSnapshot = await getAuthDebugSnapshot();
+        console.error('[AUTH_PROBE:clients.update.0rows]', {
+          clientId: payload.id || null,
+          document: payload.document || null,
+          authUserId: authUserIdForDebug || null,
+          currentCompanyIdFromPayload: payload.company_id || null,
+          ...authDebugSnapshot,
+        });
         if (payload.document) {
           let byDocResult = await withRetry(() =>
             supabase.from('clients').update(updatePayload).eq('document', payload.document).select()
@@ -863,6 +942,14 @@ export const dataService = {
           } catch (authError) {
             if (String(authError?.code || '') === 'SESSION_INVALID') throw authError;
           }
+          const authDebugSnapshot = await getAuthDebugSnapshot();
+          console.error('[AUTH_PROBE:clients.legacyUpdate.0rows]', {
+            clientId: payload.id || null,
+            document: payload.document || null,
+            authUserId: authUserIdForDebug || null,
+            currentCompanyIdFromPayload: payload.company_id || null,
+            ...authDebugSnapshot,
+          });
           if (payload.document) {
             const byDocRetry = await withRetry(() =>
               supabase.from('clients').update(legacyUpdatePayload).eq('document', payload.document).select()

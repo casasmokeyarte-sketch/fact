@@ -54,148 +54,15 @@ import {
 } from './lib/externalCashReceipts'
 import modulesBg from './assets/modules-bg.png'
 
-const DEFAULT_PERMISSIONS = {
-  facturacion: true,
-  cartera: true,
-  compras: true,
-  clientes: true,
-  caja: true,
-  inventario: true,
-  codigos: true,
-  reportes: true,
-  bitacora: true,
-  config: true,
-  trueque: true,
-  gastos: true,
-  recibosCajaExternos: true,
-  notas: true,
-  historial: true,
-  cierres: true
-};
+import {
+  DEFAULT_PERMISSIONS,
+  normalizeRole,
+  normalizePermissions,
+  normalizePermissionsForRole,
+  normalizeAppUser,
+  mergeUsersByIdentity
+} from './lib/userUtils';
 
-const normalizeRole = (role) => {
-  const normalized = String(role || '')
-    .trim()
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '');
-  if (!normalized) return 'Administrador';
-  if (normalized === 'administrador' || normalized === 'admin') return 'Administrador';
-  if (normalized.includes('supervisor')) return 'Supervisor';
-  if (normalized.includes('cajer')) return 'Cajero';
-  return String(role).trim();
-};
-
-const parsePermissionString = (value) => {
-  const normalized = String(value || '').trim().toLowerCase();
-  if (normalized === 'true' || normalized === '1' || normalized === 'si') return true;
-  if (normalized === 'false' || normalized === '0' || normalized === 'no' || normalized === 'null' || normalized === 'undefined') return false;
-
-  try {
-    return JSON.parse(value);
-  } catch {
-    return undefined;
-  }
-};
-
-const normalizePermissionValue = (value) => {
-  if (typeof value === 'boolean') return value;
-  if (typeof value === 'string') {
-    const parsed = parsePermissionString(value);
-    if (typeof parsed === 'boolean') return parsed;
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return normalizePermissionValue(parsed);
-    return undefined;
-  }
-
-  if (value && typeof value === 'object' && !Array.isArray(value)) {
-    const normalizedObject = {};
-    Object.entries(value).forEach(([key, nestedValue]) => {
-      const normalizedNested = normalizePermissionValue(nestedValue);
-      normalizedObject[key] = normalizedNested === undefined ? nestedValue : normalizedNested;
-    });
-    return normalizedObject;
-  }
-
-  return undefined;
-};
-
-const normalizePermissions = (permissions) => {
-  let source = permissions;
-
-  if (typeof source === 'string') {
-    const parsed = parsePermissionString(source);
-    source = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
-  }
-
-  if (!source || typeof source !== 'object' || Array.isArray(source)) {
-    return { ...DEFAULT_PERMISSIONS };
-  }
-
-  const candidate = source.modules && typeof source.modules === 'object' && !Array.isArray(source.modules)
-    ? source.modules
-    : source;
-
-  const normalized = { ...DEFAULT_PERMISSIONS };
-  Object.keys(DEFAULT_PERMISSIONS).forEach((key) => {
-    const normalizedValue = normalizePermissionValue(candidate[key]);
-    if (normalizedValue !== undefined) {
-      normalized[key] = normalizedValue;
-    }
-  });
-
-  return normalized;
-};
-
-const parseJwtAlg = (token) => {
-  try {
-    const [headerChunk] = String(token || '').split('.');
-    if (!headerChunk) return '';
-
-    const base64 = headerChunk.replace(/-/g, '+').replace(/_/g, '/');
-    const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4);
-    const decoded = atob(padded);
-    const header = JSON.parse(decoded);
-    return String(header?.alg || '').toUpperCase();
-  } catch {
-    return '';
-  }
-};
-
-const normalizePermissionsForRole = (role, permissions) => {
-  const normalizedRole = normalizeRole(role);
-  const base = normalizePermissions(permissions);
-
-  if (normalizedRole === 'Cajero') {
-    return {
-      ...base,
-      inventario: true,
-      codigos: true,
-      compras: false
-    };
-  }
-
-  if (normalizedRole === 'Supervisor') {
-    return {
-      ...base,
-      inventario: true,
-      codigos: true,
-      reportes: true,
-      bitacora: true,
-      facturacion: true,
-      clientes: true,
-      cartera: true,
-      caja: true,
-      compras: true,
-      historial: true,
-      gastos: true,
-      recibosCajaExternos: true,
-      notas: true,
-      config: false
-    };
-  }
-
-  return base;
-};
 
 const MENU_ITEMS = [
   { id: 'facturacion', label: 'Facturacion', icon: '\uD83E\uDDFE', tab: 'facturacion' },
@@ -564,73 +431,19 @@ const buildProductImageCacheMap = (rows) => {
   return result;
 };
 
-const normalizeAppUser = (user) => {
-  if (!user || typeof user !== 'object') return null;
+const parseJwtAlg = (token) => {
+  try {
+    const [headerChunk] = String(token || '').split('.');
+    if (!headerChunk) return '';
 
-  const hasExplicitRole = String(user?.role || '').trim().length > 0;
-  const normalizedRole = hasExplicitRole ? normalizeRole(user?.role) : null;
-  const name = String(
-    user?.name ||
-    user?.display_name ||
-    user?.username ||
-    user?.email ||
-    ''
-  ).trim();
-
-  const id = String(user?.id || user?.user_id || '').trim();
-  const username = String(
-    user?.username ||
-    (String(user?.email || '').includes('@') ? String(user.email).split('@')[0] : '')
-  ).trim();
-  const email = String(user?.email || '').trim();
-
-  const normalized = {
-    ...user,
-    id: id || null,
-    name: name || email || username || 'Usuario',
-    username: username || (email ? email.split('@')[0] : ''),
-    email: email || null,
-    role: normalizedRole,
-    permissions: hasExplicitRole
-      ? normalizePermissionsForRole(normalizedRole, user?.permissions)
-      : (user?.permissions ?? null),
-    authorization_key: String(
-      user?.authorization_key ||
-      user?.authorizationKey ||
-      user?.permissions?.authorizationKey ||
-      ''
-    ).trim(),
-  };
-
-  return normalized;
-};
-
-const mergeUsersByIdentity = (...groups) => {
-  const byIdentity = new Map();
-
-  groups.flat().forEach((user) => {
-    const normalized = normalizeAppUser(user);
-    if (!normalized) return;
-
-    const keys = [
-      String(normalized?.id || '').trim(),
-      String(normalized?.email || '').trim().toLowerCase(),
-      String(normalized?.username || '').trim().toLowerCase(),
-      String(normalized?.name || '').trim().toLowerCase(),
-    ].filter(Boolean);
-
-    const existingKey = keys.find((key) => byIdentity.has(key));
-    const existing = existingKey ? byIdentity.get(existingKey) : null;
-    const merged = existing ? {
-      ...existing,
-      ...normalized,
-      role: normalized?.role ?? existing?.role ?? null,
-      permissions: normalized?.permissions ?? existing?.permissions ?? null,
-    } : normalized;
-    keys.forEach((key) => byIdentity.set(key, merged));
-  });
-
-  return Array.from(new Set(byIdentity.values()));
+    const base64 = headerChunk.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4);
+    const decoded = atob(padded);
+    const header = JSON.parse(decoded);
+    return String(header?.alg || '').toUpperCase();
+  } catch {
+    return '';
+  }
 };
 
 const readCachedUsers = () => {
@@ -1499,9 +1312,39 @@ function App() {
     }
   };
 
+  async function debugAuth() {
+    const user = await supabase.auth.getUser();
+    const session = await supabase.auth.getSession();
+
+    const safeUser = user?.data?.user
+      ? {
+          id: user.data.user.id || null,
+          email: user.data.user.email || null,
+          role: user.data.user.role || null,
+        }
+      : null;
+
+    const safeSession = session?.data?.session
+      ? {
+          userId: session.data.session.user?.id || null,
+          expiresAt: session.data.session.expires_at || null,
+          tokenType: session.data.session.token_type || null,
+          hasAccessToken: !!session.data.session.access_token,
+        }
+      : null;
+
+    console.log('[AUTH_PROBE:App.debugAuth]', {
+      user: safeUser,
+      session: safeSession,
+      userError: user?.error?.message || null,
+      sessionError: session?.error?.message || null,
+    });
+  }
+
   // Initialize EmailJS and Auth on app load
   useEffect(() => {
     initEmailJS();
+    void debugAuth();
     checkAuthStatus();
   }, []);
 
@@ -1611,7 +1454,18 @@ function App() {
       }
 
       const incomingUsers = Array.isArray(data?.users) ? data.users : [];
-      setUsers((prev) => mergeUsersByIdentity(prev, incomingUsers, [currentUser]));
+      
+      setUsers((prev) => {
+        // We want to SYNC with cloud, meaning we replace cloud-sourced users
+        // while keeping local-only users (like hardcoded Admin id:1)
+        const localAdmin = (prev || []).find(u => String(u.id) === '1' || u.username === 'Admin');
+        const next = mergeUsersByIdentity(
+          localAdmin ? [localAdmin] : [],
+          incomingUsers,
+          [currentUser]
+        );
+        return next;
+      });
     } catch (error) {
       if (!silent) {
         console.error('No se pudo refrescar usuarios:', error);
