@@ -1343,92 +1343,9 @@ function App() {
     }
   };
 
-  async function debugAuth(source = 'app-load') {
-    const user = await supabase.auth.getUser();
-    const session = await supabase.auth.getSession();
-    let currentCompany = { data: null, error: null };
-
-    try {
-      const { data, error } = await supabase.rpc('current_company_id');
-      currentCompany = {
-        data: data ?? null,
-        error: error
-          ? {
-              message: error.message || null,
-              code: error.code || null,
-              details: error.details || null,
-              hint: error.hint || null,
-            }
-          : null,
-      };
-    } catch (error) {
-      currentCompany = {
-        data: null,
-        error: {
-          message: error?.message || String(error || 'Error desconocido'),
-          code: error?.code || null,
-        },
-      };
-    }
-
-    const sanitizeAuthUser = (authUser) => (
-      authUser
-        ? {
-            id: authUser.id || null,
-            aud: authUser.aud || null,
-            email: authUser.email || null,
-            role: authUser.role || null,
-            app_metadata: authUser.app_metadata || null,
-            user_metadata: authUser.user_metadata || null,
-            created_at: authUser.created_at || null,
-            last_sign_in_at: authUser.last_sign_in_at || null,
-          }
-        : null
-    );
-
-    const sanitizeError = (error) => (
-      error
-        ? {
-            message: error.message || null,
-            code: error.code || null,
-            status: error.status || null,
-          }
-        : null
-    );
-
-    const safeSession = session?.data?.session
-      ? {
-          ...session.data.session,
-          access_token: session.data.session.access_token ? '[redacted]' : null,
-          refresh_token: session.data.session.refresh_token ? '[redacted]' : null,
-          provider_token: session.data.session.provider_token ? '[redacted]' : null,
-          provider_refresh_token: session.data.session.provider_refresh_token ? '[redacted]' : null,
-          user: sanitizeAuthUser(session.data.session.user),
-        }
-      : null;
-
-    const probe = {
-      source,
-      getUser: {
-        user: sanitizeAuthUser(user?.data?.user),
-        error: sanitizeError(user?.error),
-      },
-      getSession: {
-        session: safeSession,
-        error: sanitizeError(session?.error),
-      },
-      currentCompanyId: currentCompany,
-    };
-
-    console.log('[AUTH_PROBE:App.debugAuth]', probe);
-    console.log(`[AUTH_PROBE:App.debugAuth:json]\n${JSON.stringify(probe, null, 2)}`);
-  }
-
   // Initialize EmailJS and Auth on app load
   useEffect(() => {
     initEmailJS();
-    window.__factDebugAuth = () => debugAuth('manual-window');
-    void debugAuth();
     checkAuthStatus();
   }, []);
 
@@ -1881,7 +1798,6 @@ function App() {
   // Subscribe to auth changes
   useEffect(() => {
     const subscription = onAuthStateChange((event, session) => {
-      void debugAuth(`auth:${event}`);
       if (event === 'TOKEN_REFRESHED') return;
 
       if (session?.user) {

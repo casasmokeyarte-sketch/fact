@@ -754,8 +754,10 @@ export const dataService = {
     const { data, error } = await supabase.from('clients').select('*').order('name');
     if (error) throw error;
 
-    return (data || []).map((c) => ({
+    return (data || [])
+      .map((c) => ({
       ...c,
+      document: String(c.document ?? '').trim(),
       creditLevel: resolveCreditLevel(c.credit_level ?? 'ESTANDAR'),
       creditLimit: Number(c.credit_limit ?? 0),
       approvedTerm: Number(c.approved_term ?? 30),
@@ -768,7 +770,8 @@ export const dataService = {
       successfulReferralCount: Math.max(0, Number(c.successful_referral_count ?? 0) || 0),
       active: c.active ?? true,
       blocked: c.active === false,
-    }));
+      }))
+      .filter((client) => client.document);
   },
 
   async saveClient(client) {
