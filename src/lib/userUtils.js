@@ -171,25 +171,23 @@ export const normalizeAppUser = (user) => {
 export const mergeUsersByIdentity = (...groups) => {
   const result = [];
   const flat = groups.flat().filter(Boolean);
+  let changed = false;
 
   flat.forEach((user) => {
     const normalized = normalizeAppUser(user);
     if (!normalized) return;
 
     const existingIndex = result.findIndex((u) => {
-      // Identity check by multiple potential keys
       if (normalized.id && u.id && String(normalized.id) === String(u.id)) return true;
       if (normalized.email && u.email && String(normalized.email).toLowerCase() === String(u.email).toLowerCase()) return true;
       if (normalized.username && u.username && String(normalized.username).toLowerCase() === String(u.username).toLowerCase()) return true;
-      // Name is a weaker identity but used here as fallback
       if (normalized.name && u.name && String(normalized.name).toLowerCase() === String(u.name).toLowerCase()) return true;
       return false;
     });
 
     if (existingIndex >= 0) {
       const existing = result[existingIndex];
-      // Merge: incoming data overwrites existing, but we keep values if incoming is null
-      result[existingIndex] = {
+      const merged = {
         ...existing,
         ...normalized,
         id: normalized.id || existing.id,
@@ -197,10 +195,19 @@ export const mergeUsersByIdentity = (...groups) => {
         permissions: normalized.permissions || existing.permissions,
         authorization_key: normalized.authorization_key || existing.authorization_key
       };
+
+      if (JSON.stringify(existing) !== JSON.stringify(merged)) {
+        result[existingIndex] = merged;
+        changed = true;
+      }
     } else {
       result.push(normalized);
+      changed = true;
     }
   });
 
-  return result;
+  // If the input was just one group and it matches the result, we might still want to return original.
+  // But usually groups.flat() creates a new array anyway. 
+  // The most important thing is avoiding setUsers() triggering if nothing changed.
+  return changed ? result : (groups.length === 1 && Array.isArray(groups[0]) ? groups[0] : result);
 };

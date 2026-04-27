@@ -1485,9 +1485,10 @@ function App() {
       const nextPermissions = normalizePermissionsForRole(nextRole, liveProfile.permissions);
 
       if (
+        prev &&
         prev.name === nextName &&
         prev.role === nextRole &&
-        prev.permissions === nextPermissions
+        JSON.stringify(prev.permissions) === JSON.stringify(nextPermissions)
       ) {
         return prev;
       }
