@@ -833,6 +833,10 @@ export const dataService = {
     const resolvedDiscount = accidentalDowngradeToStandard
       ? Number(existingRecord?.discount ?? 0)
       : Number(providedDiscount ?? existingRecord?.discount ?? 0);
+    const hasIncomingBlocked = typeof client?.blocked === 'boolean';
+    const resolvedActive = hasIncomingBlocked
+      ? client.blocked !== true
+      : (client.active ?? existingRecord?.active ?? true);
 
     const payload = {
       id: existingRecord?.id || client.id,
@@ -852,7 +856,7 @@ export const dataService = {
       referral_credits_available: Math.max(0, Number(client.referralCreditsAvailable ?? existingRecord?.referral_credits_available ?? 0) || 0),
       referral_points: Math.max(0, Number(client.referralPoints ?? existingRecord?.referral_points ?? 0) || 0),
       successful_referral_count: Math.max(0, Number(client.successfulReferralCount ?? existingRecord?.successful_referral_count ?? 0) || 0),
-      active: client.active ?? (client.blocked === true ? false : undefined) ?? existingRecord?.active ?? true,
+      active: resolvedActive,
       updated_at: new Date().toISOString(),
     };
 
@@ -1079,17 +1083,38 @@ export const dataService = {
   async deleteClient(client) {
     const id = client?.id;
     const document = String(client?.document ?? '').trim();
+    const deleteByDocument = async () => {
+      if (!document) return [];
+      const { data, error } = await withRetry(() =>
+        supabase.from('clients').delete().eq('document', document).select('id, document')
+      );
+      if (error) throw error;
+      return data || [];
+    };
 
     if (isUuid(id)) {
-      const { error } = await withRetry(() => supabase.from('clients').delete().eq('id', id));
+      const { data, error } = await withRetry(() =>
+        supabase.from('clients').delete().eq('id', id).select('id, document')
+      );
       if (error) throw error;
-      return;
+      if ((data || []).length > 0) return data;
+
+      const byDocumentRows = await deleteByDocument();
+      if (byDocumentRows.length > 0) return byDocumentRows;
+
+      throw new Error(
+        'No se pudo eliminar el cliente en Supabase (0 filas afectadas). ' +
+        'Revise permisos/RLS o aplique shared_company_migration.sql para policies por empresa.'
+      );
     }
 
     if (document) {
-      const { error } = await withRetry(() => supabase.from('clients').delete().eq('document', document));
-      if (error) throw error;
-      return;
+      const byDocumentRows = await deleteByDocument();
+      if (byDocumentRows.length > 0) return byDocumentRows;
+      throw new Error(
+        'No se pudo eliminar el cliente en Supabase (0 filas afectadas). ' +
+        'Revise permisos/RLS o aplique shared_company_migration.sql para policies por empresa.'
+      );
     }
 
     throw new Error('No se pudo eliminar cliente: id/documento invalido');

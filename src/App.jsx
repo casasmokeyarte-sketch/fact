@@ -204,24 +204,30 @@ const normalizeBarcodeKey = (value) => {
   return /^\d+$/.test(raw) ? raw : '';
 };
 
-const normalizeClientDraft = (client) => ({
-  ...client,
-  document: String(client?.document || '').trim(),
-  name: String(client?.name || '').trim(),
-  email: String(client?.email || '').trim(),
-  creditLevel: String(client?.creditLevel || client?.credit_level || 'ESTANDAR').trim() || 'ESTANDAR',
-  creditLimit: Number(client?.creditLimit ?? client?.credit_limit ?? 0),
-  approvedTerm: Number(client?.approvedTerm ?? client?.approved_term ?? 30),
-  discount: Number(client?.discount ?? 0),
-  referrerDocument: String(client?.referrerDocument ?? client?.referrer_document ?? '').trim(),
-  referrerName: String(client?.referrerName ?? client?.referrer_name ?? '').trim(),
-  referralRewardGranted: client?.referralRewardGranted === true || client?.referral_reward_granted === true,
-  referralCreditsAvailable: Math.max(0, Number(client?.referralCreditsAvailable ?? client?.referral_credits_available ?? 0) || 0),
-  referralPoints: Math.max(0, Number(client?.referralPoints ?? client?.referral_points ?? 0) || 0),
-  successfulReferralCount: Math.max(0, Number(client?.successfulReferralCount ?? client?.successful_referral_count ?? 0) || 0),
-  active: client?.active ?? !(client?.blocked === true),
-  blocked: client?.blocked === true || client?.active === false,
-});
+const normalizeClientDraft = (client) => {
+  const hasBlocked = typeof client?.blocked === 'boolean';
+  const blocked = hasBlocked ? client.blocked === true : client?.active === false;
+  const active = hasBlocked ? !blocked : (client?.active ?? true);
+
+  return {
+    ...client,
+    document: String(client?.document || '').trim(),
+    name: String(client?.name || '').trim(),
+    email: String(client?.email || '').trim(),
+    creditLevel: String(client?.creditLevel || client?.credit_level || 'ESTANDAR').trim() || 'ESTANDAR',
+    creditLimit: Number(client?.creditLimit ?? client?.credit_limit ?? 0),
+    approvedTerm: Number(client?.approvedTerm ?? client?.approved_term ?? 30),
+    discount: Number(client?.discount ?? 0),
+    referrerDocument: String(client?.referrerDocument ?? client?.referrer_document ?? '').trim(),
+    referrerName: String(client?.referrerName ?? client?.referrer_name ?? '').trim(),
+    referralRewardGranted: client?.referralRewardGranted === true || client?.referral_reward_granted === true,
+    referralCreditsAvailable: Math.max(0, Number(client?.referralCreditsAvailable ?? client?.referral_credits_available ?? 0) || 0),
+    referralPoints: Math.max(0, Number(client?.referralPoints ?? client?.referral_points ?? 0) || 0),
+    successfulReferralCount: Math.max(0, Number(client?.successfulReferralCount ?? client?.successful_referral_count ?? 0) || 0),
+    active,
+    blocked,
+  };
+};
 
 const normalizeSignatureText = (value) => String(value || '')
   .normalize('NFD')
@@ -315,19 +321,30 @@ const protectRecentClientWrites = (incomingRows, protectedRowsByKey) => {
   Object.entries(protectedRowsByKey || {}).forEach(([key, entry]) => {
     if (!entry?.row) return;
     const writtenAt = Number(entry.writtenAt || 0);
-    if (!writtenAt || now - writtenAt > RECENT_WRITE_PROTECTION_MS) return;
+    if (!writtenAt || now - writtenAt > RECENT_WRITE_PROTECTION_MS) {
+      delete protectedRowsByKey[key];
+      return;
+    }
 
     const protectedRow = normalizeClientDraft(entry.row);
-    const incomingRow = result.get(key);
+    const protectedDocument = String(protectedRow?.document || '').trim();
+    const matchedIncoming = result.get(key)
+      ? [key, result.get(key)]
+      : Array.from(result.entries()).find(([, row]) => (
+        protectedDocument && String(row?.document || '').trim() === protectedDocument
+      ));
+    const resultKey = matchedIncoming?.[0] || key;
+    const incomingRow = matchedIncoming?.[1] || null;
+
     if (!incomingRow) {
-      result.set(key, protectedRow);
+      result.set(resultKey, protectedRow);
       return;
     }
 
     const protectedUpdatedAt = getClientUpdatedAtMs(protectedRow);
     const incomingUpdatedAt = getClientUpdatedAtMs(incomingRow);
     if (protectedUpdatedAt >= incomingUpdatedAt) {
-      result.set(key, { ...incomingRow, ...protectedRow });
+      result.set(resultKey, { ...incomingRow, ...protectedRow });
     }
   });
 
@@ -2083,17 +2100,20 @@ function App() {
             console.warn('Refresh de clientes devolvio vacio; se conserva cache local para evitar perdida visual.');
             return prev;
           }
-          const protectedPrev = protectRecentClientWrites(prev || [], recentClientWritesRef.current);
-          const mergedClients = mergeClientsPreferNewest(protectedPrev, safeClients);
+
+          const finalClients = dedupeClients(
+            protectRecentClientWrites(dbClients || [], recentClientWritesRef.current)
+          );
           
-          console.log('[DEBUG:refreshCloudData] Clients - cloud count:', safeClients.length, 'protected count:', protectedPrev.length, 'final count:', mergedClients.length);
+          const protectedCount = Object.keys(recentClientWritesRef.current || {}).length;
+          console.log('[DEBUG:refreshCloudData] Clients - cloud count:', (dbClients || []).length, 'protected count:', protectedCount, 'final count:', finalClients.length);
 
           const prevSerialized = JSON.stringify(dedupeClients(prev || []));
-          const nextSerialized = JSON.stringify(dedupeClients(mergedClients));
+          const nextSerialized = JSON.stringify(finalClients);
           if (prevSerialized === nextSerialized) {
             return prev;
           }
-          return mergedClients;
+          return finalClients;
         });
       }
       setSalesHistory(enrichedSales);
@@ -4703,6 +4723,13 @@ function App() {
     if (changedClients.length > 0) {
       setRegisteredClients(updatedRegisteredClients);
       changedClients.forEach((client) => {
+        const key = getClientIdentityKey(client);
+        if (key) {
+          recentClientWritesRef.current[key] = {
+            row: client,
+            writtenAt: Date.now(),
+          };
+        }
         if (safeSelectedClientDoc && String(client?.document || '').trim() === safeSelectedClientDoc) {
           setSelectedClient(client);
         }
@@ -5879,10 +5906,16 @@ function App() {
                     if (Array.isArray(savedRows)) {
                       savedClients.push(...savedRows);
                       savedRows.forEach((savedRow) => {
-                        const key = getClientIdentityKey(savedRow);
-                        if (!key) return;
-                        console.log('[DEBUG:setClients] Updating protection for key:', key);
-                        recentClientWritesRef.current[key] = {
+                        const idKey = getClientIdentityKey(savedRow);
+                        if (!idKey) return;
+
+                        // Clean up temporary document-based protection
+                        if (savedRow.document) {
+                          delete recentClientWritesRef.current[`doc:${String(savedRow.document).trim()}`];
+                        }
+
+                        console.log('[DEBUG:setClients] Updating protection for key:', idKey);
+                        recentClientWritesRef.current[idKey] = {
                           row: savedRow,
                           writtenAt: Date.now(),
                         };

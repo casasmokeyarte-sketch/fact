@@ -172,7 +172,9 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
         if (!window.confirm(confirmMsg)) return;
 
         setClients(clients.map((c) =>
-            c.document === client.document ? { ...c, blocked: nextBlocked } : c
+            c.document === client.document
+                ? { ...c, blocked: nextBlocked, active: !nextBlocked, updatedAt: new Date().toISOString() }
+                : c
         ));
 
         onLog?.({
