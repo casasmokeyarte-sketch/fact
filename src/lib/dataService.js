@@ -191,6 +191,23 @@ function buildClientUpdateDebugMessage(payload, userId) {
   ].join(' | ');
 }
 
+function getRecordUpdatedAtMs(record) {
+  const value = new Date(record?.updated_at || record?.updatedAt || record?.created_at || record?.createdAt || 0).getTime();
+  return Number.isFinite(value) ? value : 0;
+}
+
+function pickBestClientRecord(rows, preferredId = null) {
+  const safeRows = Array.isArray(rows) ? rows.filter(Boolean) : [];
+  if (preferredId) {
+    const byId = safeRows.find((row) => String(row?.id || '') === String(preferredId));
+    if (byId) return byId;
+  }
+
+  return safeRows
+    .slice()
+    .sort((left, right) => getRecordUpdatedAtMs(right) - getRecordUpdatedAtMs(left))[0] || null;
+}
+
 async function getAuthDebugSnapshot() {
   let user = null;
   let session = null;
@@ -762,15 +779,22 @@ export const dataService = {
     const existingClientId = isUuid(client?.id) ? client.id : null;
 
     if (document) {
-      const { data: existing, error: existingError } = await withRetry(() =>
+      const { data: existingRows, error: existingError } = await withRetry(() =>
         supabase
           .from('clients')
           .select('*')
           .eq('document', document)
-          .maybeSingle()
       );
       if (existingError) throw existingError;
-      existingByDocument = existing || null;
+      existingByDocument = pickBestClientRecord(existingRows, existingClientId);
+      if ((existingRows || []).length > 1) {
+        console.warn('[SYNC:clients] Documento duplicado detectado; se usara la fila preferida para evitar reversiones.', {
+          document,
+          incomingClientId: existingClientId,
+          preferredClientId: existingByDocument?.id || null,
+          duplicateCount: existingRows.length,
+        });
+      }
     }
 
     let existingById = null;

@@ -252,13 +252,32 @@ const buildClientReferralSyncPayload = (client) => {
   };
 };
 
+const getClientUpdatedAtMs = (client) => {
+  const value = new Date(client?.updated_at || client?.updatedAt || 0).getTime();
+  return Number.isFinite(value) ? value : 0;
+};
+
 const dedupeClients = (rows) => {
   const byDoc = new Map();
   (rows || []).forEach((row) => {
     const normalized = normalizeClientDraft(row);
     if (!normalized.document) return;
     const existing = byDoc.get(normalized.document);
-    byDoc.set(normalized.document, existing ? { ...existing, ...normalized } : normalized);
+    if (!existing) {
+      byDoc.set(normalized.document, normalized);
+      return;
+    }
+
+    const existingUpdatedAt = getClientUpdatedAtMs(existing);
+    const nextUpdatedAt = getClientUpdatedAtMs(normalized);
+    if (nextUpdatedAt > existingUpdatedAt) {
+      byDoc.set(normalized.document, normalized);
+      return;
+    }
+
+    if (nextUpdatedAt === existingUpdatedAt) {
+      byDoc.set(normalized.document, { ...existing, ...normalized });
+    }
   });
   return Array.from(byDoc.values());
 };
@@ -269,11 +288,6 @@ const getClientIdentityKey = (client) => {
   const document = String(client?.document || '').trim();
   if (document) return `doc:${document}`;
   return '';
-};
-
-const getClientUpdatedAtMs = (client) => {
-  const value = new Date(client?.updated_at || client?.updatedAt || 0).getTime();
-  return Number.isFinite(value) ? value : 0;
 };
 
 const mergeClientsPreferNewest = (primaryRows, secondaryRows) => {
