@@ -1968,6 +1968,7 @@ function App() {
             console.warn('Refresh de productos devolvio vacio; se conserva cache local para evitar perdida visual.');
             return prev;
           }
+          console.log('[DEBUG:refreshCloudData] Products - cloud count:', (dbProducts || []).length, 'final (protected) count:', safeProducts.length);
           const prevSerialized = JSON.stringify(dedupeProducts(prev || []));
           const nextSerialized = JSON.stringify(safeProducts);
           if (prevSerialized === nextSerialized) {
@@ -2082,10 +2083,11 @@ function App() {
             console.warn('Refresh de clientes devolvio vacio; se conserva cache local para evitar perdida visual.');
             return prev;
           }
-          const mergedClients = mergeClientsPreferNewest(
-            protectRecentClientWrites(prev || [], recentClientWritesRef.current),
-            safeClients
-          );
+          const protectedPrev = protectRecentClientWrites(prev || [], recentClientWritesRef.current);
+          const mergedClients = mergeClientsPreferNewest(protectedPrev, safeClients);
+          
+          console.log('[DEBUG:refreshCloudData] Clients - cloud count:', safeClients.length, 'protected count:', protectedPrev.length, 'final count:', mergedClients.length);
+
           const prevSerialized = JSON.stringify(dedupeClients(prev || []));
           const nextSerialized = JSON.stringify(dedupeClients(mergedClients));
           if (prevSerialized === nextSerialized) {
@@ -5871,12 +5873,15 @@ function App() {
                   });
 
                   for (const changed of changedClients) {
+                    console.log('[DEBUG:setClients] Calling saveClient for:', changed.document || changed.id);
                     const savedRows = await dataService.saveClient({ ...changed, user_id: currentUser?.id });
+                    console.log('[DEBUG:setClients] saveClient result:', savedRows);
                     if (Array.isArray(savedRows)) {
                       savedClients.push(...savedRows);
                       savedRows.forEach((savedRow) => {
                         const key = getClientIdentityKey(savedRow);
                         if (!key) return;
+                        console.log('[DEBUG:setClients] Updating protection for key:', key);
                         recentClientWritesRef.current[key] = {
                           row: savedRow,
                           writtenAt: Date.now(),
@@ -5970,7 +5975,9 @@ function App() {
                   });
 
                   for (const changed of changedProducts) {
+                    console.log('[DEBUG:setProducts] Calling saveProduct for:', changed.name || changed.id);
                     const saved = await dataService.saveProduct({ ...changed, user_id: currentUser?.id });
+                    console.log('[DEBUG:setProducts] saveProduct result:', saved);
                     const savedRow = Array.isArray(saved) ? saved[0] : saved;
                     if (savedRow?.id) {
                       recentProductWritesRef.current[String(savedRow.id)] = {
