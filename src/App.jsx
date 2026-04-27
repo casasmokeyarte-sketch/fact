@@ -6373,17 +6373,21 @@ function App() {
                       details: buildExternalCashReceiptDetails(receipt),
                     });
                   }
-                  await syncFactMovement('external_cash_receipt.created', {
-                    receiptCode: receipt.receiptCode,
-                    date: receipt.date,
-                    customerName: receipt.thirdPartyName,
-                    customerDoc: receipt.thirdPartyDocument || null,
-                    total: amount,
-                    paymentMode: paymentMethod,
-                    notes: receipt.concept,
-                    reference: receipt.paymentReference || '',
-                    userName: currentUser?.name || currentUser?.email || 'Sistema',
-                  });
+                  try {
+                    await syncFactMovement('external_cash_receipt.created', {
+                      receiptCode: receipt.receiptCode,
+                      date: receipt.date,
+                      customerName: receipt.thirdPartyName,
+                      customerDoc: receipt.thirdPartyDocument || null,
+                      total: amount,
+                      paymentMode: paymentMethod,
+                      notes: receipt.concept,
+                      reference: receipt.paymentReference || '',
+                      userName: currentUser?.name || currentUser?.email || 'Sistema',
+                    });
+                  } catch (syncError) {
+                    console.warn('Recibo externo guardado; CRM no soporta este tipo de sincronizacion aun.', syncError);
+                  }
                 } catch (err) {
                   if (paymentMethod === 'Efectivo') {
                     adjustUserCashBalance(currentUser, -amount);

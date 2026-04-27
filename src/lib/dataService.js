@@ -208,6 +208,19 @@ function pickBestClientRecord(rows, preferredId = null) {
     .sort((left, right) => getRecordUpdatedAtMs(right) - getRecordUpdatedAtMs(left))[0] || null;
 }
 
+function stripClientReferralFields(payload) {
+  const {
+    referrer_document,
+    referrer_name,
+    referral_reward_granted,
+    referral_credits_available,
+    referral_points,
+    successful_referral_count,
+    ...fallbackPayload
+  } = payload || {};
+  return fallbackPayload;
+}
+
 async function getAuthDebugSnapshot() {
   let user = null;
   let session = null;
@@ -898,6 +911,20 @@ export const dataService = {
       }
     }
 
+    const insertClientWithProvidedId = async () => {
+      const insertWithIdPayload = { ...removeInvalidUuidId(payload), id: payload.id };
+      let { data: insertedData, error: insertError } = await withRetry(() =>
+        supabase.from('clients').insert(insertWithIdPayload).select()
+      );
+      if (insertError && isUndefinedColumnError(insertError)) {
+        const legacyInsertPayload = stripClientReferralFields(insertWithIdPayload);
+        const retry = await withRetry(() => supabase.from('clients').insert(legacyInsertPayload).select());
+        insertedData = retry.data;
+        insertError = retry.error;
+      }
+      return { data: insertedData, error: insertError };
+    };
+
     if (isUuid(payload.id)) {
       // Exclude primary key, owner and creation timestamp from update payload to avoid 400 errors.
       const { id, user_id, created_at, ...updatePayload } = payload;
@@ -946,10 +973,19 @@ export const dataService = {
             return byDocResult.data;
           }
         }
+        const insertedMissing = await insertClientWithProvidedId();
+        if (!insertedMissing.error) {
+          console.warn('[SYNC:clients] update por id/documento no encontro fila; se inserto el cliente faltante.', {
+            clientId: payload.id,
+            document: payload.document,
+            authUserId: authUserIdForDebug || null,
+          });
+          return insertedMissing.data;
+        }
         throw new Error(
           'No se pudo actualizar el cliente en Supabase (0 filas afectadas). Esto suele pasar por permisos/RLS cuando el cliente fue creado por otro usuario. ' +
           'Solucion: aplicar la migracion de empresa compartida (ver shared_company_migration.sql) o ajustar policies de clients. ' +
-          buildClientUpdateDebugMessage(payload, authUserIdForDebug)
+          `${buildClientUpdateDebugMessage(payload, authUserIdForDebug)} | insert_error=${insertedMissing.error?.message || 'N/A'}`
         );
       }
       if (error && isUndefinedColumnError(error)) {
@@ -994,10 +1030,19 @@ export const dataService = {
               return byDocRetry.data;
             }
           }
+          const insertedMissing = await insertClientWithProvidedId();
+          if (!insertedMissing.error) {
+            console.warn('[SYNC:clients] legacy update por id/documento no encontro fila; se inserto el cliente faltante.', {
+              clientId: payload.id,
+              document: payload.document,
+              authUserId: authUserIdForDebug || null,
+            });
+            return insertedMissing.data;
+          }
           throw new Error(
             'No se pudo actualizar el cliente en Supabase (0 filas afectadas). Esto suele pasar por permisos/RLS. ' +
             'Solucion: aplicar shared_company_migration.sql o ajustar policies. ' +
-            buildClientUpdateDebugMessage(payload, authUserIdForDebug)
+            `${buildClientUpdateDebugMessage(payload, authUserIdForDebug)} | insert_error=${insertedMissing.error?.message || 'N/A'}`
           );
         }
       }
