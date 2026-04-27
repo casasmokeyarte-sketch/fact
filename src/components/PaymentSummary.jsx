@@ -95,6 +95,10 @@ export function PaymentSummary({
     new Set([...(paymentMethods || []), OTHER_MODE].filter(Boolean))
   );
 
+  const discountsDisabledByCredit = isMixed
+    ? (isCreditMode(mixedModeA) || isCreditMode(mixedModeB))
+    : isCreditMode(paymentMode);
+
   const totals = computeInvoiceTotals({
     items,
     deliveryFee,
@@ -103,6 +107,7 @@ export function PaymentSummary({
     referredClientDiscountEligible,
     extraDiscount: resolvedExtraDiscount,
     promotions,
+    disableDiscounts: discountsDisabledByCredit,
     now: operationalNow instanceof Date ? operationalNow : new Date(),
   });
 
@@ -117,6 +122,7 @@ export function PaymentSummary({
   const totalDiscount = totals.totalDiscount;
   const promotionsBlockedByClientDiscount = totals.promotionsBlockedByClientDiscount;
   const promotionBlockedReason = String(totals.promotionBlockedReason || '').trim();
+  const discountsDisabledReason = String(totals.discountsDisabledReason || '').trim();
   const automaticDiscountSource = String(totals.automaticDiscountSource || '').trim();
   const referralDiscountApplied = totals.referralDiscountApplied === true;
   const referredClientDiscountApplied = totals.referredClientDiscountApplied === true;
@@ -766,7 +772,15 @@ export function PaymentSummary({
           </div>
         )}
 
-        {promotionsBlockedByClientDiscount && (
+        {discountsDisabledReason === 'credit_full_price' && (
+          <div className="card card--muted" style={{ marginBottom: '1rem', borderColor: '#f59e0b' }}>
+            <div style={{ fontSize: '0.9rem', color: '#92400e' }}>
+              Factura a credito: se cobra precio full. No aplican descuentos de cliente, referidos, promociones ni descuento extraordinario.
+            </div>
+          </div>
+        )}
+
+        {promotionsBlockedByClientDiscount && discountsDisabledReason !== 'credit_full_price' && (
           <div className="card card--muted" style={{ marginBottom: '1rem', borderColor: '#f59e0b' }}>
             <div style={{ fontSize: '0.9rem', color: '#92400e' }}>
               {promotionBlockedReason === 'referral_credit'

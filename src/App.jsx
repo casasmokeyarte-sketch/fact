@@ -4451,6 +4451,7 @@ function App() {
     referredClientDiscountEligible,
     extraDiscount: composerExtraDiscount,
     promotions: companyPromotions,
+    disableDiscounts: paymentMode === PAYMENT_MODES.CREDITO,
     now: getOperationalNow(),
   });
   const composerTotalDiscount = composerTotals.totalDiscount;
@@ -4520,6 +4521,7 @@ function App() {
       referredClientDiscountEligible,
       extraDiscount,
       promotions: companyPromotions,
+      disableDiscounts: !isInternalZero && isCreditPortion,
       now: getOperationalNow(),
     });
     const automaticDiscountPercent = totals.automaticDiscountPercent;
