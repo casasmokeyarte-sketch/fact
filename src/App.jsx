@@ -1106,6 +1106,37 @@ function App() {
     }
   }, [selectedClient?.document, selectedClient?.referrerDocument]);
 
+  useEffect(() => {
+    const selectedId = String(selectedClient?.id || '').trim();
+    const selectedDoc = String(selectedClient?.document || '').trim();
+    if (!selectedId && !selectedDoc) return;
+
+    const freshSelectedClient = (registeredClients || []).find((client) => {
+      const rowId = String(client?.id || '').trim();
+      const rowDoc = String(client?.document || '').trim();
+      if (selectedId && rowId) return rowId === selectedId;
+      return !!selectedDoc && rowDoc === selectedDoc;
+    });
+
+    if (!freshSelectedClient) return;
+
+    const previousNormalized = normalizeClientDraft(selectedClient);
+    const nextNormalized = normalizeClientDraft(freshSelectedClient);
+    if (JSON.stringify(previousNormalized) === JSON.stringify(nextNormalized)) return;
+
+    setSelectedClient(nextNormalized);
+
+    if (String(clientName || '').trim().toLowerCase() === String(previousNormalized?.name || '').trim().toLowerCase()) {
+      setClientName(nextNormalized?.name || CLIENT_OCASIONAL);
+    }
+  }, [
+    registeredClients,
+    selectedClient?.id,
+    selectedClient?.document,
+    selectedClient?.name,
+    clientName,
+  ]);
+
   const hydrateOpenShift = (rawShift) => normalizeStoredOpenShift(rawShift);
 
   const isValidOpenShift = (candidateShift) => {
