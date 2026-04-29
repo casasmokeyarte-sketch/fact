@@ -1996,13 +1996,6 @@ function App() {
       const protectedClients = protectRecentClientWrites(dbClients || [], protectedClientWritesRef.current);
       const safeProducts = dedupeProducts(protectedProducts);
       const safeClients = dedupeClients(protectedClients);
-      if ((dbClients || []).length > 0 || Object.keys(protectedClientWritesRef.current || {}).length > 0) {
-        console.log('[DEBUG:protectClients] incoming keys', (dbClients || []).slice(0, 25).map((c) => ({
-          id: c?.id ? `id:${c.id}` : null,
-          document: c?.document ? `doc:${String(c.document).trim()}` : null,
-        })));
-        console.log('[DEBUG:protectClients] protected keys', Object.keys(protectedClientWritesRef.current || {}));
-      }
       if (!pendingProductsSyncRef.current) {
         setProducts((prev) => {
           // Guard against transient empty refreshes that can wipe local state.
@@ -2010,7 +2003,6 @@ function App() {
             console.warn('Refresh de productos devolvio vacio; se conserva cache local para evitar perdida visual.');
             return prev;
           }
-          console.log('[DEBUG:refreshCloudData] Products - cloud count:', (dbProducts || []).length, 'final (protected) count:', safeProducts.length);
           const prevSerialized = JSON.stringify(dedupeProducts(prev || []));
           const nextSerialized = JSON.stringify(safeProducts);
           if (prevSerialized === nextSerialized) {
@@ -2129,12 +2121,6 @@ function App() {
           const finalClients = dedupeClients(
             protectRecentClientWrites(dbClients || [], protectedClientWritesRef.current)
           );
-          
-          const protectedCount = Object.keys(protectedClientWritesRef.current || {}).length;
-          console.log('[DEBUG:refreshCloudData] Clients - cloud count:', (dbClients || []).length, 'protected count:', protectedCount, 'final count:', finalClients.length);
-          if (protectedCount > 0) {
-            console.log('[DEBUG:refreshCloudData] Protected keys:', Object.keys(protectedClientWritesRef.current));
-          }
 
           const prevSerialized = JSON.stringify(dedupeClients(prev || []));
           const nextSerialized = JSON.stringify(finalClients);
@@ -6042,19 +6028,10 @@ function App() {
                   });
 
                   for (const changed of changedClients) {
-                    console.log('[DEBUG:setClients] Calling saveClient for:', changed.document || changed.id);
-                    console.log('[DEBUG:client:draft-before-save]', changed);
                     const savedRows = await dataService.saveClient({ ...changed, user_id: currentUser?.id });
-                    console.log('[DEBUG:setClients] saveClient result:', savedRows);
-                    try {
-                      console.log('[DEBUG:saveClient result full]', JSON.stringify(savedRows, null, 2));
-                    } catch {
-                      console.log('[DEBUG:saveClient result full] No serializable');
-                    }
                     if (Array.isArray(savedRows)) {
                       savedClients.push(...savedRows);
                       savedRows.forEach((savedRow) => {
-                        console.log('[DEBUG:client:server-after-save]', savedRow);
                         const idKey = getClientIdentityKey(savedRow);
                         if (!idKey) return;
 
@@ -6063,7 +6040,6 @@ function App() {
                           delete recentClientWritesRef.current[`doc:${String(savedRow.document).trim()}`];
                         }
 
-                        console.log('[DEBUG:setClients] Updating protection for key:', idKey);
                         recentClientWritesRef.current[idKey] = {
                           row: savedRow,
                           writtenAt: Date.now(),
@@ -6078,11 +6054,6 @@ function App() {
                   }
 
                   if (savedClients.length > 0) {
-                    console.log('[DEBUG:setClients] Forcing server rows to replace drafts:', {
-                      savedClientsCount: savedClients.length,
-                      savedDocs: savedClients.map(c => c?.document).join(', '),
-                    });
-                    
                     // Keep the protection map updated with the server rows so the next refresh
                     // can protect them correctly during the 5-minute window.
                     // Do NOT clear the protection here - we need it for the upcoming refresh.
@@ -6102,25 +6073,11 @@ function App() {
                       savedClients.forEach((serverRow) => {
                         const doc = String(serverRow?.document || '').trim();
                         if (doc) {
-                          console.log('[DEBUG:setClients] Replacing local draft:', doc, '→ server row');
                           byDocMap.set(doc, serverRow); // Server data always wins
                         }
                       });
                       
                       const result = dedupeClients(Array.from(byDocMap.values()));
-                      if (savedClients.length > 0) {
-                        const mergedByDoc = Object.fromEntries(result.map((client) => [String(client?.document || '').trim(), client]));
-                        savedClients.forEach((serverRow) => {
-                          const doc = String(serverRow?.document || '').trim();
-                          if (doc) {
-                            console.log('[DEBUG:client:merged-final]', {
-                              document: doc,
-                              mergedClient: mergedByDoc[doc] || null,
-                            });
-                          }
-                        });
-                      }
-                      console.log('[DEBUG:setClients] Final merged count:', result.length);
                       return result;
                     });
                   }
