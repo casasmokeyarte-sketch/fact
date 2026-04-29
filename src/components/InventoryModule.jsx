@@ -136,12 +136,12 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
         if (!currentUser?.id) return;
         const saved = localStorage.getItem(filterStorageKey);
         if (saved !== null) setSearchTerm(saved);
-    }, [currentUser?.id]);
+    }, [currentUser?.id, filterStorageKey]);
 
     useEffect(() => {
         if (!currentUser?.id) return;
         localStorage.setItem(filterStorageKey, searchTerm);
-    }, [searchTerm, currentUser?.id]);
+    }, [searchTerm, currentUser?.id, filterStorageKey]);
 
     useEffect(() => {
         setProductImageDraft(normalizeImageUrl(editingProduct?.image_url));
@@ -328,7 +328,7 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
     const handleSaveProduct = (e) => {
         e.preventDefault();
         const formData = new FormData(e.target);
-        const productData = {
+        const productForm = {
             id: editingProduct
                 ? editingProduct.id
                 : createProductId(),
@@ -344,6 +344,12 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
             is_visible: formData.get('is_visible') === 'on',
             full_price_only: formData.get('full_price_only') === 'on',
         };
+        const productData = editingProduct
+            ? { ...editingProduct, ...productForm, id: editingProduct.id }
+            : productForm;
+
+        console.log("[DEBUG:product:form-before-submit]", productForm);
+        console.log("[DEBUG:product:object-sent-to-setProducts]", productData);
 
         if (editingProduct) {
             setProducts(products.map(p => p.id === editingProduct.id ? productData : p));
@@ -367,7 +373,7 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
                     await onDeleteProduct(id);
                 }
                 onLog?.({ module: 'Inventario', action: 'Eliminar Producto', details: `Eliminado ID: ${id}` });
-            } catch (err) {
+            } catch {
                 setProducts(prevProducts);
             }
         }
@@ -416,7 +422,7 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
                     const ws = wb.Sheets[wsname];
                     const data = XLSX.utils.sheet_to_json(ws);
                     if (Array.isArray(data) && data.length > 0) {
-                        const mapped = data.map((item, rowIndex) => {
+                        const mapped = data.map((item) => {
                             // Find values by various possible header names (case insensitive)
                             const find = (keys) => {
                                 const foundKey = Object.keys(item).find(k => keys.includes(k.toUpperCase().trim()));
@@ -446,7 +452,7 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
                         });
                         alert(`Importacion completada.\nNuevos: ${insertedCount}\nActualizados (ID/codigo): ${updatedCount}`);
                     }
-                } catch (err) { alert("Error al leer Excel"); }
+                } catch { alert("Error al leer Excel"); }
             };
         } else {
             fileReader.readAsText(file, "UTF-8");
@@ -458,8 +464,8 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
                         imported = JSON.parse(content);
                     } else if (type === 'notes') {
                         const lines = content.split('\n').filter(l => l.trim().length > 0);
-                        const [header, ...rows] = lines;
-                        imported = rows.map((row, rowIndex) => {
+                        const [, ...rows] = lines;
+                        imported = rows.map((row) => {
                             const [id, name, price, cost, unit, barcode, category, status, reorderLevel, isVisible] = row.split(',').map(s => s.replace(/"/g, '').trim());
                             return {
                                 id: id || createProductId(),
@@ -486,7 +492,7 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
                         });
                         alert(`Importacion completada.\nNuevos: ${insertedCount}\nActualizados (ID/codigo): ${updatedCount}`);
                     }
-                } catch (err) { alert("Error: Archivo invAlido."); }
+                } catch { alert("Error: Archivo invAlido."); }
                 finally { e.target.value = ''; }
             };
         }

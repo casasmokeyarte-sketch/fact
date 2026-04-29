@@ -90,12 +90,12 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
         if (!currentUser?.id) return;
         const saved = localStorage.getItem(filterStorageKey);
         if (saved !== null) setSearchTerm(saved);
-    }, [currentUser?.id]);
+    }, [currentUser?.id, filterStorageKey]);
 
     useEffect(() => {
         if (!currentUser?.id) return;
         localStorage.setItem(filterStorageKey, searchTerm);
-    }, [searchTerm, currentUser?.id]);
+    }, [searchTerm, currentUser?.id, filterStorageKey]);
 
     const handleLevelChange = (levelKey) => {
         const safeLevel = resolveCreditLevel(levelKey);
@@ -114,19 +114,45 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
     const handleSave = async (e) => {
         e.preventDefault();
         if (isSaving) return;
-        if (!newClient.name || !newClient.document) return alert("Nombre y Documento son obligatorios");
-
-        const { credit_level, credit_limit, approved_term, ...cleanClient } = (newClient || {});
-        const normalizedClient = {
-            ...cleanClient,
-            id: String(newClient.id || '').trim() || undefined,
-            name: String(newClient.name || '').trim(),
-            document: String(newClient.document || '').trim(),
-            creditLevel: resolveCreditLevel(newClient.creditLevel),
-            creditLimit: Number(newClient.creditLimit ?? 0),
-            approvedTerm: Number(newClient.approvedTerm ?? 30),
-            discount: Number(newClient.discount ?? 0),
+        const formData = new FormData(e.currentTarget);
+        const matchDoc = editingDocument || String(newClient.document || '').trim();
+        const existingClient = isEditing
+            ? clients.find((c) => (
+                String(c.document || '').trim() === String(matchDoc || '').trim() ||
+                (newClient.id && String(c.id || '') === String(newClient.id))
+            ))
+            : null;
+        const formClient = {
+            name: String(formData.get('name') ?? newClient.name ?? '').trim(),
+            document: String(formData.get('document') ?? newClient.document ?? '').trim(),
+            address: String(formData.get('address') ?? newClient.address ?? '').trim(),
+            phone: String(formData.get('phone') ?? newClient.phone ?? '').trim(),
+            email: String(formData.get('email') ?? newClient.email ?? '').trim(),
+            creditLevel: onlyStandard
+                ? resolveCreditLevel(newClient.creditLevel)
+                : resolveCreditLevel(formData.get('creditLevel') ?? newClient.creditLevel),
+            creditLimit: onlyStandard
+                ? Number(newClient.creditLimit ?? 0)
+                : Number(formData.get('creditLimit') ?? newClient.creditLimit ?? 0),
+            approvedTerm: onlyStandard
+                ? Number(newClient.approvedTerm ?? 30)
+                : Number(formData.get('approvedTerm') ?? newClient.approvedTerm ?? 30),
+            discount: Number(newClient.discount ?? existingClient?.discount ?? 0),
         };
+        const cleanClient = { ...(newClient || {}) };
+        delete cleanClient.credit_level;
+        delete cleanClient.credit_limit;
+        delete cleanClient.approved_term;
+        const normalizedClient = {
+            ...(existingClient || {}),
+            ...cleanClient,
+            ...formClient,
+            id: String(newClient.id || existingClient?.id || '').trim() || undefined,
+        };
+        console.log("[DEBUG:client:form-before-submit]", formClient);
+        console.log("[DEBUG:client:object-sent-to-setClients]", normalizedClient);
+
+        if (!normalizedClient.name || !normalizedClient.document) return alert("Nombre y Documento son obligatorios");
 
         if (normalizedClient.creditLevel === 'CREDITO_SIN_DESCUENTO' && normalizedClient.creditLimit <= 0) {
             return alert("Para 'Linea de Credito (Sin descuento)' debe definir un cupo mayor a 0.");
@@ -135,7 +161,6 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
         setIsSaving(true);
         try {
             if (isEditing) {
-                const matchDoc = editingDocument || normalizedClient.document;
                 await setClients(clients.map((c) => (
                     String(c.document || '').trim() === String(matchDoc || '').trim()
                         ? {
@@ -229,7 +254,7 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
                         onLog?.({ module: 'Clientes', action: 'Importar Excel', details: `Importados ${data.length} clientes` });
                         alert("Clientes importados con Axito");
                     }
-                } catch (err) { alert("Error al importar Excel"); }
+                } catch { alert("Error al importar Excel"); }
             };
         } else {
             reader.onload = (event) => {
@@ -240,7 +265,7 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
                         imported = JSON.parse(content);
                     } else if (type === 'notes') {
                         const lines = content.split('\n').filter(l => l.trim().length > 0);
-                        const [header, ...rows] = lines;
+                        const [, ...rows] = lines;
                         imported = rows.map(row => {
                             const [name, doc, phone, addr, level, limit, disc] = row.split(',').map(s => s.replace(/"/g, '').trim());
                             return { name, document: doc, phone, address: addr, creditLevel: level || 'ESTANDAR', creditLimit: Number(limit) || 0, discount: Number(disc) || 0, id: createClientId() };
@@ -250,7 +275,7 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
                         setClients(imported);
                         alert("Clientes importados con Axito");
                     }
-                } catch (err) {
+                } catch {
                     alert("Error al importar archivo");
                 } finally { e.target.value = ''; }
             };
@@ -364,29 +389,30 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
                     <form onSubmit={handleSave}>
                         <div className="input-group">
                             <label className="input-label">Nombre Completo</label>
-                            <input type="text" className="input-field" value={newClient.name} onChange={e => setNewClient({ ...newClient, name: e.target.value })} required />
+                            <input name="name" type="text" className="input-field" value={newClient.name} onChange={e => setNewClient({ ...newClient, name: e.target.value })} required />
                         </div>
                         <div className="input-group">
                             <label className="input-label">Documento / NIT</label>
-                            <input type="text" className="input-field" value={newClient.document} onChange={e => setNewClient({ ...newClient, document: e.target.value })} required />
+                            <input name="document" type="text" className="input-field" value={newClient.document} onChange={e => setNewClient({ ...newClient, document: e.target.value })} required />
                         </div>
                         <div className="input-group">
                             <label className="input-label">Direcciòn</label>
-                            <input type="text" className="input-field" value={newClient.address} onChange={e => setNewClient({ ...newClient, address: e.target.value })} />
+                            <input name="address" type="text" className="input-field" value={newClient.address} onChange={e => setNewClient({ ...newClient, address: e.target.value })} />
                         </div>
                         <div className="input-group">
                             <label className="input-label">Telèfono</label>
-                            <input type="text" className="input-field" value={newClient.phone} onChange={e => setNewClient({ ...newClient, phone: e.target.value })} />
+                            <input name="phone" type="text" className="input-field" value={newClient.phone} onChange={e => setNewClient({ ...newClient, phone: e.target.value })} />
                         </div>
                         <div className="input-group">
                             <label className="input-label">Email (para facturas eelectronica)</label>
-                            <input type="email" className="input-field" value={newClient.email || ''} onChange={e => setNewClient({ ...newClient, email: e.target.value })} placeholder="cliente@ejemplo.com" />
+                            <input name="email" type="email" className="input-field" value={newClient.email || ''} onChange={e => setNewClient({ ...newClient, email: e.target.value })} placeholder="cliente@ejemplo.com" />
                         </div>
                         {!onlyStandard && (
                         <>
                         <div className="input-group">
                             <label className="input-label">Nivel de Credito</label>
                             <select
+                                name="creditLevel"
                                 className="input-field"
                                 value={newClient.creditLevel}
                                 onChange={e => handleLevelChange(e.target.value)}
@@ -403,7 +429,7 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                             <div className="input-group">
                                 <label className="input-label">Cupo Credito (Max Sugerido)</label>
-                                <input type="number" className="input-field" value={newClient.creditLimit} onChange={e => setNewClient({ ...newClient, creditLimit: Number(e.target.value) })} />
+                                <input name="creditLimit" type="number" className="input-field" value={newClient.creditLimit} onChange={e => setNewClient({ ...newClient, creditLimit: Number(e.target.value) })} />
                             </div>
                             <div className="input-group">
                                 <label className="input-label">Descuento AutomAtico (%)</label>
@@ -412,7 +438,7 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
                         </div>
                         <div className="input-group">
                             <label className="input-label">Plazo (Dias)</label>
-                            <input type="number" className="input-field" value={newClient.approvedTerm} onChange={e => setNewClient({ ...newClient, approvedTerm: Number(e.target.value) })} />
+                            <input name="approvedTerm" type="number" className="input-field" value={newClient.approvedTerm} onChange={e => setNewClient({ ...newClient, approvedTerm: Number(e.target.value) })} />
                         </div>
                         </>
                         )}
