@@ -144,12 +144,22 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
                 : Number(formData.get('approvedTerm') ?? clientForm.approvedTerm ?? 30),
             discount: Number(clientForm.discount ?? existingClient?.discount ?? 0),
         };
+        const cleanExistingClient = { ...(existingClient || {}) };
+        delete cleanExistingClient.credit_level;
+        delete cleanExistingClient.credit_limit;
+        delete cleanExistingClient.approved_term;
+        delete cleanExistingClient.referrer_document;
+        delete cleanExistingClient.referrer_name;
+        delete cleanExistingClient.referral_reward_granted;
+        delete cleanExistingClient.referral_credits_available;
+        delete cleanExistingClient.referral_points;
+        delete cleanExistingClient.successful_referral_count;
         const cleanClient = { ...(clientForm || {}) };
         delete cleanClient.credit_level;
         delete cleanClient.credit_limit;
         delete cleanClient.approved_term;
         const normalizedClient = {
-            ...(existingClient || {}),
+            ...cleanExistingClient,
             ...cleanClient,
             ...formClient,
             id: String(clientForm.id || existingClient?.id || '').trim() || undefined,
@@ -585,13 +595,19 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
                                                     setEditingDocument(String(c.document || '').trim());
                                                     setClientForm({
                                                         ...c,
-                                                        creditLevel: resolveCreditLevel(c.creditLevel || c.credit_level),
-                                                        creditLimit: Number(c.creditLimit ?? c.credit_limit ?? 0),
-                                                        approvedTerm: Number(c.approvedTerm ?? c.approved_term ?? 30),
+                                                        creditLevel: resolveCreditLevel(c.credit_level ?? c.creditLevel),
+                                                        creditLimit: Number(c.credit_limit ?? c.creditLimit ?? 0),
+                                                        approvedTerm: Number(c.approved_term ?? c.approvedTerm ?? 30),
                                                         discount: Number(c.discount ?? 0),
                                                         credit_level: undefined,
                                                         credit_limit: undefined,
                                                         approved_term: undefined,
+                                                        referrer_document: undefined,
+                                                        referrer_name: undefined,
+                                                        referral_reward_granted: undefined,
+                                                        referral_credits_available: undefined,
+                                                        referral_points: undefined,
+                                                        successful_referral_count: undefined,
                                                     });
                                                 }}
                                             >

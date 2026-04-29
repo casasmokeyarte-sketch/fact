@@ -208,22 +208,34 @@ const normalizeClientDraft = (client) => {
   const hasBlocked = typeof client?.blocked === 'boolean';
   const blocked = hasBlocked ? client.blocked === true : client?.active === false;
   const active = hasBlocked ? !blocked : (client?.active ?? true);
+  const {
+    credit_level,
+    credit_limit,
+    approved_term,
+    referrer_document,
+    referrer_name,
+    referral_reward_granted,
+    referral_credits_available,
+    referral_points,
+    successful_referral_count,
+    ...rest
+  } = client || {};
 
   return {
-    ...client,
+    ...rest,
     document: String(client?.document || '').trim(),
     name: String(client?.name || '').trim(),
     email: String(client?.email || '').trim(),
-    creditLevel: String(client?.creditLevel || client?.credit_level || 'ESTANDAR').trim() || 'ESTANDAR',
-    creditLimit: Number(client?.creditLimit ?? client?.credit_limit ?? 0),
-    approvedTerm: Number(client?.approvedTerm ?? client?.approved_term ?? 30),
+    creditLevel: String(client?.credit_level ?? client?.creditLevel ?? 'ESTANDAR').trim() || 'ESTANDAR',
+    creditLimit: Number(client?.credit_limit ?? client?.creditLimit ?? 0),
+    approvedTerm: Number(client?.approved_term ?? client?.approvedTerm ?? 30),
     discount: Number(client?.discount ?? 0),
-    referrerDocument: String(client?.referrerDocument ?? client?.referrer_document ?? '').trim(),
-    referrerName: String(client?.referrerName ?? client?.referrer_name ?? '').trim(),
-    referralRewardGranted: client?.referralRewardGranted === true || client?.referral_reward_granted === true,
-    referralCreditsAvailable: Math.max(0, Number(client?.referralCreditsAvailable ?? client?.referral_credits_available ?? 0) || 0),
-    referralPoints: Math.max(0, Number(client?.referralPoints ?? client?.referral_points ?? 0) || 0),
-    successfulReferralCount: Math.max(0, Number(client?.successfulReferralCount ?? client?.successful_referral_count ?? 0) || 0),
+    referrerDocument: String(client?.referrer_document ?? client?.referrerDocument ?? '').trim(),
+    referrerName: String(client?.referrer_name ?? client?.referrerName ?? '').trim(),
+    referralRewardGranted: client?.referral_reward_granted === true || client?.referralRewardGranted === true,
+    referralCreditsAvailable: Math.max(0, Number(client?.referral_credits_available ?? client?.referralCreditsAvailable ?? 0) || 0),
+    referralPoints: Math.max(0, Number(client?.referral_points ?? client?.referralPoints ?? 0) || 0),
+    successfulReferralCount: Math.max(0, Number(client?.successful_referral_count ?? client?.successfulReferralCount ?? 0) || 0),
     active,
     blocked,
   };
