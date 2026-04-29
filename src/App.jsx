@@ -383,7 +383,10 @@ const protectRecentProductWrites = (incomingRows, protectedRowsById) => {
   Object.entries(protectedRowsById || {}).forEach(([id, entry]) => {
     if (!entry?.row) return;
     const writtenAt = Number(entry.writtenAt || 0);
-    if (!writtenAt || now - writtenAt > RECENT_WRITE_PROTECTION_MS) return;
+    if (!writtenAt || now - writtenAt > RECENT_WRITE_PROTECTION_MS) {
+      delete protectedRowsById[id];
+      return;
+    }
 
     const protectedRow = entry.row;
     const incomingRow = result.get(String(id));
@@ -392,11 +395,9 @@ const protectRecentProductWrites = (incomingRows, protectedRowsById) => {
       return;
     }
 
-    const protectedUpdatedAt = getProductUpdatedAtMs(protectedRow);
-    const incomingUpdatedAt = getProductUpdatedAtMs(incomingRow);
-    if (protectedUpdatedAt >= incomingUpdatedAt) {
-      result.set(String(id), protectedRow);
-    }
+    // Keep local writes authoritative during protection window to avoid
+    // realtime refreshes restoring stale cloud payloads.
+    result.set(String(id), { ...incomingRow, ...protectedRow });
   });
 
   return Array.from(result.values());
@@ -823,6 +824,8 @@ function App() {
   const pendingClientsSyncRef = useRef(false);
   const recentClientWritesRef = useRef({});
   const recentProductWritesRef = useRef({});
+  const protectedClientWritesRef = recentClientWritesRef;
+  const protectedProductWritesRef = recentProductWritesRef;
   const userCashBalancesHydratedRef = useRef(false);
   const lastSyncedUserCashBalancesRef = useRef('');
   const usersRef = useRef([]);
@@ -1958,12 +1961,10 @@ function App() {
         dataService.getUserCashBalances()
       ]);
 
-      const safeProducts = dedupeProducts(
-        protectRecentProductWrites(dbProducts || [], recentProductWritesRef.current)
-      );
-      const safeClients = dedupeClients(
-        protectRecentClientWrites(dbClients || [], recentClientWritesRef.current)
-      );
+      const protectedProducts = protectRecentProductWrites(dbProducts || [], protectedProductWritesRef.current);
+      const protectedClients = protectRecentClientWrites(dbClients || [], protectedClientWritesRef.current);
+      const safeProducts = dedupeProducts(protectedProducts);
+      const safeClients = dedupeClients(protectedClients);
       if (!pendingProductsSyncRef.current) {
         setProducts((prev) => {
           // Guard against transient empty refreshes that can wipe local state.
@@ -2088,13 +2089,13 @@ function App() {
           }
 
           const finalClients = dedupeClients(
-            protectRecentClientWrites(dbClients || [], recentClientWritesRef.current)
+            protectRecentClientWrites(dbClients || [], protectedClientWritesRef.current)
           );
           
-          const protectedCount = Object.keys(recentClientWritesRef.current || {}).length;
+          const protectedCount = Object.keys(protectedClientWritesRef.current || {}).length;
           console.log('[DEBUG:refreshCloudData] Clients - cloud count:', (dbClients || []).length, 'protected count:', protectedCount, 'final count:', finalClients.length);
           if (protectedCount > 0) {
-            console.log('[DEBUG:refreshCloudData] Protected keys:', Object.keys(recentClientWritesRef.current));
+            console.log('[DEBUG:refreshCloudData] Protected keys:', Object.keys(protectedClientWritesRef.current));
           }
 
           const prevSerialized = JSON.stringify(dedupeClients(prev || []));
@@ -5978,6 +5979,10 @@ function App() {
                   if (removedClients.length > 0) {
                     for (const removed of removedClients) {
                       await dataService.deleteClient(removed);
+                      const removedKey = getClientIdentityKey(removed);
+                      if (removedKey) {
+                        delete protectedClientWritesRef.current[removedKey];
+                      }
                     }
                   }
 
@@ -6176,6 +6181,7 @@ function App() {
                 pendingProductsSyncRef.current = true;
                 try {
                   await dataService.deleteProduct(removed);
+                  delete protectedProductWritesRef.current[String(removed.id)];
                   await refreshCloudData({ silent: true });
                 } catch (e) {
                   console.error("Error eliminando producto en Supabase:", e);
