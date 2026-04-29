@@ -24,6 +24,10 @@ export async function initContext() {
 }
 
 export async function resumeContext() {
+  const activation = isBrowser ? window.navigator?.userActivation : null;
+  if (activation && !activation.isActive && !activation.hasBeenActive) {
+    return null;
+  }
   await initContext();
 }
 

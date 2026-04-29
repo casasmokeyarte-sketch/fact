@@ -6,14 +6,13 @@ import { SortButton } from './SortButton';
 
 export function PurchasingModule({
     warehouseStock,
-    setWarehouseStock,
     purchases,
-    setPurchases,
     onLog,
     products,
     currentUser,
     userCashBalance = 0,
     onRegisterPurchase,
+    onDistributeStock,
 }) {
     const [purchase, setPurchase] = useState({
         invoiceNumber: '',
@@ -66,15 +65,6 @@ export function PurchasingModule({
             return alert(`No se pudo registrar la compra.\n\nDetalle: ${message}`);
         }
 
-        // Update Warehouse Stock
-        setWarehouseStock(prev => ({
-            ...prev,
-            [purchase.productId]: (prev[purchase.productId] || 0) + qty
-        }));
-
-        // Add to history logs (Purchases)
-        setPurchases([newPurchase, ...purchases]);
-
         onLog?.({
             module: 'Compras',
             action: 'Registrar Compra',
@@ -86,13 +76,15 @@ export function PurchasingModule({
         alert("Compra registrada y stock sumado a BODEGA");
     };
 
-    const distributeStock = (productId, amount) => {
+    const distributeStock = async (productId, amount) => {
         if ((warehouseStock[productId] || 0) < amount) return alert("No hay suficiente stock en bodega");
 
-        setWarehouseStock(prev => ({
-            ...prev,
-            [productId]: prev[productId] - amount
-        }));
+        try {
+            await onDistributeStock?.(productId, amount);
+        } catch (error) {
+            return alert(`No se pudo distribuir inventario.\n\nDetalle: ${error?.message || 'Error desconocido'}`);
+        }
+
         const product = products.find((p) => String(p.id) === String(productId));
         onLog?.({
             module: 'Compras',

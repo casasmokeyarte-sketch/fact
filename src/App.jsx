@@ -2507,13 +2507,48 @@ function App() {
     return () => window.removeEventListener('keydown', handleGlobalQuickScanner, true);
   }, [activeTab, shift, products]);
 
+  const saveProductStockFieldsInDB = async (productId, changes) => {
+    const prod = products.find(p => String(p.id) === String(productId));
+    if (!prod) {
+      throw new Error('No se encontro el producto para actualizar inventario.');
+    }
+
+    const normalizedChanges = {};
+    if (Object.prototype.hasOwnProperty.call(changes || {}, 'stock')) {
+      normalizedChanges.stock = Number(changes.stock) || 0;
+    }
+    if (Object.prototype.hasOwnProperty.call(changes || {}, 'warehouse_stock')) {
+      normalizedChanges.warehouse_stock = Number(changes.warehouse_stock) || 0;
+    }
+
+    if (Object.keys(normalizedChanges).length === 0) {
+      throw new Error('No hay cambios de inventario para guardar.');
+    }
+
+    lastLocalCloudWriteAtRef.current = Date.now();
+    const savedRows = await dataService.updateProductStockById(prod.id, normalizedChanges, currentUser?.id);
+    const savedRow = Array.isArray(savedRows) ? savedRows[0] : savedRows;
+    if (Array.isArray(savedRows) && savedRows.length === 0) {
+      throw new Error('La base de datos no actualizo ninguna fila de producto. Revise permisos de inventario/RLS.');
+    }
+    for (const field of Object.keys(normalizedChanges)) {
+      if (savedRow && !Object.prototype.hasOwnProperty.call(savedRow, field)) {
+        throw new Error(`La base de datos no devolvio la columna ${field}. Aplique la migracion de inventario.`);
+      }
+    }
+    return savedRows;
+  };
+
+  const saveStockInDB = async (type, productId, newValue) => {
+    const field = type === 'bodega' ? 'warehouse_stock' : 'stock';
+    return saveProductStockFieldsInDB(productId, { [field]: Number(newValue) || 0 });
+  };
+
   const updateStockInDB = async (type, productId, newValue) => {
     const prod = products.find(p => String(p.id) === String(productId));
     if (!prod) return;
     try {
-      const field = type === 'bodega' ? 'warehouse_stock' : 'stock';
-      lastLocalCloudWriteAtRef.current = Date.now();
-      await dataService.updateProductStockById(prod.id, { [field]: Number(newValue) || 0 }, currentUser?.id);
+      await saveStockInDB(type, productId, newValue);
     } catch (e) {
       console.error(`Sync ${type} error:`, e);
     }
@@ -2607,7 +2642,7 @@ function App() {
           [normalizedProductId]: nextWarehouseStock
         }
       }));
-      await updateStockInDB('bodega', normalizedProductId, nextWarehouseStock);
+      await saveStockInDB('bodega', normalizedProductId, nextWarehouseStock);
 
       setInventoryTransferRequests((prev) => [request, ...prev].slice(0, 200));
       const savedRows = await dataService.saveInventoryTransferRequest(request);
@@ -2632,7 +2667,11 @@ function App() {
           [normalizedProductId]: availableInWarehouse
         }
       }));
-      await updateStockInDB('bodega', normalizedProductId, availableInWarehouse);
+      try {
+        await saveStockInDB('bodega', normalizedProductId, availableInWarehouse);
+      } catch (rollbackError) {
+        console.error('No se pudo revertir stock de bodega tras fallar traslado:', rollbackError);
+      }
       setInventoryTransferRequests((prev) => prev.filter((item) => item.id !== request.id));
       throw error;
     }
@@ -2682,7 +2721,7 @@ function App() {
             [targetRequest.productId]: nextSalesStock
           }
         }));
-        await updateStockInDB('ventas', targetRequest.productId, nextSalesStock);
+        await saveStockInDB('ventas', targetRequest.productId, nextSalesStock);
       } else {
         setStock((prev) => ({
           ...prev,
@@ -2691,7 +2730,7 @@ function App() {
             [targetRequest.productId]: nextWarehouseStock
           }
         }));
-        await updateStockInDB('bodega', targetRequest.productId, nextWarehouseStock);
+        await saveStockInDB('bodega', targetRequest.productId, nextWarehouseStock);
       }
 
       setInventoryTransferRequests((prev) => prev.map((request) => (
@@ -2720,7 +2759,11 @@ function App() {
             [targetRequest.productId]: currentSalesStock
           }
         }));
-        await updateStockInDB('ventas', targetRequest.productId, currentSalesStock);
+        try {
+          await saveStockInDB('ventas', targetRequest.productId, currentSalesStock);
+        } catch (rollbackError) {
+          console.error('No se pudo revertir stock de ventas tras fallar traslado:', rollbackError);
+        }
       } else {
         setStock((prev) => ({
           ...prev,
@@ -2729,7 +2772,11 @@ function App() {
             [targetRequest.productId]: currentWarehouseStock
           }
         }));
-        await updateStockInDB('bodega', targetRequest.productId, currentWarehouseStock);
+        try {
+          await saveStockInDB('bodega', targetRequest.productId, currentWarehouseStock);
+        } catch (rollbackError) {
+          console.error('No se pudo revertir stock de bodega tras fallar traslado:', rollbackError);
+        }
       }
       setInventoryTransferRequests((prev) => prev.map((request) => (
         request?.id === requestId ? targetRequest : request
@@ -2947,7 +2994,7 @@ function App() {
     return updatedRequest;
   }, [currentUser]);
 
-  const onResolveRemoteAuthRequest = (requestId, decision) => {
+  const onResolveRemoteAuthRequest = async (requestId, decision) => {
     if (!requestId || !['APPROVED', 'REJECTED'].includes(decision)) return;
     const targetRequest = (remoteAuthRequests || []).find((req) => req.id === requestId);
     const resolvedBy = {
@@ -2974,6 +3021,17 @@ function App() {
       const nextBodega = Math.max(0, available - qty);
       const nextVentas = currentVentas + qty;
 
+      try {
+        await saveProductStockFieldsInDB(productId, {
+          warehouse_stock: nextBodega,
+          stock: nextVentas,
+        });
+      } catch (error) {
+        console.error('Error aprobando solicitud de inventario:', error);
+        alert(`No se pudo aprobar la solicitud porque el inventario no sincronizo.\n\nDetalle: ${error?.message || 'Error desconocido'}`);
+        return;
+      }
+
       setStock((prev) => ({
         ...prev,
         bodega: {
@@ -2985,13 +3043,6 @@ function App() {
           [productId]: nextVentas,
         }
       }));
-      Promise.all([
-        updateStockInDB('bodega', productId, nextBodega),
-        updateStockInDB('ventas', productId, nextVentas)
-      ]).catch((error) => {
-        console.error('Error aprobando solicitud de inventario:', error);
-        alert(`La solicitud se marco, pero no se pudo sincronizar inventario.\n\nDetalle: ${error?.message || 'Error desconocido'}`);
-      });
 
       addLog({
         module: 'Inventario',
@@ -4498,14 +4549,24 @@ function App() {
     const isInternalZero = invoiceMeta?.internalZero === true;
 
     // Stock Validation
+    const requestedByProduct = new Map();
     for (const item of items) {
       const productId = getSaleItemProductId(item);
-      const availableStock = Number(stock.ventas[productId] || 0);
       if (!productId) {
         return alert(`El item ${item?.name || 'sin nombre'} no tiene identificador de producto valido.`);
       }
-      if (availableStock < Number(item.quantity || 0)) {
-        return alert(`Inventario insuficiente para ${item.name}. Solo hay ${availableStock} en punto de venta.`);
+      requestedByProduct.set(
+        String(productId),
+        {
+          name: item.name,
+          quantity: (requestedByProduct.get(String(productId))?.quantity || 0) + Number(item.quantity || 0),
+        }
+      );
+    }
+    for (const [productId, requested] of requestedByProduct.entries()) {
+      const availableStock = Number(stock.ventas[productId] || 0);
+      if (availableStock < Number(requested.quantity || 0)) {
+        return alert(`Inventario insuficiente para ${requested.name}. Solo hay ${availableStock} en punto de venta.`);
       }
     }
 
@@ -4634,29 +4695,31 @@ function App() {
       }))
     };
 
-    // Reduce stock locally
+    // Reduce stock and persist it before recording the sale.
     const newStockVentas = { ...stock.ventas };
-    const stockUpdates = [];
+    const changedProductIds = new Set();
     finalInvoice.items.forEach((item) => {
       const productId = getSaleItemProductId(item);
       if (!productId) return;
       newStockVentas[productId] = (Number(newStockVentas[productId]) || 0) - Number(item.quantity || 0);
-
-      const prod = products.find((p) => String(p.id) === String(productId));
-      if (prod) {
-        stockUpdates.push(
-          dataService.updateProductStockById(prod.id, { stock: Number(newStockVentas[productId]) || 0 }, currentUser?.id)
-        );
-      }
+      changedProductIds.add(String(productId));
     });
-    setStock((prev) => ({ ...prev, ventas: newStockVentas }));
+    const stockUpdates = Array.from(changedProductIds).map((productId) => (
+      saveStockInDB('ventas', productId, newStockVentas[productId])
+    ));
 
-    try {
-      await Promise.all(stockUpdates);
-    } catch (e) {
-      console.error('Error updating stock on SALE:', e);
-      alert(`La factura se genero, pero no se pudo sincronizar el inventario de ventas.\n\nDetalle: ${e?.message || 'Error desconocido'}`);
+    const stockResults = await Promise.allSettled(stockUpdates);
+    const failedStockUpdate = stockResults.find((result) => result.status === 'rejected');
+    if (failedStockUpdate) {
+      await Promise.allSettled(Array.from(changedProductIds).map((productId) => (
+        saveStockInDB('ventas', productId, Number(stock.ventas?.[productId] || 0))
+      )));
+      const error = failedStockUpdate.reason;
+      console.error('Error updating stock on SALE:', error);
+      alert(`No se genero la factura porque no se pudo descontar el inventario de ventas.\n\nDetalle: ${error?.message || 'Error desconocido'}`);
+      return;
     }
+    setStock((prev) => ({ ...prev, ventas: newStockVentas }));
 
     if (!isInternalZero && (paymentMode === PAYMENT_MODES.CREDITO || mixedData?.credit > 0)) {
       const debtAmount = mixedData ? mixedData.credit : finalTotal;
@@ -5787,59 +5850,104 @@ function App() {
               warehouseStock={stock.bodega}
               currentUser={currentUser}
               userCashBalance={getUserCashBalance(currentUser)}
-              setWarehouseStock={async (update) => {
-                const newBodega = typeof update === 'function' ? update(stock.bodega) : update;
-                setStock({ ...stock, bodega: newBodega });
-
-                // Identify what changed to sync with Supabase
-                const changedId = Object.keys(newBodega).find(id => newBodega[id] !== stock.bodega[id]);
-                if (changedId) {
-                  const prod = products.find(p => String(p.id) === String(changedId));
-                  if (prod) {
-                    try {
-                      await dataService.updateProductStockById(
-                        prod.id,
-                        { warehouse_stock: Number(newBodega[changedId]) || 0 },
-                        currentUser?.id
-                      );
-                    } catch (e) { console.error("Sync bodega error:", e); }
-                  }
-                }
-              }}
               purchases={purchases}
-              setPurchases={async (newPurchases) => {
-                setPurchases(newPurchases);
-              }}
               onRegisterPurchase={async (purchase) => {
                 const qty = Number(purchase?.quantity) || 0;
                 const unitCost = Number(purchase?.unitCost) || 0;
                 const totalAmount = qty * unitCost;
+                const productId = String(purchase?.productId || '').trim();
+                if (!productId || qty <= 0) {
+                  throw new Error('Producto o cantidad invalida.');
+                }
+                const currentBodega = Number(stock?.bodega?.[productId] || 0);
+                const nextBodega = currentBodega + qty;
+                let stockPersisted = false;
                 adjustUserCashBalance(currentUser, -totalAmount);
                 try {
-                  await dataService.savePurchase({
+                  await saveStockInDB('bodega', productId, nextBodega);
+                  stockPersisted = true;
+
+                  const savedRows = await dataService.savePurchase({
                     ...purchase,
                     user_id: currentUser?.id,
                     user_name: currentUser?.name || currentUser?.email || 'Sistema'
                   });
-                  await syncFactMovement('purchase.created', {
-                    purchaseId: purchase.id || `purchase-${Date.now()}`,
-                    date: purchase.date,
-                    supplierName: purchase.supplier,
-                    total: totalAmount,
-                    invoiceNumber: purchase.invoiceNumber,
-                    userName: currentUser?.name || currentUser?.email || 'Sistema',
-                    items: [{
-                      productId: purchase.productId || null,
-                      quantity: qty,
-                      unitPrice: unitCost,
-                    }],
-                  });
+                  const savedPurchase = {
+                    ...purchase,
+                    id: Array.isArray(savedRows) && savedRows[0]?.id ? savedRows[0].id : purchase.id,
+                  };
+
+                  setStock((prev) => ({
+                    ...prev,
+                    bodega: {
+                      ...prev.bodega,
+                      [productId]: nextBodega,
+                    },
+                  }));
+                  setPurchases((prev) => [savedPurchase, ...(prev || [])]);
+
+                  try {
+                    await syncFactMovement('purchase.created', {
+                      purchaseId: savedPurchase.id || `purchase-${Date.now()}`,
+                      date: purchase.date,
+                      supplierName: purchase.supplier,
+                      total: totalAmount,
+                      invoiceNumber: purchase.invoiceNumber,
+                      userName: currentUser?.name || currentUser?.email || 'Sistema',
+                      items: [{
+                        productId: purchase.productId || null,
+                        quantity: qty,
+                        unitPrice: unitCost,
+                      }],
+                    });
+                  } catch (syncError) {
+                    console.warn('Compra guardada; fallo el envio al CRM:', syncError);
+                  }
+
+                  return savedPurchase;
                 } catch (e) {
                   adjustUserCashBalance(currentUser, totalAmount);
-                  const isSyncError = e?.message && (e.message.includes('CRM') || e.message.includes('sync') || e.message.includes('status'));
-                  console.error(isSyncError ? "Error sincronizando con CRM:" : "Error guardando compra en Supabase:", e);
-                  throw new Error(isSyncError ? `Compra guardada localmente pero fallo el envio al CRM: ${e.message}` : `Error en base de datos: ${e.message}`);
+                  if (stockPersisted) {
+                    try {
+                      await saveStockInDB('bodega', productId, currentBodega);
+                    } catch (rollbackError) {
+                      console.error('No se pudo revertir stock de bodega tras fallar compra:', rollbackError);
+                    }
+                  }
+                  console.error("Error guardando compra/inventario en Supabase:", e);
+                  throw new Error(`Error en base de datos: ${e.message}`);
                 }
+              }}
+              onDistributeStock={async (productId, amount) => {
+                const normalizedProductId = String(productId || '').trim();
+                const qty = Math.max(0, Math.trunc(Number(amount) || 0));
+                if (!normalizedProductId || qty <= 0) {
+                  throw new Error('Producto o cantidad invalida.');
+                }
+
+                const currentBodega = Number(stock?.bodega?.[normalizedProductId] || 0);
+                const currentVentas = Number(stock?.ventas?.[normalizedProductId] || 0);
+                if (currentBodega < qty) {
+                  throw new Error('No hay suficiente stock en bodega.');
+                }
+
+                const nextBodega = currentBodega - qty;
+                const nextVentas = currentVentas + qty;
+                await saveProductStockFieldsInDB(normalizedProductId, {
+                  warehouse_stock: nextBodega,
+                  stock: nextVentas,
+                });
+                setStock((prev) => ({
+                  ...prev,
+                  bodega: {
+                    ...prev.bodega,
+                    [normalizedProductId]: nextBodega,
+                  },
+                  ventas: {
+                    ...prev.ventas,
+                    [normalizedProductId]: nextVentas,
+                  },
+                }));
               }}
               products={products}
               onLog={(entry) => addLog({ ...entry, module: 'Compras' })}
@@ -6171,7 +6279,11 @@ function App() {
                   console.error('Error sync producto desde codigos:', e);
                   // ROLLBACK
                   setProducts(previousProducts);
-                  alert(`No se pudo sincronizar el cambio de codigos en la nube: ${e?.message || 'Error desconocido'}`);
+                  const errorText = `${e?.message || ''} ${e?.details || ''} ${e?.hint || ''} ${e?.code || ''}`.toLowerCase();
+                  const message = errorText.includes('barcode') || errorText.includes('23505') || errorText.includes('duplicate') || errorText.includes('409')
+                    ? 'Ese codigo de barras ya existe en la base de datos. Genere otro codigo e intente nuevamente.'
+                    : (e?.message || 'Error desconocido');
+                  alert(`No se pudo sincronizar el cambio de codigos en la nube: ${message}`);
                 } finally {
                   pendingProductsSyncRef.current = false;
                 }

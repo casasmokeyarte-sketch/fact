@@ -37,6 +37,26 @@ export function BarcodeModule({ products, setProducts, onLog, preselectedProduct
       usedRaw.map((code) => code.padStart(length, '0').slice(-length))
     );
 
+    const buildRandomCandidate = () => {
+      const prefix = length >= 3 ? '77' : '';
+      const bodyLength = Math.max(1, length - prefix.length);
+      const bytes = new Uint8Array(bodyLength);
+      if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+        crypto.getRandomValues(bytes);
+      } else {
+        for (let i = 0; i < bytes.length; i += 1) {
+          bytes[i] = Math.floor(Math.random() * 256);
+        }
+      }
+      const body = Array.from(bytes, (byte) => String(byte % 10)).join('');
+      return `${prefix}${body}`.padStart(length, '0').slice(-length);
+    };
+
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+      const candidate = buildRandomCandidate();
+      if (!usedNormalized.has(candidate)) return candidate;
+    }
+
     const defaultStart = BigInt(`770${'0'.repeat(Math.max(length - 3, 1))}`.slice(0, length));
     let maxUsed = defaultStart - 1n;
 
@@ -56,7 +76,7 @@ export function BarcodeModule({ products, setProducts, onLog, preselectedProduct
     return candidateStr;
   };
 
-  const toLabelFromProduct = (product, idx = 0) => ({
+  const toLabelFromProduct = React.useCallback((product, idx = 0) => ({
     id: `p-${product.id}-${idx}-${Date.now()}`,
     productId: product.id,
     name: product.name,
@@ -66,7 +86,7 @@ export function BarcodeModule({ products, setProducts, onLog, preselectedProduct
     format: barcodeFormat,
     date: new Date().toLocaleDateString(),
     origin: 'existing',
-  });
+  }), [barcodeFormat]);
 
   const getProductsWithBarcodeLabels = () =>
     products
@@ -261,7 +281,7 @@ export function BarcodeModule({ products, setProducts, onLog, preselectedProduct
       setSelectedProductId(preselectedProductId);
     }
     setPreselectedProductId('');
-  }, [preselectedProductId, products, setPreselectedProductId, canManageCodes]);
+  }, [preselectedProductId, products, setPreselectedProductId, canManageCodes, toLabelFromProduct]);
 
   useEffect(() => {
     if (generatedLabel && barcodeRef.current) {

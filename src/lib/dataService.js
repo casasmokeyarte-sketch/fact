@@ -125,18 +125,6 @@ function stripUnsupportedProductFields(payload, error) {
     changed = true;
   }
 
-  if (Object.prototype.hasOwnProperty.call(nextPayload, 'stock')) {
-    const { stock, ...rest } = nextPayload;
-    nextPayload = rest;
-    changed = true;
-  }
-
-  if (Object.prototype.hasOwnProperty.call(nextPayload, 'warehouse_stock')) {
-    const { warehouse_stock, ...rest } = nextPayload;
-    nextPayload = rest;
-    changed = true;
-  }
-
   return changed ? nextPayload : null;
 }
 
