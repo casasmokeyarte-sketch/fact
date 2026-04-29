@@ -322,7 +322,8 @@ export function bindAuthProfileInvalidation(
   }
 
   const { data } = supabase.auth.onAuthStateChange((_event, session) => {
-    invalidate(session?.user?.id ?? null)
+     if (_event === 'TOKEN_REFRESHED' || _event === 'INITIAL_SESSION') return;
+     invalidate(session?.user?.id ?? null)
   })
 
   return () => {

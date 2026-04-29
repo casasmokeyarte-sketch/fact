@@ -357,9 +357,11 @@ const protectRecentClientWrites = (incomingRows, protectedRowsByKey) => {
 
     const protectedUpdatedAt = getClientUpdatedAtMs(protectedRow);
     const incomingUpdatedAt = getClientUpdatedAtMs(incomingRow);
-    if (protectedUpdatedAt >= incomingUpdatedAt) {
-      result.set(resultKey, { ...incomingRow, ...protectedRow });
-    }
+    // Always prefer the locally-saved row within the protection window.
+    // Supabase triggers may set a newer updated_at than what we sent, so a
+    // timestamp comparison would incorrectly drop our saved data. Since we
+    // already checked writtenAt is within the window above, trust it.
+    result.set(resultKey, { ...incomingRow, ...protectedRow });
   });
 
   return Array.from(result.values());
@@ -1510,7 +1512,7 @@ function App() {
 
     setUsers((prev) => mergeUsersByIdentity(prev, [currentUser]));
     refreshUsersFromCloud({ silent: true });
-  }, [currentUser, refreshUsersFromCloud]);
+    }, [currentUser?.id, refreshUsersFromCloud]);
 
   useEffect(() => {
     usersRef.current = Array.isArray(users) ? users : [];
@@ -2091,6 +2093,9 @@ function App() {
           
           const protectedCount = Object.keys(recentClientWritesRef.current || {}).length;
           console.log('[DEBUG:refreshCloudData] Clients - cloud count:', (dbClients || []).length, 'protected count:', protectedCount, 'final count:', finalClients.length);
+          if (protectedCount > 0) {
+            console.log('[DEBUG:refreshCloudData] Protected keys:', Object.keys(recentClientWritesRef.current));
+          }
 
           const prevSerialized = JSON.stringify(dedupeClients(prev || []));
           const nextSerialized = JSON.stringify(finalClients);
@@ -5915,7 +5920,39 @@ function App() {
                   }
 
                   if (savedClients.length > 0) {
-                    setRegisteredClients((prev) => dedupeClients(mergeClientsPreferNewest(prev || [], savedClients)));
+                    console.log('[DEBUG:setClients] Forcing server rows to replace drafts:', {
+                      savedClientsCount: savedClients.length,
+                      savedDocs: savedClients.map(c => c?.document).join(', '),
+                    });
+                    
+                    // Keep the protection map updated with the server rows so the next refresh
+                    // can protect them correctly during the 5-minute window.
+                    // Do NOT clear the protection here - we need it for the upcoming refresh.
+                    
+                    setRegisteredClients((prev) => {
+                      // Force server-saved rows to always replace local drafts by ID match
+                      const byDocMap = new Map();
+                      const prevArray = prev || [];
+                      
+                      // Add all prev rows by document
+                      prevArray.forEach((client) => {
+                        const doc = String(client?.document || '').trim();
+                        if (doc) byDocMap.set(doc, client);
+                      });
+                      
+                      // REPLACE with server rows (savedClients have server timestamps and data)
+                      savedClients.forEach((serverRow) => {
+                        const doc = String(serverRow?.document || '').trim();
+                        if (doc) {
+                          console.log('[DEBUG:setClients] Replacing local draft:', doc, '→ server row');
+                          byDocMap.set(doc, serverRow); // Server data always wins
+                        }
+                      });
+                      
+                      const result = dedupeClients(Array.from(byDocMap.values()));
+                      console.log('[DEBUG:setClients] Final merged count:', result.length);
+                      return result;
+                    });
                   }
 
                   pendingClientsSyncRef.current = false;

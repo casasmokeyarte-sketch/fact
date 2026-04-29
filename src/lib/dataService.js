@@ -293,7 +293,7 @@ async function withRetry(operation, retries = 2, delayMs = 450) {
   throw lastError;
 }
 
-async function getAuthUserId() {
+  async function getAuthUserId() {
   try {
     const {
       data: { session },
@@ -788,19 +788,24 @@ export const dataService = {
   },
 
   async saveClient(client) {
-    const userId = client?.user_id || await getAuthUserId();
-    const companyId = await getCurrentCompanyId(userId);
+    const authUserId = await getAuthUserId();
+    const userId = isUuid(client?.user_id) ? client.user_id : authUserId;
+    const companyId = await getCurrentCompanyId(authUserId);
     const document = String(client?.document ?? '').trim();
     let existingByDocument = null;
     const existingClientId = isUuid(client?.id) ? client.id : null;
 
     if (document) {
-      const { data: existingRows, error: existingError } = await withRetry(() =>
-        supabase
+      const { data: existingRows, error: existingError } = await withRetry(() => {
+        let query = supabase
           .from('clients')
           .select('*')
-          .eq('document', document)
-      );
+          .eq('document', document);
+        if (isUuid(companyId)) {
+          query = query.eq('company_id', companyId);
+        }
+        return query;
+      });
       if (existingError) throw existingError;
       existingByDocument = pickBestClientRecord(existingRows, existingClientId);
       if ((existingRows || []).length > 1) {
@@ -815,13 +820,16 @@ export const dataService = {
 
     let existingById = null;
     if (existingClientId) {
-      const { data: existing, error: existingError } = await withRetry(() =>
-        supabase
+      const { data: existing, error: existingError } = await withRetry(() => {
+        let query = supabase
           .from('clients')
           .select('*')
-          .eq('id', existingClientId)
-          .maybeSingle()
-      );
+          .eq('id', existingClientId);
+        if (isUuid(companyId)) {
+          query = query.eq('company_id', companyId);
+        }
+        return query.maybeSingle();
+      });
       if (existingError) throw existingError;
       existingById = existing || null;
     }
@@ -911,6 +919,23 @@ export const dataService = {
       }
     }
 
+    if (!isUuid(payload.company_id)) {
+      const authDebugSnapshot = await getAuthDebugSnapshot();
+      console.error('[AUTH_PROBE:saveClient.payload.company_id.invalid]', {
+        clientIncoming: {
+          id: client?.id,
+          document: client?.document,
+          user_id: client?.user_id,
+          company_id: client?.company_id ?? client?.companyId,
+        },
+        authUserId,
+        computedCompanyId: companyId,
+        payloadCompanyId: payload.company_id,
+        authDebugSnapshot,
+      });
+      throw new Error('No se pudo determinar company_id para el usuario autenticado (RLS).');
+    }
+
     const insertClientWithProvidedId = async () => {
       const insertWithIdPayload = { ...removeInvalidUuidId(payload), id: payload.id };
       let { data: insertedData, error: insertError } = await withRetry(() =>
@@ -983,8 +1008,8 @@ export const dataService = {
           return insertedMissing.data;
         }
         throw new Error(
-          'No se pudo actualizar el cliente en Supabase (0 filas afectadas). Esto suele pasar por permisos/RLS cuando el cliente fue creado por otro usuario. ' +
-          'Solucion: aplicar la migracion de empresa compartida (ver shared_company_migration.sql) o ajustar policies de clients. ' +
+          'No se pudo actualizar el cliente en Supabase (0 filas afectadas). Esto suele pasar por RLS USING sobre filas legacy (company_id distinto/null) o policies por user_id en lugar de company_id. ' +
+          'Solucion: aplicar la migracion de empresa compartida (ver shared_company_migration.sql), reparar filas legacy de clients y ajustar policies de clients. ' +
           `${buildClientUpdateDebugMessage(payload, authUserIdForDebug)} | insert_error=${insertedMissing.error?.message || 'N/A'}`
         );
       }
