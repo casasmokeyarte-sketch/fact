@@ -7,7 +7,7 @@ import { useTableSort } from '../lib/useTableSort';
 import { SortButton } from './SortButton';
 
 export function ClientModule({ currentUser, clients, setClients, cartera, salesHistory, onLog }) {
-    const [newClient, setNewClient] = useState(INITIAL_REGISTERED_CLIENT);
+    const [clientForm, setClientForm] = useState(() => ({ ...INITIAL_REGISTERED_CLIENT }));
     const [isEditing, setIsEditing] = useState(false);
     const [editingDocument, setEditingDocument] = useState('');
     const [isSaving, setIsSaving] = useState(false);
@@ -100,14 +100,16 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
     const handleLevelChange = (levelKey) => {
         const safeLevel = resolveCreditLevel(levelKey);
         const levelData = CREDIT_LEVELS[safeLevel] || CREDIT_LEVELS.ESTANDAR;
-        const resolvedLimit = safeLevel === 'CREDITO_SIN_DESCUENTO'
-            ? Number(newClient.creditLimit ?? 0)
-            : levelData.maxInvoice;
-        setNewClient({
-            ...newClient,
-            creditLevel: safeLevel,
-            discount: levelData.discount,
-            creditLimit: resolvedLimit
+        setClientForm((prev) => {
+            const resolvedLimit = safeLevel === 'CREDITO_SIN_DESCUENTO'
+                ? Number(prev.creditLimit ?? 0)
+                : levelData.maxInvoice;
+            return {
+                ...prev,
+                creditLevel: safeLevel,
+                discount: levelData.discount,
+                creditLimit: resolvedLimit
+            };
         });
     };
 
@@ -115,31 +117,31 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
         e.preventDefault();
         if (isSaving) return;
         const formData = new FormData(e.currentTarget);
-        const matchDoc = editingDocument || String(newClient.document || '').trim();
+        const matchDoc = editingDocument || String(clientForm.document || '').trim();
         const existingClient = isEditing
             ? clients.find((c) => (
                 String(c.document || '').trim() === String(matchDoc || '').trim() ||
-                (newClient.id && String(c.id || '') === String(newClient.id))
+                (clientForm.id && String(c.id || '') === String(clientForm.id))
             ))
             : null;
         const formClient = {
-            name: String(formData.get('name') ?? newClient.name ?? '').trim(),
-            document: String(formData.get('document') ?? newClient.document ?? '').trim(),
-            address: String(formData.get('address') ?? newClient.address ?? '').trim(),
-            phone: String(formData.get('phone') ?? newClient.phone ?? '').trim(),
-            email: String(formData.get('email') ?? newClient.email ?? '').trim(),
+            name: String(formData.get('name') ?? clientForm.name ?? '').trim(),
+            document: String(formData.get('document') ?? clientForm.document ?? '').trim(),
+            address: String(formData.get('address') ?? clientForm.address ?? '').trim(),
+            phone: String(formData.get('phone') ?? clientForm.phone ?? '').trim(),
+            email: String(formData.get('email') ?? clientForm.email ?? '').trim(),
             creditLevel: onlyStandard
-                ? resolveCreditLevel(newClient.creditLevel)
-                : resolveCreditLevel(formData.get('creditLevel') ?? newClient.creditLevel),
+                ? resolveCreditLevel(clientForm.creditLevel)
+                : resolveCreditLevel(formData.get('creditLevel') ?? clientForm.creditLevel),
             creditLimit: onlyStandard
-                ? Number(newClient.creditLimit ?? 0)
-                : Number(formData.get('creditLimit') ?? newClient.creditLimit ?? 0),
+                ? Number(clientForm.creditLimit ?? 0)
+                : Number(formData.get('creditLimit') ?? clientForm.creditLimit ?? 0),
             approvedTerm: onlyStandard
-                ? Number(newClient.approvedTerm ?? 30)
-                : Number(formData.get('approvedTerm') ?? newClient.approvedTerm ?? 30),
-            discount: Number(newClient.discount ?? existingClient?.discount ?? 0),
+                ? Number(clientForm.approvedTerm ?? 30)
+                : Number(formData.get('approvedTerm') ?? clientForm.approvedTerm ?? 30),
+            discount: Number(clientForm.discount ?? existingClient?.discount ?? 0),
         };
-        const cleanClient = { ...(newClient || {}) };
+        const cleanClient = { ...(clientForm || {}) };
         delete cleanClient.credit_level;
         delete cleanClient.credit_limit;
         delete cleanClient.approved_term;
@@ -147,7 +149,7 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
             ...(existingClient || {}),
             ...cleanClient,
             ...formClient,
-            id: String(newClient.id || existingClient?.id || '').trim() || undefined,
+            id: String(clientForm.id || existingClient?.id || '').trim() || undefined,
         };
         console.log("[DEBUG:client:form-before-submit]", formClient);
         console.log("[DEBUG:client:object-sent-to-setClients]", normalizedClient);
@@ -173,14 +175,14 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
                 )));
                 setIsEditing(false);
                 setEditingDocument('');
-                onLog?.({ module: 'Clientes', action: 'Editar Cliente', details: `Se editA a: ${newClient.name}` });
+                onLog?.({ module: 'Clientes', action: 'Editar Cliente', details: `Se editA a: ${normalizedClient.name}` });
             } else {
                 if (clients.find(c => String(c.document || '').trim() === normalizedClient.document)) return alert("Documento ya existe");
                 const clientToAdd = { ...normalizedClient, id: createClientId(), blocked: false, updatedAt: new Date().toISOString() };
                 await setClients([...clients, clientToAdd]);
-                onLog?.({ module: 'Clientes', action: 'Crear Cliente', details: `Se creA a: ${newClient.name}` });
+                onLog?.({ module: 'Clientes', action: 'Crear Cliente', details: `Se creA a: ${normalizedClient.name}` });
             }
-            setNewClient(INITIAL_REGISTERED_CLIENT);
+            setClientForm({ ...INITIAL_REGISTERED_CLIENT });
         } finally {
             setIsSaving(false);
         }
@@ -389,23 +391,23 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
                     <form onSubmit={handleSave}>
                         <div className="input-group">
                             <label className="input-label">Nombre Completo</label>
-                            <input name="name" type="text" className="input-field" value={newClient.name} onChange={e => setNewClient({ ...newClient, name: e.target.value })} required />
+                            <input name="name" type="text" className="input-field" value={clientForm.name} onChange={e => setClientForm((prev) => ({ ...prev, name: e.target.value }))} required />
                         </div>
                         <div className="input-group">
                             <label className="input-label">Documento / NIT</label>
-                            <input name="document" type="text" className="input-field" value={newClient.document} onChange={e => setNewClient({ ...newClient, document: e.target.value })} required />
+                            <input name="document" type="text" className="input-field" value={clientForm.document} onChange={e => setClientForm((prev) => ({ ...prev, document: e.target.value }))} required />
                         </div>
                         <div className="input-group">
                             <label className="input-label">Direcciòn</label>
-                            <input name="address" type="text" className="input-field" value={newClient.address} onChange={e => setNewClient({ ...newClient, address: e.target.value })} />
+                            <input name="address" type="text" className="input-field" value={clientForm.address} onChange={e => setClientForm((prev) => ({ ...prev, address: e.target.value }))} />
                         </div>
                         <div className="input-group">
                             <label className="input-label">Telèfono</label>
-                            <input name="phone" type="text" className="input-field" value={newClient.phone} onChange={e => setNewClient({ ...newClient, phone: e.target.value })} />
+                            <input name="phone" type="text" className="input-field" value={clientForm.phone} onChange={e => setClientForm((prev) => ({ ...prev, phone: e.target.value }))} />
                         </div>
                         <div className="input-group">
                             <label className="input-label">Email (para facturas eelectronica)</label>
-                            <input name="email" type="email" className="input-field" value={newClient.email || ''} onChange={e => setNewClient({ ...newClient, email: e.target.value })} placeholder="cliente@ejemplo.com" />
+                            <input name="email" type="email" className="input-field" value={clientForm.email || ''} onChange={e => setClientForm((prev) => ({ ...prev, email: e.target.value }))} placeholder="cliente@ejemplo.com" />
                         </div>
                         {!onlyStandard && (
                         <>
@@ -414,7 +416,7 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
                             <select
                                 name="creditLevel"
                                 className="input-field"
-                                value={newClient.creditLevel}
+                                value={clientForm.creditLevel}
                                 onChange={e => handleLevelChange(e.target.value)}
                             >
                                 {Object.entries(CREDIT_LEVELS).map(([key, data]) => (
@@ -429,23 +431,23 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                             <div className="input-group">
                                 <label className="input-label">Cupo Credito (Max Sugerido)</label>
-                                <input name="creditLimit" type="number" className="input-field" value={newClient.creditLimit} onChange={e => setNewClient({ ...newClient, creditLimit: Number(e.target.value) })} />
+                                <input name="creditLimit" type="number" className="input-field" value={clientForm.creditLimit} onChange={e => setClientForm((prev) => ({ ...prev, creditLimit: Number(e.target.value) }))} />
                             </div>
                             <div className="input-group">
                                 <label className="input-label">Descuento AutomAtico (%)</label>
-                                <input type="number" className="input-field" value={newClient.discount} readOnly style={{ backgroundColor: 'var(--surface-muted)' }} />
+                                <input type="number" className="input-field" value={clientForm.discount} readOnly style={{ backgroundColor: 'var(--surface-muted)' }} />
                             </div>
                         </div>
                         <div className="input-group">
                             <label className="input-label">Plazo (Dias)</label>
-                            <input name="approvedTerm" type="number" className="input-field" value={newClient.approvedTerm} onChange={e => setNewClient({ ...newClient, approvedTerm: Number(e.target.value) })} />
+                            <input name="approvedTerm" type="number" className="input-field" value={clientForm.approvedTerm} onChange={e => setClientForm((prev) => ({ ...prev, approvedTerm: Number(e.target.value) }))} />
                         </div>
                         </>
                         )}
                         <button type="submit" className="btn btn-primary" disabled={isSaving} style={{ width: '100%' }}>
                             {isSaving ? 'Guardando...' : isEditing ? 'Actualizar' : 'Guardar Cliente'}
                         </button>
-                        {isEditing && <button type="button" className="btn" disabled={isSaving} onClick={() => { setIsEditing(false); setEditingDocument(''); setNewClient(INITIAL_REGISTERED_CLIENT) }} style={{ width: '100%', marginTop: '0.5rem' }}>Cancelar</button>}
+                        {isEditing && <button type="button" className="btn" disabled={isSaving} onClick={() => { setIsEditing(false); setEditingDocument(''); setClientForm({ ...INITIAL_REGISTERED_CLIENT }) }} style={{ width: '100%', marginTop: '0.5rem' }}>Cancelar</button>}
                     </form>
                 </div>
 
@@ -548,7 +550,7 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
                                                 onClick={() => {
                                                     setIsEditing(true);
                                                     setEditingDocument(String(c.document || '').trim());
-                                                    setNewClient({
+                                                    setClientForm({
                                                         ...c,
                                                         creditLevel: resolveCreditLevel(c.creditLevel || c.credit_level),
                                                         creditLimit: Number(c.creditLimit ?? c.credit_limit ?? 0),
