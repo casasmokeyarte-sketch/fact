@@ -841,6 +841,16 @@ export const dataService = {
     const providedCreditLimit = client.creditLimit ?? client.credit_limit;
     const providedApprovedTerm = client.approvedTerm ?? client.approved_term;
     const providedDiscount = client.discount;
+    const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj || {}, key);
+    const hasExplicitCreditInput = (
+      hasOwn(client, 'creditLevel') ||
+      hasOwn(client, 'credit_level') ||
+      hasOwn(client, 'creditLimit') ||
+      hasOwn(client, 'credit_limit') ||
+      hasOwn(client, 'approvedTerm') ||
+      hasOwn(client, 'approved_term') ||
+      hasOwn(client, 'discount')
+    );
     const existingLevel = normalizeCreditLevel(resolveCreditLevel(existingRecord?.credit_level || 'ESTANDAR'));
     const incomingLevel = normalizeCreditLevel(resolveCreditLevel(providedCreditLevel || 'ESTANDAR'));
     const incomingLimit = Number(providedCreditLimit ?? 0);
@@ -849,6 +859,7 @@ export const dataService = {
     // Protect against accidental downgrade to ESTANDAR/0 produced by partial payloads.
     const accidentalDowngradeToStandard =
       existingRecord &&
+      !hasExplicitCreditInput &&
       existingLevel !== 'ESTANDAR' &&
       incomingLevel === 'ESTANDAR' &&
       incomingLimit <= 0 &&
