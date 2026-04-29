@@ -325,9 +325,9 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
     }, [openActionMenuId]);
 
     // CRUD Functions
-    const handleSaveProduct = (e) => {
+    const handleSaveProduct = async (e) => {
         e.preventDefault();
-        const formData = new FormData(e.target);
+        const formData = new FormData(e.currentTarget);
         const productForm = {
             id: editingProduct
                 ? editingProduct.id
@@ -348,20 +348,28 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
             ? { ...editingProduct, ...productForm, id: editingProduct.id }
             : productForm;
 
-        console.log("[DEBUG:product:form-before-submit]", productForm);
-        console.log("[DEBUG:product:object-sent-to-setProducts]", productData);
+        console.log("[DEBUG:product:form-before-submit]", JSON.stringify(productForm, null, 2));
+        console.log("[DEBUG:product:object-sent-to-setProducts]", JSON.stringify(productData, null, 2));
 
-        if (editingProduct) {
-            setProducts(products.map(p => p.id === editingProduct.id ? productData : p));
-            onLog?.({ module: 'Inventario', action: 'Editar Producto', details: `Se editA: ${productData.name}` });
-        } else {
-            setProducts([...products, productData]);
-            onLog?.({ module: 'Inventario', action: 'Crear Producto', details: `Nuevo producto: ${productData.name}` });
+        try {
+            if (editingProduct) {
+                console.log("[DEBUG:product:ABOUT_TO_CALL_SETPRODUCTS]", JSON.stringify({ mode: 'edit', id: editingProduct.id }, null, 2));
+                await setProducts(products.map(p => p.id === editingProduct.id ? productData : p));
+                console.log("[DEBUG:product:SETPRODUCTS_FINISHED]", JSON.stringify({ mode: 'edit' }, null, 2));
+                onLog?.({ module: 'Inventario', action: 'Editar Producto', details: `Se editA: ${productData.name}` });
+            } else {
+                console.log("[DEBUG:product:ABOUT_TO_CALL_SETPRODUCTS]", JSON.stringify({ mode: 'create', id: productData.id }, null, 2));
+                await setProducts([...products, productData]);
+                console.log("[DEBUG:product:SETPRODUCTS_FINISHED]", JSON.stringify({ mode: 'create' }, null, 2));
+                onLog?.({ module: 'Inventario', action: 'Crear Producto', details: `Nuevo producto: ${productData.name}` });
+            }
+            setView('list');
+            setEditingProduct(null);
+            setProductImageDraft('');
+            setProductImageError('');
+        } catch (error) {
+            console.error("[DEBUG:product:SETPRODUCTS_FAILED]", error);
         }
-        setView('list');
-        setEditingProduct(null);
-        setProductImageDraft('');
-        setProductImageError('');
     };
 
     const handleDelete = async (id) => {

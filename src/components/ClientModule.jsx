@@ -115,7 +115,10 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
 
     const handleSave = async (e) => {
         e.preventDefault();
-        if (isSaving) return;
+        if (isSaving) {
+            console.log("[DEBUG:client:save-blocked:isSaving]");
+            return;
+        }
         const formData = new FormData(e.currentTarget);
         const matchDoc = editingDocument || String(clientForm.document || '').trim();
         const existingClient = isEditing
@@ -151,18 +154,33 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
             ...formClient,
             id: String(clientForm.id || existingClient?.id || '').trim() || undefined,
         };
-        console.log("[DEBUG:client:form-before-submit]", formClient);
-        console.log("[DEBUG:client:object-sent-to-setClients]", normalizedClient);
+        console.log("[DEBUG:client:form-before-submit]", JSON.stringify(formClient, null, 2));
+        console.log("[DEBUG:client:object-sent-to-setClients]", JSON.stringify(normalizedClient, null, 2));
 
-        if (!normalizedClient.name || !normalizedClient.document) return alert("Nombre y Documento son obligatorios");
+        if (!normalizedClient.name || !normalizedClient.document) {
+            console.log("[DEBUG:client:save-blocked:missing-required]", JSON.stringify({
+                name: normalizedClient.name,
+                document: normalizedClient.document,
+            }, null, 2));
+            return alert("Nombre y Documento son obligatorios");
+        }
 
         if (normalizedClient.creditLevel === 'CREDITO_SIN_DESCUENTO' && normalizedClient.creditLimit <= 0) {
+            console.log("[DEBUG:client:save-blocked:credit-limit-invalid]", JSON.stringify({
+                creditLevel: normalizedClient.creditLevel,
+                creditLimit: normalizedClient.creditLimit,
+            }, null, 2));
             return alert("Para 'Linea de Credito (Sin descuento)' debe definir un cupo mayor a 0.");
         }
 
         setIsSaving(true);
         try {
             if (isEditing) {
+                console.log("[DEBUG:client:ABOUT_TO_CALL_SETCLIENTS]", JSON.stringify({
+                    mode: 'edit',
+                    matchDoc,
+                    id: normalizedClient.id || null,
+                }, null, 2));
                 await setClients(clients.map((c) => (
                     String(c.document || '').trim() === String(matchDoc || '').trim()
                         ? {
@@ -173,16 +191,31 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
                         }
                         : c
                 )));
+                console.log("[DEBUG:client:SETCLIENTS_FINISHED]", JSON.stringify({ mode: 'edit' }, null, 2));
                 setIsEditing(false);
                 setEditingDocument('');
                 onLog?.({ module: 'Clientes', action: 'Editar Cliente', details: `Se editA a: ${normalizedClient.name}` });
             } else {
-                if (clients.find(c => String(c.document || '').trim() === normalizedClient.document)) return alert("Documento ya existe");
+                if (clients.find(c => String(c.document || '').trim() === normalizedClient.document)) {
+                    console.log("[DEBUG:client:save-blocked:duplicate-document]", JSON.stringify({
+                        document: normalizedClient.document,
+                    }, null, 2));
+                    return alert("Documento ya existe");
+                }
                 const clientToAdd = { ...normalizedClient, id: createClientId(), blocked: false, updatedAt: new Date().toISOString() };
+                console.log("[DEBUG:client:ABOUT_TO_CALL_SETCLIENTS]", JSON.stringify({
+                    mode: 'create',
+                    id: clientToAdd.id,
+                    document: clientToAdd.document,
+                }, null, 2));
                 await setClients([...clients, clientToAdd]);
+                console.log("[DEBUG:client:SETCLIENTS_FINISHED]", JSON.stringify({ mode: 'create' }, null, 2));
                 onLog?.({ module: 'Clientes', action: 'Crear Cliente', details: `Se creA a: ${normalizedClient.name}` });
             }
             setClientForm({ ...INITIAL_REGISTERED_CLIENT });
+        } catch (error) {
+            console.error("[DEBUG:client:SETCLIENTS_FAILED]", error);
+            throw error;
         } finally {
             setIsSaving(false);
         }
