@@ -335,6 +335,10 @@ function removeInvalidUuidId(payload) {
   return rest;
 }
 
+function withCompanyFilter(query, companyId) {
+  return isUuid(companyId) ? query.eq('company_id', companyId) : query;
+}
+
 function normalizeNumericBarcode(value) {
   const raw = String(value ?? '').trim();
   return /^\d+$/.test(raw) ? raw : '';
@@ -492,13 +496,30 @@ export const dataService = {
 
   // PRODUCTS
   async getProducts() {
-    const { data, error } = await supabase.from('products').select('*').order('name');
+    const userId = await getAuthUserId();
+    const companyId = await getCurrentCompanyId(userId);
+    const buildQuery = (filterCompany = true) => {
+      let query = supabase.from('products').select('*').order('name');
+      if (filterCompany) {
+        query = withCompanyFilter(query, companyId);
+      }
+      return query;
+    };
+
+    let { data, error } = await buildQuery(true);
+    if (error && isUndefinedColumnError(error) && isUuid(companyId)) {
+      const retry = await buildQuery(false);
+      data = retry.data;
+      error = retry.error;
+    }
     if (error) throw error;
     return (data || [])
       .filter((p) => (p?.status ?? 'activo') !== 'inactivo')
       .map((p) => ({
       ...p,
       barcode: normalizeNumericBarcode(p.barcode),
+      stock: Number(p?.stock ?? 0),
+      warehouse_stock: Number(p?.warehouse_stock ?? 0),
       status: String(p?.status || 'activo'),
       reorder_level: Number(p?.reorder_level ?? 10),
       is_visible: p?.is_visible !== false,
@@ -685,32 +706,84 @@ export const dataService = {
     return byBarcodeData;
   },
 
-  async updateProductStockById(productId, changes) {
+  async updateProductStockById(productId, changes, context = null) {
     if (!isUuid(productId)) {
       throw new Error('ID de producto invalido para actualizar stock');
     }
+
+    const contextUserId = typeof context === 'string'
+      ? context
+      : (context?.userId || context?.user_id || null);
+    const userId = isUuid(contextUserId) ? contextUserId : await getAuthUserId();
+    const companyId = isUuid(context?.companyId || context?.company_id)
+      ? (context.companyId || context.company_id)
+      : await getCurrentCompanyId(userId);
+    const contextProduct = context && typeof context === 'object' ? (context.product || null) : null;
 
     // Stock updates must not reassign product owner.
     const payload = { ...changes };
 
     const { id, user_id, created_at, ...updatePayload } = payload;
-    let { data, error } = await withRetry(() =>
-      supabase.from('products').update(updatePayload).eq('id', productId).select()
-    );
+    const buildByIdUpdate = (filterCompany = true) => {
+      let query = supabase.from('products').update(updatePayload).eq('id', productId);
+      if (filterCompany) {
+        query = withCompanyFilter(query, companyId);
+      }
+      return query.select();
+    };
+
+    let { data, error } = await withRetry(() => buildByIdUpdate(true));
+
+    if (error && isUndefinedColumnError(error) && isUuid(companyId)) {
+      const retry = await withRetry(() => buildByIdUpdate(false));
+      data = retry.data;
+      error = retry.error;
+    }
 
     if (error) {
       const fallbackPayload = stripUnsupportedProductFields(updatePayload, error);
       if (fallbackPayload) {
-        const retry = await withRetry(() =>
-          supabase.from('products').update(fallbackPayload).eq('id', productId).select()
-        );
+        const retry = await withRetry(() => {
+          let query = supabase.from('products').update(fallbackPayload).eq('id', productId);
+          query = withCompanyFilter(query, companyId);
+          return query.select();
+        });
         data = retry.data;
         error = retry.error;
       }
     }
 
     if (error) throw error;
-    return data;
+
+    const savedRows = Array.isArray(data) ? data : [];
+    const savedRow = savedRows[0] || null;
+    const identitySource = { ...(contextProduct || {}), ...(savedRow || {}) };
+    const barcode = normalizeNumericBarcode(identitySource?.barcode);
+    if (!barcode) return data;
+
+    const buildDuplicateBarcodeUpdate = (filterCompany = true) => {
+      let query = supabase
+        .from('products')
+        .update(updatePayload)
+        .eq('barcode', barcode)
+        .or('status.is.null,status.neq.inactivo');
+      if (filterCompany) {
+        query = withCompanyFilter(query, companyId);
+      }
+      return query.select();
+    };
+
+    let duplicateResult = await withRetry(() => buildDuplicateBarcodeUpdate(true));
+    if (duplicateResult.error && isUndefinedColumnError(duplicateResult.error) && isUuid(companyId)) {
+      duplicateResult = await withRetry(() => buildDuplicateBarcodeUpdate(false));
+    }
+    if (duplicateResult.error) throw duplicateResult.error;
+
+    const byId = new Map();
+    [...savedRows, ...(duplicateResult.data || [])].forEach((row) => {
+      if (row?.id) byId.set(String(row.id), row);
+    });
+    return Array.from(byId.values());
   },
 
   async deleteProduct(product) {

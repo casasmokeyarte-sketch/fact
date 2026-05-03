@@ -139,11 +139,22 @@ export function printShippingGuideDocument(invoice, options = {}) {
     'No registrado'
   ).trim();
   const packageCount = Math.max(1, Number(options.packageCount ?? invoice?.mixedDetails?.shippingGuide?.packageCount ?? 1) || 1);
+  const productItems = Array.isArray(invoice?.items) ? invoice.items : [];
+  const productSummary = productItems
+    .map((item) => `${item?.name || 'Producto'} x${Number(item?.quantity || 0)}`)
+    .join(', ');
   const declaredContent = String(
     options.declaredContent ||
     invoice?.mixedDetails?.shippingGuide?.declaredContent ||
-    (invoice?.items || []).map((item) => `${item?.name || 'Producto'} x${Number(item?.quantity || 0)}`).join(', ') ||
+    productSummary ||
     'Mercancia segun factura'
+  ).trim();
+  const emergencyNote = String(
+    options.emergencyNote ||
+    options.notes ||
+    invoice?.mixedDetails?.shippingGuide?.emergencyNote ||
+    invoice?.mixedDetails?.shippingGuide?.notes ||
+    ''
   ).trim();
   const amountToCollect = isPaid ? 0 : Math.max(0, Number(options.amountToCollect ?? invoice?.balance ?? invoice?.total ?? 0));
   const policyLines = [
@@ -211,17 +222,53 @@ export function printShippingGuideDocument(invoice, options = {}) {
         </div>
       </div>
 
-      <div class="box" style="margin-top: 10px;">
-        <div class="box-title">Contenido declarado</div>
-        <div>${escapeHtml(declaredContent)}</div>
+      <div class="box product-box" style="margin-top: 8px;">
+        <div class="box-title">Productos comprados</div>
+        ${productItems.length > 0 ? `
+          <table class="items-table">
+            <thead>
+              <tr>
+                <th>Producto</th>
+                <th>Cant.</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${productItems.slice(0, 8).map((item) => `
+                <tr>
+                  <td>${escapeHtml(item?.name || 'Producto')}</td>
+                  <td>${Number(item?.quantity || 0).toLocaleString('es-CO')}</td>
+                </tr>
+              `).join('')}
+              ${productItems.length > 8 ? `
+                <tr>
+                  <td colspan="2">+${productItems.length - 8} producto(s) adicional(es)</td>
+                </tr>
+              ` : ''}
+            </tbody>
+          </table>
+        ` : `<div>Mercancia segun factura</div>`}
       </div>
 
-      <div class="barcode-box">
-        ${barcodeMarkup}
-      </div>
-
-      <div class="two-col" style="margin-top: 10px;">
+      <div class="two-col compact-row" style="margin-top: 8px;">
         <div class="box">
+          <div class="box-title">Contenido declarado</div>
+          <div>${escapeHtml(declaredContent)}</div>
+        </div>
+        <div class="box note-box">
+          <div class="box-title">Nota / emergencia</div>
+          <div>${emergencyNote ? escapeHtml(emergencyNote) : '&nbsp;'}</div>
+        </div>
+      </div>
+
+      <div class="box" style="margin-top: 10px;">
+        <div class="box-title">Codigo de guia</div>
+        <div class="barcode-box">
+          ${barcodeMarkup}
+        </div>
+      </div>
+
+      <div class="two-col compact-row" style="margin-top: 8px;">
+        <div class="box policy-box">
           <div class="box-title">Politicas operativas</div>
           <ul>
             ${policyLines.map((line) => `<li>${escapeHtml(line)}</li>`).join('')}
@@ -244,31 +291,38 @@ export function printShippingGuideDocument(invoice, options = {}) {
       <head>
         <title>Guia de envio ${escapeHtml(guideNumber)}</title>
         <style>
-          @page { size: A4 portrait; margin: 10mm; }
+          @page { size: A4 landscape; margin: 8mm; }
           * { box-sizing: border-box; }
-          body { margin: 0; font-family: Arial, sans-serif; color: #111827; background: #fff; }
-          .sheet { display: grid; grid-template-columns: 1fr 1fr; gap: 10mm; }
-          .guide-card { border: 2px solid #111827; padding: 10px; min-height: 270mm; display: flex; flex-direction: column; }
-          .guide-topbar { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #111827; padding-bottom: 8px; margin-bottom: 10px; }
-          .mini-label { font-size: 12px; font-weight: 700; letter-spacing: 1.2px; }
-          .guide-number { font-size: 22px; font-weight: 800; letter-spacing: 1px; }
-          .copy-tag { font-size: 11px; border: 1px solid #111827; padding: 4px 8px; font-weight: 700; }
-          .company-box { display: grid; grid-template-columns: 92px 1fr; gap: 10px; align-items: center; margin-bottom: 10px; }
-          .logo { width: 88px; max-height: 58px; object-fit: contain; }
-          .company-name { font-size: 16px; font-weight: 800; }
-          .status-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
-          .status-pill { padding: 6px 10px; font-size: 12px; font-weight: 800; letter-spacing: 0.8px; border: 2px solid #111827; }
+          body { margin: 0; font-family: Arial, sans-serif; color: #111827; background: #fff; font-size: 11px; }
+          .sheet { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6mm; align-items: stretch; }
+          .guide-card { border: 2px solid #111827; padding: 8px; min-height: 190mm; display: flex; flex-direction: column; }
+          .guide-topbar { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #111827; padding-bottom: 6px; margin-bottom: 7px; }
+          .mini-label { font-size: 10px; font-weight: 700; letter-spacing: 1px; }
+          .guide-number { font-size: 18px; font-weight: 800; letter-spacing: 0.5px; }
+          .copy-tag { font-size: 10px; border: 1px solid #111827; padding: 3px 6px; font-weight: 700; }
+          .company-box { display: grid; grid-template-columns: 70px 1fr; gap: 8px; align-items: center; margin-bottom: 7px; }
+          .logo { width: 66px; max-height: 44px; object-fit: contain; }
+          .company-name { font-size: 13px; font-weight: 800; }
+          .status-row { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 7px; }
+          .status-pill { padding: 4px 7px; font-size: 10px; font-weight: 800; letter-spacing: 0.5px; border: 2px solid #111827; }
           .status-pill.paid { background: #dcfce7; color: #166534; border-color: #166534; }
           .status-pill.pending { background: #fef3c7; color: #92400e; border-color: #92400e; }
-          .meta-chip { padding: 6px 10px; background: #f3f4f6; font-size: 12px; border: 1px solid #d1d5db; }
-          .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-          .box { border: 1px solid #111827; padding: 8px; min-height: 82px; }
-          .box-title { font-size: 12px; font-weight: 800; text-transform: uppercase; margin-bottom: 6px; }
-          .barcode-box { margin-top: 10px; border: 1px solid #111827; padding: 10px; display: flex; justify-content: center; align-items: center; min-height: 110px; }
-          .barcode-box svg { width: 100%; height: auto; }
-          ul { margin: 0; padding-left: 16px; font-size: 12px; line-height: 1.45; }
+          .meta-chip { padding: 4px 7px; background: #f3f4f6; font-size: 10px; border: 1px solid #d1d5db; }
+          .two-col { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+          .compact-row { flex: 0 0 auto; }
+          .box { border: 1px solid #111827; padding: 6px; min-height: 54px; overflow-wrap: anywhere; }
+          .box-title { font-size: 10px; font-weight: 800; text-transform: uppercase; margin-bottom: 4px; }
+          .product-box { min-height: 58px; }
+          .items-table { width: 100%; border-collapse: collapse; font-size: 10px; }
+          .items-table th, .items-table td { border-bottom: 1px solid #d1d5db; padding: 2px 3px; text-align: left; }
+          .items-table th:last-child, .items-table td:last-child { width: 44px; text-align: center; }
+          .note-box { background: #fff; min-height: 48px; }
+          .barcode-box { display: flex; justify-content: center; align-items: center; min-height: 58px; }
+          .barcode-box svg { width: 100%; max-height: 58px; }
+          ul { margin: 0; padding-left: 14px; font-size: 10px; line-height: 1.28; }
+          .policy-box { min-height: 74px; }
           .signature-box { display: flex; flex-direction: column; justify-content: flex-start; }
-          .signature-line { margin-top: 12px; font-size: 12px; }
+          .signature-line { margin-top: 7px; font-size: 10px; }
         </style>
       </head>
       <body>

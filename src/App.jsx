@@ -1991,6 +1991,15 @@ function App() {
 
   const refreshCloudData = useCallback(async ({ showLoader = false, silent = false } = {}) => {
     try {
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+      const accessToken = sessionData?.session?.access_token;
+      if (sessionError || !accessToken) {
+        if (!silent) {
+          await forceRelogin('Sesion no valida o expirada. Inicie sesion nuevamente.');
+        }
+        return;
+      }
+
       if (showLoader) setLoading(true);
       const [dbProducts, dbClients, dbSales, dbExpenses, dbExternalCashReceipts, dbPurchases, dbLogs, dbShiftHistory, dbUserCashBalances] = await Promise.all([
         dataService.getProducts(),
@@ -2166,7 +2175,7 @@ function App() {
     } finally {
       if (showLoader) setLoading(false);
     }
-  }, [currentUser?.id, currentUser?.name]);
+  }, [currentUser?.id, currentUser?.name, forceRelogin]);
 
   // Initial Data Sync (only when authenticated user exists)
   useEffect(() => {
@@ -2563,7 +2572,11 @@ function App() {
     }
 
     lastLocalCloudWriteAtRef.current = Date.now();
-    const savedRows = await dataService.updateProductStockById(prod.id, normalizedChanges, currentUser?.id);
+    const savedRows = await dataService.updateProductStockById(prod.id, normalizedChanges, {
+      userId: currentUser?.id,
+      companyId,
+      product: prod,
+    });
     const savedRow = Array.isArray(savedRows) ? savedRows[0] : savedRows;
     if (Array.isArray(savedRows) && savedRows.length === 0) {
       throw new Error('La base de datos no actualizo ninguna fila de producto. Revise permisos de inventario/RLS.');
@@ -2572,6 +2585,15 @@ function App() {
       if (savedRow && !Object.prototype.hasOwnProperty.call(savedRow, field)) {
         throw new Error(`La base de datos no devolvio la columna ${field}. Aplique la migracion de inventario.`);
       }
+    }
+    if (Array.isArray(savedRows)) {
+      savedRows.forEach((row) => {
+        if (!row?.id) return;
+        recentProductWritesRef.current[String(row.id)] = {
+          row: { ...prod, ...row, updatedAt: new Date().toISOString() },
+          writtenAt: Date.now(),
+        };
+      });
     }
     return savedRows;
   };

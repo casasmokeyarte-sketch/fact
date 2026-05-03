@@ -688,12 +688,18 @@ export function PaymentSummary({
       date: new Date().toISOString(),
     });
 
-	  const handlePrintInvoice = (mode) => {
+  const handlePrintInvoice = (mode) => {
 	    const previewInvoice = buildPreviewInvoice();
     printInvoiceDocument(previewInvoice, mode);
   };
 
   const [shippingModal, setShippingModal] = React.useState(null);
+
+  const buildPurchasedProductsText = () => (
+    (items || [])
+      .map((item) => `${item?.name || 'Producto'} x${Number(item?.quantity || 0)}`)
+      .join(', ')
+  );
 
   const handlePrintShippingGuide = (paymentStatus) => {
     const previewInvoice = buildPreviewInvoice();
@@ -716,6 +722,8 @@ export function PaymentSummary({
         recipientDocument: previewInvoice?.clientDoc || '',
         recipientAddress:  previewInvoice?.clientAddress || selectedClient?.address || '',
         recipientPhone:    previewInvoice?.clientPhone || selectedClient?.phone || '',
+        declaredContent:   buildPurchasedProductsText(),
+        emergencyNote:     '',
       },
     });
   };

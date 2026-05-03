@@ -22,6 +22,7 @@ export function ShippingGuideFormModal({ initialValues = {}, onConfirm, onCancel
     recipientPhone:   String(initialValues.recipientPhone   ?? ''),
     packageCount:     String(initialValues.packageCount     ?? '1'),
     declaredContent:  String(initialValues.declaredContent  ?? ''),
+    emergencyNote:    String(initialValues.emergencyNote    ?? initialValues.notes ?? ''),
   });
 
   const set = (field) => (e) =>
@@ -39,10 +40,11 @@ export function ShippingGuideFormModal({ initialValues = {}, onConfirm, onCancel
       recipientPhone:    form.recipientPhone.trim(),
       packageCount:      Math.max(1, Number(form.packageCount) || 1),
       declaredContent:   form.declaredContent.trim(),
+      emergencyNote:     form.emergencyNote.trim(),
     });
   };
 
-  const Field = ({ label, field, placeholder = '', inputMode = 'text' }) => (
+  const renderField = (label, field, placeholder = '', inputMode = 'text') => (
     <div className="input-group" style={{ marginBottom: '0.6rem' }}>
       <label className="input-label" style={{ marginBottom: '0.2rem' }}>{label}</label>
       <input
@@ -52,6 +54,20 @@ export function ShippingGuideFormModal({ initialValues = {}, onConfirm, onCancel
         placeholder={placeholder}
         inputMode={inputMode}
         style={{ width: '100%' }}
+      />
+    </div>
+  );
+
+  const renderTextarea = (label, field, placeholder = '', rows = 3) => (
+    <div className="input-group" style={{ marginBottom: '0.6rem' }}>
+      <label className="input-label" style={{ marginBottom: '0.2rem' }}>{label}</label>
+      <textarea
+        className="input-field"
+        value={form[field]}
+        onChange={set(field)}
+        placeholder={placeholder}
+        rows={rows}
+        style={{ width: '100%', resize: 'vertical' }}
       />
     </div>
   );
@@ -68,7 +84,7 @@ export function ShippingGuideFormModal({ initialValues = {}, onConfirm, onCancel
     >
       <div
         className="card"
-        style={{ width: '560px', maxWidth: '96vw', maxHeight: '92vh', overflowY: 'auto' }}
+        style={{ width: '860px', maxWidth: '96vw', maxHeight: '92vh', overflowY: 'auto' }}
       >
         <h3 style={{ marginTop: 0, marginBottom: '1rem' }}>Datos de la guia de envio</h3>
 
@@ -89,10 +105,10 @@ export function ShippingGuideFormModal({ initialValues = {}, onConfirm, onCancel
             >
               Remitente (quien envia)
             </div>
-            <Field label="Nombre"       field="senderName"     placeholder="Nombre del remitente" />
-            <Field label="Documento"    field="senderDocument" placeholder="CC / NIT (opcional)" />
-            <Field label="Telefono"     field="senderPhone"    placeholder="Telefono" inputMode="tel" />
-            <Field label="Direccion"    field="senderAddress"  placeholder="Direccion de recogida" />
+            {renderField('Nombre', 'senderName', 'Nombre del remitente')}
+            {renderField('Documento', 'senderDocument', 'CC / NIT (opcional)')}
+            {renderField('Telefono', 'senderPhone', 'Telefono', 'tel')}
+            {renderField('Direccion', 'senderAddress', 'Direccion de recogida')}
           </div>
 
           {/* Columna destinatario */}
@@ -105,17 +121,18 @@ export function ShippingGuideFormModal({ initialValues = {}, onConfirm, onCancel
             >
               Destinatario (quien recibe)
             </div>
-            <Field label="Nombre"       field="recipientName"     placeholder="Nombre del destinatario" />
-            <Field label="Documento"    field="recipientDocument" placeholder="CC / NIT (opcional)" />
-            <Field label="Telefono"     field="recipientPhone"    placeholder="Telefono" inputMode="tel" />
-            <Field label="Direccion"    field="recipientAddress"  placeholder="Direccion de entrega" />
+            {renderField('Nombre', 'recipientName', 'Nombre del destinatario')}
+            {renderField('Documento', 'recipientDocument', 'CC / NIT (opcional)')}
+            {renderField('Telefono', 'recipientPhone', 'Telefono', 'tel')}
+            {renderField('Direccion', 'recipientAddress', 'Direccion de entrega')}
           </div>
         </div>
 
         {/* Fila inferior: bultos y contenido */}
-        <div style={{ display: 'grid', gridTemplateColumns: '100px 1fr', gap: '0 1rem', marginTop: '0.25rem' }}>
-          <Field label="Bultos" field="packageCount" placeholder="1" inputMode="numeric" />
-          <Field label="Contenido declarado" field="declaredContent" placeholder="Descripcion de la mercancia" />
+        <div style={{ display: 'grid', gridTemplateColumns: '110px minmax(0, 1fr) minmax(0, 1fr)', gap: '0 1rem', marginTop: '0.25rem' }}>
+          {renderField('Bultos', 'packageCount', '1', 'numeric')}
+          {renderTextarea('Contenido declarado', 'declaredContent', 'Productos comprados', 4)}
+          {renderTextarea('Nota / emergencia', 'emergencyNote', 'Espacio para observaciones urgentes', 4)}
         </div>
 
         <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
