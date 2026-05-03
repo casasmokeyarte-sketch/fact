@@ -52,6 +52,9 @@
 
 .facturacion-right-column {
     min-width: 0;
+    display: grid;
+    gap: 1rem;
+    align-content: start;
 }
 
 .fe-panel-card {

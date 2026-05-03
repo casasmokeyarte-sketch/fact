@@ -6071,7 +6071,7 @@ function App() {
                   onSaveDraft={onSaveInvoiceDraft}
                   onFacturarCero={onFacturarCero}
                 />
-                <div className="card" style={{ marginTop: '1rem', position: 'relative', zIndex: 1 }}>
+                <div className="card" style={{ position: 'relative', zIndex: 1 }}>
                   <h3 style={{ marginTop: 0 }}>Borradores de Factura</h3>
                   {ownInvoiceDrafts.length === 0 ? (
                     <p style={{ margin: 0, color: '#64748b' }}>No tienes borradores guardados.</p>
@@ -6103,7 +6103,7 @@ function App() {
                   )}
                 </div>
 
-                <div className="card fe-panel-card" style={{ marginTop: '1rem', position: 'relative', zIndex: 1 }}>
+                <div className="card fe-panel-card" style={{ position: 'relative', zIndex: 1 }}>
                   <div className="fe-panel-header">
                     <h3 style={{ marginTop: 0, marginBottom: '0.2rem' }}>Facturacion Electronica DIAN</h3>
                     <p className="fe-panel-subtitle">Flujo recomendado: Generar → Firmar → Enviar → Estado.</p>

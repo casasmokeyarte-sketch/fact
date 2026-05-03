@@ -741,11 +741,9 @@ export function PaymentSummary({
     <div
       className="card"
       style={{
-        position: 'sticky',
-        top: '2rem',
-        maxHeight: 'calc(100vh - 4rem)',
-        overflowY: 'auto',
-        overscrollBehavior: 'contain',
+        position: 'relative',
+        maxHeight: 'none',
+        overflowY: 'visible',
       }}
     >
       <h2 style={{ marginTop: 0 }}>Total Pago</h2>
