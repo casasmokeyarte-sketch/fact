@@ -46,6 +46,16 @@ import { supabase } from './lib/supabaseClient'
 import { useProfile } from './lib/useSupabase'
 import { syncFactMovement } from './lib/crmSyncService'
 import {
+  generateFeDocument,
+  signFeDocument,
+  sendFeDocument,
+  checkFeStatus,
+  printFeRepresentation,
+  getFeDocuments,
+  feStatusLabel,
+  feStatusColor,
+} from './lib/feService'
+import {
   buildExternalCashReceiptDetails,
   getExternalCashReceiptBreakdown,
   collectExternalCashReceipts,
@@ -931,6 +941,12 @@ function App() {
   const [auditLogs, setAuditLogs] = useState([]);
   const [salesHistory, setSalesHistory] = useState([]);
   const [shiftHistory, setShiftHistory] = useState([]);
+  const [feDocuments, setFeDocuments] = useState([]);
+  const [feLoading, setFeLoading] = useState(false);
+  const [feStatusFilter, setFeStatusFilter] = useState('');
+  const [feBusyDocumentId, setFeBusyDocumentId] = useState('');
+  const [feMessage, setFeMessage] = useState('');
+  const [feInvoiceIdInput, setFeInvoiceIdInput] = useState('');
   const [remoteAuthRequests, setRemoteAuthRequests] = useState(() => {
     try {
       const raw = localStorage.getItem(REMOTE_AUTH_REQUESTS_STORAGE_KEY);
@@ -4572,6 +4588,238 @@ function App() {
   const composerTotalDiscount = composerTotals.totalDiscount;
   const composerTotal = composerTotals.total;
 
+  const feInvoiceCandidates = useMemo(() => {
+    const byId = new Map();
+    (salesHistory || []).forEach((inv) => {
+      const dbId = String(inv?.db_id || inv?.id || '').trim();
+      if (!isUuid(dbId) || byId.has(dbId)) return;
+      byId.set(dbId, {
+        dbId,
+        code: String(inv?.id || inv?.invoiceCode || inv?.mixedDetails?.invoiceCode || '').trim(),
+        client: String(inv?.clientName || inv?.client_name || 'Cliente').trim(),
+        total: Number(inv?.total || 0),
+        date: String(inv?.date || '').trim(),
+      });
+    });
+    return Array.from(byId.values())
+      .sort((a, b) => new Date(b?.date || 0).getTime() - new Date(a?.date || 0).getTime())
+      .slice(0, 30);
+  }, [salesHistory]);
+
+  const latestPersistedInvoiceId = useMemo(() => {
+    const found = (salesHistory || []).find((inv) => (
+      isUuid(String(inv?.db_id || '')) || isUuid(String(inv?.id || ''))
+    ));
+    if (!found) return '';
+    return String(found?.db_id || found?.id || '').trim();
+  }, [salesHistory]);
+
+  useEffect(() => {
+    if (!latestPersistedInvoiceId) return;
+    if (String(feInvoiceIdInput || '').trim()) return;
+    setFeInvoiceIdInput(latestPersistedInvoiceId);
+  }, [latestPersistedInvoiceId, feInvoiceIdInput]);
+
+  const loadFeDocuments = useCallback(async ({ silent = false } = {}) => {
+    try {
+      if (!silent) setFeLoading(true);
+      const options = {
+        limit: 20,
+        ...(String(feStatusFilter || '').trim() ? { status: String(feStatusFilter).trim() } : {}),
+      };
+      const { data, error } = await getFeDocuments(options);
+      if (error) throw new Error(error);
+      setFeDocuments(Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.error('Error cargando documentos FE:', error);
+      setFeMessage(`Error cargando FE: ${error?.message || 'desconocido'}`);
+    } finally {
+      if (!silent) setFeLoading(false);
+    }
+  }, [feStatusFilter]);
+
+  useEffect(() => {
+    if (activeTab !== 'facturacion') return;
+    loadFeDocuments();
+  }, [activeTab, loadFeDocuments]);
+
+  const handleFeGenerate = useCallback(async () => {
+    const invoiceId = String(feInvoiceIdInput || '').trim();
+    if (!isUuid(invoiceId)) {
+      setFeMessage('Ingrese un invoice_id valido (UUID).');
+      return;
+    }
+
+    try {
+      setFeBusyDocumentId('GEN');
+      setFeMessage('Generando XML FE...');
+      const result = await generateFeDocument(invoiceId, []);
+      if (!result?.ok) throw new Error(result?.error || 'No se pudo generar FE');
+      setFeMessage(`FE generada: ${result.document_id || 'OK'}`);
+      await loadFeDocuments({ silent: true });
+    } catch (error) {
+      setFeMessage(`Error al generar FE: ${error?.message || 'desconocido'}`);
+    } finally {
+      setFeBusyDocumentId('');
+    }
+  }, [feInvoiceIdInput, loadFeDocuments]);
+
+  const handleFeFullFlow = useCallback(async () => {
+    const invoiceId = String(feInvoiceIdInput || '').trim();
+    if (!isUuid(invoiceId)) {
+      setFeMessage('Ingrese un invoice_id valido (UUID).');
+      return;
+    }
+
+    try {
+      setFeBusyDocumentId('GEN');
+      setFeMessage('Generando FE...');
+      const generated = await generateFeDocument(invoiceId, []);
+      if (!generated?.ok || !generated?.document_id) {
+        throw new Error(generated?.error || 'No se pudo generar FE');
+      }
+
+      const documentId = String(generated.document_id).trim();
+
+      setFeBusyDocumentId(documentId);
+      setFeMessage('Firmando FE...');
+      const signed = await signFeDocument(documentId);
+      if (!signed?.ok) throw new Error(signed?.error || 'No se pudo firmar FE');
+
+      setFeMessage('Enviando FE a DIAN...');
+      const sent = await sendFeDocument(documentId);
+      if (!sent?.ok) throw new Error(sent?.error || 'No se pudo enviar FE a DIAN');
+
+      setFeMessage(`Flujo FE completo: ${sent?.status || 'sent'} (${sent?.status_code || 'N/A'})`);
+      await loadFeDocuments({ silent: true });
+    } catch (error) {
+      setFeMessage(`Error en flujo FE completo: ${error?.message || 'desconocido'}`);
+    } finally {
+      setFeBusyDocumentId('');
+    }
+  }, [feInvoiceIdInput, loadFeDocuments]);
+
+  const runFeAction = useCallback(async (documentId, action) => {
+    const safeDocId = String(documentId || '').trim();
+    if (!safeDocId) return;
+
+    try {
+      setFeBusyDocumentId(safeDocId);
+      if (action === 'sign') {
+        setFeMessage('Firmando XML FE...');
+        const result = await signFeDocument(safeDocId);
+        if (!result?.ok) throw new Error(result?.error || 'No se pudo firmar');
+        setFeMessage(`Documento firmado: ${safeDocId}`);
+      } else if (action === 'send') {
+        setFeMessage('Enviando documento a DIAN...');
+        const result = await sendFeDocument(safeDocId);
+        if (!result?.ok) throw new Error(result?.error || 'No se pudo enviar a DIAN');
+        setFeMessage(`DIAN: ${result.status || 'sent'} (${result.status_code || 'N/A'})`);
+      } else if (action === 'status') {
+        setFeMessage('Consultando estado en DIAN...');
+        const result = await checkFeStatus(safeDocId);
+        if (!result?.ok) throw new Error(result?.error || 'No se pudo consultar estado');
+        setFeMessage(`Estado DIAN: ${result.status || 'N/A'} (${result.status_code || 'N/A'})`);
+      } else if (action === 'print') {
+        setFeMessage('Abriendo representacion grafica FE...');
+        const result = await printFeRepresentation(safeDocId);
+        if (!result?.ok) throw new Error(result?.error || 'No se pudo abrir impresion FE');
+        setFeMessage(`Representacion FE lista para impresion: ${safeDocId}`);
+      }
+      await loadFeDocuments({ silent: true });
+    } catch (error) {
+      setFeMessage(`Error FE: ${error?.message || 'desconocido'}`);
+    } finally {
+      setFeBusyDocumentId('');
+    }
+  }, [loadFeDocuments]);
+
+  const handleFeSmartRetry = useCallback(async (doc) => {
+    const safeDocId = String(doc?.id || '').trim();
+    const status = String(doc?.status || '').trim().toLowerCase();
+    const invoiceId = String(doc?.invoice_id || '').trim();
+    if (!safeDocId) return;
+
+    try {
+      setFeBusyDocumentId(safeDocId);
+
+      if (status === 'validated') {
+        setFeMessage('Este documento ya esta validado por DIAN.');
+        return;
+      }
+
+      if (status === 'sent') {
+        setFeMessage('Documento enviado, consultando estado en DIAN...');
+        const result = await checkFeStatus(safeDocId);
+        if (!result?.ok) throw new Error(result?.error || 'No se pudo consultar estado');
+        setFeMessage(`Estado DIAN: ${result.status || 'N/A'} (${result.status_code || 'N/A'})`);
+        await loadFeDocuments({ silent: true });
+        return;
+      }
+
+      if (status === 'signed') {
+        setFeMessage('Documento firmado, reintentando envio a DIAN...');
+        const sent = await sendFeDocument(safeDocId);
+        if (!sent?.ok) throw new Error(sent?.error || 'No se pudo enviar a DIAN');
+        setFeMessage(`DIAN: ${sent.status || 'sent'} (${sent.status_code || 'N/A'})`);
+        await loadFeDocuments({ silent: true });
+        return;
+      }
+
+      if (status === 'pending' || status === 'error') {
+        setFeMessage('Reintentando firma y envio...');
+        const signed = await signFeDocument(safeDocId);
+        if (signed?.ok) {
+          const sent = await sendFeDocument(safeDocId);
+          if (!sent?.ok) throw new Error(sent?.error || 'No se pudo enviar a DIAN');
+          setFeMessage(`Reintento exitoso: ${sent.status || 'sent'} (${sent.status_code || 'N/A'})`);
+          await loadFeDocuments({ silent: true });
+          return;
+        }
+
+        if (!isUuid(invoiceId)) {
+          throw new Error(signed?.error || 'No se pudo firmar y no hay invoice_id valido para regenerar.');
+        }
+
+        setFeBusyDocumentId('GEN');
+        setFeMessage('Firma fallo, regenerando documento FE...');
+        const generated = await generateFeDocument(invoiceId, []);
+        if (!generated?.ok || !generated?.document_id) {
+          throw new Error(generated?.error || signed?.error || 'No se pudo regenerar FE');
+        }
+
+        const newDocId = String(generated.document_id || '').trim();
+        setFeBusyDocumentId(newDocId);
+        const signedNew = await signFeDocument(newDocId);
+        if (!signedNew?.ok) throw new Error(signedNew?.error || 'No se pudo firmar FE regenerada');
+        const sentNew = await sendFeDocument(newDocId);
+        if (!sentNew?.ok) throw new Error(sentNew?.error || 'No se pudo enviar FE regenerada');
+
+        setFeMessage(`Reintento exitoso con nuevo documento: ${newDocId}`);
+        await loadFeDocuments({ silent: true });
+        return;
+      }
+
+      if (status === 'rejected') {
+        setFeMessage('Documento rechazado, consultando estado por ultima vez...');
+        const checked = await checkFeStatus(safeDocId);
+        if (checked?.ok && checked?.status === 'validated') {
+          setFeMessage('El documento paso a validated al reconsultar DIAN.');
+        } else {
+          setFeMessage('Rechazado por DIAN. Debes corregir la factura origen y generar un nuevo documento FE.');
+        }
+        await loadFeDocuments({ silent: true });
+        return;
+      }
+
+      setFeMessage(`Estado no soportado para reintento: ${status || 'N/A'}`);
+    } catch (error) {
+      setFeMessage(`Error en reintento inteligente: ${error?.message || 'desconocido'}`);
+    } finally {
+      setFeBusyDocumentId('');
+    }
+  }, [loadFeDocuments]);
+
   const getNextInvoiceCode = () => {
     const fromHistory = (salesHistory || []).reduce((max, inv) => {
       const raw = String(inv?.id || inv?.invoiceCode || inv?.mixedDetails?.invoiceCode || '');
@@ -4666,10 +4914,35 @@ function App() {
       }
     }
 
-    const finalMode = isInternalZero ? 'Factura Interna $0' : (mixedData ? 'Mixto' : paymentMode);
+    const normalizedMixedParts = Array.isArray(mixedData?.parts)
+      ? mixedData.parts
+          .map((part) => ({
+            method: String(part?.method || '').trim(),
+            amount: Number(part?.amount || 0),
+            reference: String(part?.reference || '').trim(),
+            otherDetail: String(part?.otherDetail || '').trim(),
+          }))
+          .filter((part) => part.method && part.amount > 0)
+      : [];
+    const resolvedMixedData = mixedData
+      ? {
+          ...mixedData,
+          parts: normalizedMixedParts,
+          splitSummary: normalizedMixedParts.length > 0
+            ? normalizedMixedParts
+                .map((part) => `${part.method}: ${Number(part.amount || 0).toLocaleString()}`)
+                .join(' | ')
+            : String(mixedData?.splitSummary || '').trim(),
+        }
+      : null;
+    const mixedModeLabel = resolvedMixedData && normalizedMixedParts.length > 0
+      ? `Mixto (${normalizedMixedParts.map((part) => part.method).join(' + ')})`
+      : 'Mixto';
+
+    const finalMode = isInternalZero ? 'Factura Interna $0' : (resolvedMixedData ? mixedModeLabel : paymentMode);
     const finalTotal = isInternalZero ? 0 : totalAfterDiscounts;
     const effectiveCashCollected = !isInternalZero
-      ? (mixedData ? Number(mixedData?.cash || 0) : (finalMode === PAYMENT_MODES.CONTADO ? finalTotal : 0))
+      ? (resolvedMixedData ? Number(resolvedMixedData?.cash || 0) : (finalMode === PAYMENT_MODES.CONTADO ? finalTotal : 0))
       : 0;
     let invoiceCode = '';
     try {
@@ -4708,7 +4981,7 @@ function App() {
       paymentMode: finalMode,
       authorization,
       mixedDetails: {
-        ...(mixedData || {}),
+        ...(resolvedMixedData || {}),
         invoiceCode,
         referral: {
           discountPercent: referralDiscountApplied ? REFERRAL_DISCOUNT_PERCENT : 0,
@@ -4739,7 +5012,7 @@ function App() {
       dueDate: dueDateObj.toISOString(),
       status: isInternalZero
         ? 'interna_cero'
-        : ((paymentMode === PAYMENT_MODES.CREDITO || mixedData?.credit > 0) ? 'pendiente' : 'pagado'),
+        : ((paymentMode === PAYMENT_MODES.CREDITO || resolvedMixedData?.credit > 0) ? 'pendiente' : 'pagado'),
     };
 
     const finalInvoice = {
@@ -4780,8 +5053,8 @@ function App() {
     }
     setStock((prev) => ({ ...prev, ventas: newStockVentas }));
 
-    if (!isInternalZero && (paymentMode === PAYMENT_MODES.CREDITO || mixedData?.credit > 0)) {
-      const debtAmount = mixedData ? mixedData.credit : finalTotal;
+    if (!isInternalZero && (paymentMode === PAYMENT_MODES.CREDITO || resolvedMixedData?.credit > 0)) {
+      const debtAmount = resolvedMixedData ? resolvedMixedData.credit : finalTotal;
       setCartera((prev) => [...prev, { ...finalInvoice, balance: debtAmount }]);
     }
 
@@ -4875,6 +5148,9 @@ function App() {
           customerDoc: finalInvoice.clientDoc,
           total: finalInvoice.total,
           paymentMode: finalInvoice.paymentMode,
+          paymentBreakdown: Array.isArray(finalInvoice?.mixedDetails?.parts)
+            ? finalInvoice.mixedDetails.parts
+            : null,
           userName: finalInvoice.user_name,
           notes: finalInvoice.mixedDetails?.internalZeroReason || '',
           referral: finalInvoice.mixedDetails?.referral || null,
@@ -5825,6 +6101,120 @@ function App() {
                       ))}
                     </div>
                   )}
+                </div>
+
+                <div className="card" style={{ marginTop: '1rem', position: 'relative', zIndex: 1 }}>
+                  <h3 style={{ marginTop: 0 }}>Facturacion Electronica DIAN</h3>
+
+                  <div style={{ display: 'grid', gap: '0.5rem' }}>
+                    <div className="input-group" style={{ margin: 0 }}>
+                      <label className="input-label">Seleccionar factura reciente</label>
+                      <select
+                        className="input-field"
+                        value={feInvoiceIdInput}
+                        onChange={(e) => setFeInvoiceIdInput(e.target.value)}
+                        disabled={!!feBusyDocumentId}
+                      >
+                        <option value="">Seleccione una factura...</option>
+                        {feInvoiceCandidates.map((candidate) => (
+                          <option key={candidate.dbId} value={candidate.dbId}>
+                            {candidate.code || candidate.dbId} - {candidate.client} - ${candidate.total.toLocaleString()}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="input-group" style={{ margin: 0 }}>
+                      <label className="input-label">Invoice ID (UUID) para generar FE</label>
+                      <input
+                        className="input-field"
+                        value={feInvoiceIdInput}
+                        onChange={(e) => setFeInvoiceIdInput(e.target.value)}
+                        placeholder="UUID de invoices"
+                      />
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                      <button
+                        className="btn"
+                        onClick={() => setFeInvoiceIdInput(latestPersistedInvoiceId || '')}
+                        disabled={!latestPersistedInvoiceId || !!feBusyDocumentId}
+                      >
+                        Usar ultima
+                      </button>
+                      <button className="btn btn-primary" onClick={handleFeGenerate} disabled={feBusyDocumentId === 'GEN'}>
+                        {feBusyDocumentId === 'GEN' ? 'Generando...' : 'Generar FE'}
+                      </button>
+                      <button className="btn" onClick={handleFeFullFlow} disabled={!!feBusyDocumentId}>
+                        Flujo completo
+                      </button>
+                      <button className="btn" onClick={() => loadFeDocuments()} disabled={feLoading || !!feBusyDocumentId}>
+                        {feLoading ? 'Cargando...' : 'Recargar'}
+                      </button>
+                      <select
+                        className="input-field"
+                        style={{ width: '180px' }}
+                        value={feStatusFilter}
+                        onChange={(e) => setFeStatusFilter(e.target.value)}
+                        disabled={!!feBusyDocumentId}
+                      >
+                        <option value="">Todos</option>
+                        <option value="pending">Pending</option>
+                        <option value="signed">Signed</option>
+                        <option value="sent">Sent</option>
+                        <option value="validated">Validated</option>
+                        <option value="rejected">Rejected</option>
+                        <option value="error">Error</option>
+                      </select>
+                    </div>
+
+                    {feMessage ? (
+                      <div style={{ fontSize: '0.82rem', color: '#0f172a', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '8px', padding: '0.45rem 0.6rem' }}>
+                        {feMessage}
+                      </div>
+                    ) : null}
+
+                    {feDocuments.length === 0 ? (
+                      <p style={{ margin: 0, color: '#64748b' }}>
+                        No hay documentos FE para el filtro actual.
+                      </p>
+                    ) : (
+                      <div style={{ display: 'grid', gap: '0.45rem', maxHeight: '290px', overflowY: 'auto', paddingRight: '0.1rem' }}>
+                        {feDocuments.map((doc) => {
+                          const docId = String(doc?.id || '');
+                          const isBusy = feBusyDocumentId === docId;
+                          const status = String(doc?.status || 'pending');
+                          return (
+                            <div
+                              key={docId}
+                              style={{
+                                border: '1px solid #e2e8f0',
+                                borderRadius: '8px',
+                                padding: '0.55rem',
+                                background: '#f8fafc',
+                              }}
+                            >
+                              <div style={{ fontSize: '0.8rem', marginBottom: '0.35rem' }}>
+                                <strong>{doc?.prefix || ''}{doc?.sequence_number || ''}</strong>
+                                {' '}•{' '}
+                                <span style={{ color: feStatusColor(status), fontWeight: 600 }}>{feStatusLabel(status)}</span>
+                              </div>
+                              <div style={{ fontSize: '0.72rem', color: '#64748b', marginBottom: '0.4rem' }}>
+                                {docId}
+                              </div>
+                              <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
+                                <button className="btn" onClick={() => runFeAction(docId, 'sign')} disabled={isBusy || !['pending', 'error'].includes(status)}>Firmar</button>
+                                <button className="btn" onClick={() => runFeAction(docId, 'send')} disabled={isBusy || status !== 'signed'}>Enviar DIAN</button>
+                                <button className="btn" onClick={() => runFeAction(docId, 'status')} disabled={isBusy || !['sent', 'rejected'].includes(status)}>Estado</button>
+                                <button className="btn" onClick={() => runFeAction(docId, 'print')} disabled={isBusy || ['pending', 'error'].includes(status)}>Imprimir FE</button>
+                                <button className="btn" onClick={() => handleFeSmartRetry(doc)} disabled={isBusy || status === 'validated'}>Reintento IA</button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             </main>

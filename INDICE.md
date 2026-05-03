@@ -20,6 +20,11 @@ Tiempo estimado: 20-25 min.
 1. `ESTRUCTURA_GENERADA.md`
 2. `RESUMEN_FINAL.md`
 
+## Si vas a implementar DIAN Software propio
+
+1. `docs/DIAN_SOFTWARE_PROPIO_MVP.md`
+2. `docs/dian_software_propio_base.sql`
+
 ## Si tienes errores
 
 1. `TROUBLESHOOTING.md`
