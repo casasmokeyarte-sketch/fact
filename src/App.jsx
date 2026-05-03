@@ -5967,7 +5967,7 @@ function App() {
         <>
           {activeTab === 'home' && renderHome()}
           {activeTab === 'facturacion' && (
-            <main style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '2rem' }}>
+            <main className="facturacion-layout">
               <div className="left-column">
                 <ClientSelector
                   clientName={clientName}
@@ -6036,7 +6036,7 @@ function App() {
                 </div>
               </div>
 
-              <div className="right-column" style={{ minWidth: 0 }}>
+              <div className="right-column facturacion-right-column">
                 <PaymentSummary
                   subtotal={subtotal}
                   deliveryFee={deliveryFee}
@@ -6103,10 +6103,13 @@ function App() {
                   )}
                 </div>
 
-                <div className="card" style={{ marginTop: '1rem', position: 'relative', zIndex: 1 }}>
-                  <h3 style={{ marginTop: 0 }}>Facturacion Electronica DIAN</h3>
+                <div className="card fe-panel-card" style={{ marginTop: '1rem', position: 'relative', zIndex: 1 }}>
+                  <div className="fe-panel-header">
+                    <h3 style={{ marginTop: 0, marginBottom: '0.2rem' }}>Facturacion Electronica DIAN</h3>
+                    <p className="fe-panel-subtitle">Flujo recomendado: Generar → Firmar → Enviar → Estado.</p>
+                  </div>
 
-                  <div style={{ display: 'grid', gap: '0.5rem' }}>
+                  <div className="fe-panel-grid">
                     <div className="input-group" style={{ margin: 0 }}>
                       <label className="input-label">Seleccionar factura reciente</label>
                       <select
@@ -6134,7 +6137,7 @@ function App() {
                       />
                     </div>
 
-                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    <div className="fe-actions-grid">
                       <button
                         className="btn"
                         onClick={() => setFeInvoiceIdInput(latestPersistedInvoiceId || '')}
@@ -6151,9 +6154,12 @@ function App() {
                       <button className="btn" onClick={() => loadFeDocuments()} disabled={feLoading || !!feBusyDocumentId}>
                         {feLoading ? 'Cargando...' : 'Recargar'}
                       </button>
+                    </div>
+
+                    <div className="input-group" style={{ margin: 0 }}>
+                      <label className="input-label">Filtrar documentos FE por estado</label>
                       <select
                         className="input-field"
-                        style={{ width: '180px' }}
                         value={feStatusFilter}
                         onChange={(e) => setFeStatusFilter(e.target.value)}
                         disabled={!!feBusyDocumentId}
@@ -6169,7 +6175,7 @@ function App() {
                     </div>
 
                     {feMessage ? (
-                      <div style={{ fontSize: '0.82rem', color: '#0f172a', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '8px', padding: '0.45rem 0.6rem' }}>
+                      <div className="fe-message-box">
                         {feMessage}
                       </div>
                     ) : null}
@@ -6179,7 +6185,7 @@ function App() {
                         No hay documentos FE para el filtro actual.
                       </p>
                     ) : (
-                      <div style={{ display: 'grid', gap: '0.45rem', maxHeight: '290px', overflowY: 'auto', paddingRight: '0.1rem' }}>
+                      <div className="fe-documents-list">
                         {feDocuments.map((doc) => {
                           const docId = String(doc?.id || '');
                           const isBusy = feBusyDocumentId === docId;
@@ -6187,22 +6193,17 @@ function App() {
                           return (
                             <div
                               key={docId}
-                              style={{
-                                border: '1px solid #e2e8f0',
-                                borderRadius: '8px',
-                                padding: '0.55rem',
-                                background: '#f8fafc',
-                              }}
+                              className="fe-document-item"
                             >
-                              <div style={{ fontSize: '0.8rem', marginBottom: '0.35rem' }}>
+                              <div className="fe-document-head">
                                 <strong>{doc?.prefix || ''}{doc?.sequence_number || ''}</strong>
                                 {' '}•{' '}
                                 <span style={{ color: feStatusColor(status), fontWeight: 600 }}>{feStatusLabel(status)}</span>
                               </div>
-                              <div style={{ fontSize: '0.72rem', color: '#64748b', marginBottom: '0.4rem' }}>
+                              <div className="fe-document-id">
                                 {docId}
                               </div>
-                              <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
+                              <div className="fe-document-actions">
                                 <button className="btn" onClick={() => runFeAction(docId, 'sign')} disabled={isBusy || !['pending', 'error'].includes(status)}>Firmar</button>
                                 <button className="btn" onClick={() => runFeAction(docId, 'send')} disabled={isBusy || status !== 'signed'}>Enviar DIAN</button>
                                 <button className="btn" onClick={() => runFeAction(docId, 'status')} disabled={isBusy || !['sent', 'rejected'].includes(status)}>Estado</button>
