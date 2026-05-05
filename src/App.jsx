@@ -154,6 +154,8 @@ const RECENT_WRITE_PROTECTION_MS = 5 * 60 * 1000;
 const REALTIME_REFRESH_DEBOUNCE_MS = 1400;
 const REALTIME_LOCAL_WRITE_HOLD_MS = 8000;
 const REALTIME_ACTIVE_INPUT_HOLD_MS = 2500;
+const PRODUCT_IMAGE_CACHE_MAX_ITEMS = 300;
+const PRODUCT_IMAGE_CACHE_MAX_URL_LENGTH = 2048;
 
 const isEditableElementFocused = () => {
   if (typeof document === 'undefined') return false;
@@ -475,12 +477,26 @@ const dedupeProducts = (rows) => {
 
 const normalizeProductImageUrl = (value) => String(value || '').trim();
 
+const isQuotaExceededStorageError = (err) => {
+  if (!err) return false;
+  if (err?.name === 'QuotaExceededError') return true;
+  if (err?.code === 22 || err?.code === 1014) return true;
+  return String(err?.message || '').toLowerCase().includes('quota');
+};
+
+const isCacheableProductImageUrl = (imageUrl) => {
+  if (!imageUrl) return false;
+  if (imageUrl.startsWith('data:')) return false;
+  if (imageUrl.length > PRODUCT_IMAGE_CACHE_MAX_URL_LENGTH) return false;
+  return true;
+};
+
 const buildProductImageCacheMap = (rows) => {
   const result = {};
   (rows || []).forEach((row) => {
     const idKey = String(row?.id || '').trim();
     const imageUrl = normalizeProductImageUrl(row?.image_url);
-    if (idKey && imageUrl) {
+    if (idKey && isCacheableProductImageUrl(imageUrl)) {
       result[idKey] = imageUrl;
     }
   });
@@ -1097,8 +1113,34 @@ function App() {
 
   const saveProductImageCache = (userId, rows) => {
     if (!userId) return;
-    const nextCache = buildProductImageCacheMap(rows);
-    localStorage.setItem(getProductImagesStorageKey(userId), JSON.stringify(nextCache));
+    const storageKey = getProductImagesStorageKey(userId);
+    const entries = Object.entries(buildProductImageCacheMap(rows));
+    const cappedEntries = entries.slice(-PRODUCT_IMAGE_CACHE_MAX_ITEMS);
+
+    let attemptEntries = cappedEntries;
+    while (attemptEntries.length > 0) {
+      try {
+        const nextCache = Object.fromEntries(attemptEntries);
+        localStorage.setItem(storageKey, JSON.stringify(nextCache));
+        return;
+      } catch (err) {
+        if (!isQuotaExceededStorageError(err)) {
+          console.warn('No se pudo guardar cache de imagenes de productos.', err);
+          return;
+        }
+
+        // Si no hay espacio, reducir el cache a la mitad y reintentar.
+        if (attemptEntries.length <= 1) break;
+        attemptEntries = attemptEntries.slice(-Math.max(1, Math.floor(attemptEntries.length / 2)));
+      }
+    }
+
+    try {
+      localStorage.removeItem(storageKey);
+    } catch {
+      // Ignorar fallos de limpieza de cache local.
+    }
+    console.warn('Cache de imagenes deshabilitado por falta de espacio en storage local.');
   };
 
   const selectedClientPendingBalance = selectedClient
