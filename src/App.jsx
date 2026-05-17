@@ -154,7 +154,7 @@ const RECENT_WRITE_PROTECTION_MS = 5 * 60 * 1000;
 const REALTIME_REFRESH_DEBOUNCE_MS = 1400;
 const REALTIME_LOCAL_WRITE_HOLD_MS = 8000;
 const REALTIME_ACTIVE_INPUT_HOLD_MS = 2500;
-const PRODUCT_IMAGE_CACHE_MAX_ITEMS = 300;
+const PRODUCT_IMAGE_CACHE_MAX_ITEMS = 100;
 const PRODUCT_IMAGE_CACHE_MAX_URL_LENGTH = 2048;
 
 const isEditableElementFocused = () => {
@@ -1545,6 +1545,7 @@ function App() {
 
   const refreshUsersFromCloud = useCallback(async ({ silent = true } = {}) => {
     if (!adminUsersUrl || !currentUser?.id) return;
+    if (normalizeRole(currentUser?.role) !== 'Administrador') return;
 
     try {
       const { data: { session } } = await supabase.auth.getSession();
