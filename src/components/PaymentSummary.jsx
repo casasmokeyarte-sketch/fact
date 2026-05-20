@@ -1062,6 +1062,7 @@ export function PaymentSummary({
           {limitExceeded ? 'Limite Excedido' : isRequestingRemoteAuth ? 'Enviando Solicitud...' : 'Facturar'}
         </button>
         <button className="btn" style={{ flex: '0 1 88px' }} onClick={() => handlePrintInvoice('58mm')} title="Imprimir 58mm">58mm</button>
+        <button className="btn" style={{ flex: '0 1 88px' }} onClick={() => handlePrintInvoice('half-carta')} title="Imprimir Media Carta (5.5x8.5)">½ Carta</button>
         <button className="btn" style={{ flex: '0 1 88px' }} onClick={() => handlePrintInvoice('a4')} title="Imprimir A4">A4</button>
         <button className="btn" style={{ flex: '1 1 150px' }} onClick={() => handlePrintShippingGuide('pagado')} title="Imprimir guia de envio pagada">Guia pagada</button>
         <button className="btn" style={{ flex: '1 1 165px' }} onClick={() => handlePrintShippingGuide('pendiente')} title="Imprimir guia de envio pendiente">Guia pendiente</button>

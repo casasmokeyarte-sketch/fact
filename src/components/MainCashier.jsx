@@ -111,10 +111,43 @@ export function MainCashier({
     };
 
     const today = new Date().toLocaleDateString();
-    const dailyCashIncome = salesHistory
+
+    // Abonos de cartera hechos HOY (por fecha del abono, no de la factura)
+    const allTodayCarteraAbonos = (salesHistory || []).flatMap((sale) => {
+        const abonos = Array.isArray(sale?.abonos)
+            ? sale.abonos
+            : (Array.isArray(sale?.mixedDetails?.cartera?.abonos) ? sale.mixedDetails.cartera.abonos : []);
+        return abonos
+            .filter((a) => a?.date && new Date(a.date).toLocaleDateString() === today)
+            .map((a) => ({
+                ...a,
+                invoiceId: sale?.id || sale?.db_id || 'N/A',
+                clientName: sale?.clientName || ''
+            }));
+    });
+
+    const dailyCashFromSales = (salesHistory || [])
         .filter((s) => !isFinanciallyClosedInvoice(s))
         .filter((s) => new Date(s.date).toLocaleDateString() === today)
-        .reduce((sum, s) => sum + getCashPortionFromSale(s) + getCashAbonosFromSale(s), 0);
+        .reduce((sum, s) => sum + getCashPortionFromSale(s), 0);
+
+    const dailyCashFromAbonos = allTodayCarteraAbonos.reduce((sum, abono) => {
+        const method = normalizePaymentMethod(abono?.method);
+        if (method.includes('efectivo') || method.includes('contado') || method.includes('cash')) {
+            return sum + Number(abono?.amount || 0);
+        }
+        return sum;
+    }, 0);
+
+    const dailyCashIncome = dailyCashFromSales + dailyCashFromAbonos;
+
+    const dailyAbonosTransfer = allTodayCarteraAbonos.reduce((sum, abono) => {
+        const method = normalizePaymentMethod(abono?.method);
+        if (!method.includes('efectivo') && !method.includes('contado') && !method.includes('cash')) {
+            return sum + Number(abono?.amount || 0);
+        }
+        return sum;
+    }, 0);
 
     const dailyExpenses = expenses
         .filter((e) => new Date(e.date).toLocaleDateString() === today)
@@ -122,6 +155,16 @@ export function MainCashier({
 
     const currentUserKey = getCashUserKey?.(currentUser);
     const cajeroBalance = getUserCashBalance?.(currentUser) || 0;
+
+    // Abonos del dia para el cajero actual
+    const myTodayAbonos = allTodayCarteraAbonos.filter((a) => {
+        const aId = String(a?.user_id || '').trim();
+        const cId = String(currentUser?.id || '').trim();
+        if (aId && cId && aId === cId) return true;
+        const aName = String(a?.user_name || a?.user || '').trim().toLowerCase();
+        const cName = String(currentUser?.name || currentUser?.email || '').trim().toLowerCase();
+        return aName && cName && aName === cName;
+    });
 
     const asesorOptions = useMemo(() => {
         const base = (users || [])
@@ -307,6 +350,11 @@ export function MainCashier({
                         <div>
                             <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Ingresos en Efectivo del Dia</p>
                             <p style={{ fontSize: '1.2rem', fontWeight: 'bold', color: '#10b981' }}>+ ${dailyCashIncome.toLocaleString()}</p>
+                            {dailyCashFromAbonos > 0 && (
+                                <p style={{ fontSize: '0.75rem', color: '#059669' }}>
+                                    (incl. abonos cartera: ${dailyCashFromAbonos.toLocaleString()})
+                                </p>
+                            )}
                         </div>
                         <div>
                             <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Gastos del Dia</p>
@@ -377,6 +425,50 @@ export function MainCashier({
                             <button className="btn" style={{ backgroundColor: '#e2e8f0' }} onClick={collectFromAsesor}>Recaudar</button>
                         </div>
                     </div>
+
+                    {allTodayCarteraAbonos.length > 0 && (
+                        <div className="card" style={{ borderTop: '4px solid #8b5cf6' }}>
+                            <h3 style={{ marginTop: 0 }}>Abonos de Cartera Recibidos Hoy</h3>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
+                                <div style={{ textAlign: 'center', padding: '0.75rem', background: 'var(--surface-muted)', borderRadius: '8px' }}>
+                                    <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', margin: '0 0 4px' }}>Efectivo</p>
+                                    <p style={{ fontWeight: 'bold', color: '#10b981', margin: 0 }}>${dailyCashFromAbonos.toLocaleString()}</p>
+                                </div>
+                                <div style={{ textAlign: 'center', padding: '0.75rem', background: 'var(--surface-muted)', borderRadius: '8px' }}>
+                                    <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', margin: '0 0 4px' }}>Transferencia / Tarjeta</p>
+                                    <p style={{ fontWeight: 'bold', color: '#3b82f6', margin: 0 }}>${dailyAbonosTransfer.toLocaleString()}</p>
+                                </div>
+                                <div style={{ textAlign: 'center', padding: '0.75rem', background: 'var(--surface-muted)', borderRadius: '8px' }}>
+                                    <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', margin: '0 0 4px' }}>Total Abonos</p>
+                                    <p style={{ fontWeight: 'bold', margin: 0 }}>${(dailyCashFromAbonos + dailyAbonosTransfer).toLocaleString()}</p>
+                                </div>
+                            </div>
+                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                                <thead>
+                                    <tr style={{ background: 'var(--surface-muted)' }}>
+                                        <th style={{ padding: '6px 8px', textAlign: 'left' }}>Hora</th>
+                                        <th style={{ padding: '6px 8px', textAlign: 'left' }}>Factura</th>
+                                        <th style={{ padding: '6px 8px', textAlign: 'left' }}>Cliente</th>
+                                        <th style={{ padding: '6px 8px', textAlign: 'left' }}>Metodo</th>
+                                        <th style={{ padding: '6px 8px', textAlign: 'right' }}>Monto</th>
+                                        <th style={{ padding: '6px 8px', textAlign: 'left' }}>Cajero</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {allTodayCarteraAbonos.map((a, idx) => (
+                                        <tr key={a?.id || idx} style={{ borderBottom: '1px solid var(--border-soft)' }}>
+                                            <td style={{ padding: '6px 8px', color: 'var(--text-secondary)' }}>{a?.date ? new Date(a.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '-'}</td>
+                                            <td style={{ padding: '6px 8px' }}>{a.invoiceId}</td>
+                                            <td style={{ padding: '6px 8px' }}>{a.clientName || '-'}</td>
+                                            <td style={{ padding: '6px 8px' }}><span style={{ padding: '2px 6px', borderRadius: '4px', background: 'var(--surface-muted)', fontSize: '0.8rem' }}>{a?.method || 'N/A'}</span></td>
+                                            <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 600, color: '#10b981' }}>${Number(a?.amount || 0).toLocaleString()}</td>
+                                            <td style={{ padding: '6px 8px', color: 'var(--text-secondary)' }}>{a?.user_name || a?.user || '-'}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
                 </div>
             )}
 
@@ -544,6 +636,52 @@ export function MainCashier({
                                     </div>
                                 ))}
                             </div>
+                        )}
+                    </div>
+
+                    <div className="card card--muted" style={{ marginTop: '2rem', borderTop: '4px solid #8b5cf6' }}>
+                        <h4 style={{ marginTop: 0 }}>Abonos de Cartera Procesados Hoy</h4>
+                        {myTodayAbonos.length === 0 ? (
+                            <p style={{ marginBottom: 0, color: 'var(--text-secondary)' }}>No ha procesado abonos de cartera hoy.</p>
+                        ) : (
+                            <>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
+                                    <div style={{ textAlign: 'center', padding: '0.75rem', background: 'rgba(255,255,255,0.07)', borderRadius: '8px' }}>
+                                        <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', margin: '0 0 4px' }}>Total abonos procesados</p>
+                                        <p style={{ fontWeight: 'bold', fontSize: '1.3rem', margin: 0 }}>
+                                            ${myTodayAbonos.reduce((s, a) => s + Number(a?.amount || 0), 0).toLocaleString()}
+                                        </p>
+                                    </div>
+                                    <div style={{ textAlign: 'center', padding: '0.75rem', background: 'rgba(255,255,255,0.07)', borderRadius: '8px' }}>
+                                        <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', margin: '0 0 4px' }}>En efectivo</p>
+                                        <p style={{ fontWeight: 'bold', fontSize: '1.3rem', color: '#10b981', margin: 0 }}>
+                                            ${myTodayAbonos.filter(a => normalizePaymentMethod(a?.method).includes('efectivo') || normalizePaymentMethod(a?.method).includes('contado')).reduce((s, a) => s + Number(a?.amount || 0), 0).toLocaleString()}
+                                        </p>
+                                    </div>
+                                </div>
+                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                                    <thead>
+                                        <tr style={{ background: 'var(--surface-muted)' }}>
+                                            <th style={{ padding: '6px 8px', textAlign: 'left' }}>Hora</th>
+                                            <th style={{ padding: '6px 8px', textAlign: 'left' }}>Factura</th>
+                                            <th style={{ padding: '6px 8px', textAlign: 'left' }}>Cliente</th>
+                                            <th style={{ padding: '6px 8px', textAlign: 'left' }}>Metodo</th>
+                                            <th style={{ padding: '6px 8px', textAlign: 'right' }}>Monto</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {myTodayAbonos.map((a, idx) => (
+                                            <tr key={a?.id || idx} style={{ borderBottom: '1px solid var(--border-soft)' }}>
+                                                <td style={{ padding: '6px 8px', color: 'var(--text-secondary)' }}>{a?.date ? new Date(a.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '-'}</td>
+                                                <td style={{ padding: '6px 8px' }}>{a.invoiceId}</td>
+                                                <td style={{ padding: '6px 8px' }}>{a.clientName || '-'}</td>
+                                                <td style={{ padding: '6px 8px' }}><span style={{ padding: '2px 6px', borderRadius: '4px', background: 'var(--surface-muted)', fontSize: '0.8rem' }}>{a?.method || 'N/A'}</span></td>
+                                                <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 600, color: '#10b981' }}>${Number(a?.amount || 0).toLocaleString()}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </>
                         )}
                     </div>
                 </div>

@@ -333,6 +333,17 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
         const clientSales = salesHistory.filter(s => s.clientName === selectedClientReport.name);
         const currentBalance = clientCartera.reduce((sum, inv) => sum + (inv.balance || 0), 0);
 
+        // Reunir todos los abonos del cliente desde cartera y salesHistory
+        const allClientAbonos = clientSales.flatMap((sale) => {
+            const abonos = Array.isArray(sale?.abonos)
+                ? sale.abonos
+                : (Array.isArray(sale?.mixedDetails?.cartera?.abonos) ? sale.mixedDetails.cartera.abonos : []);
+            return abonos.map((a) => ({
+                ...a,
+                invoiceId: sale?.id || sale?.db_id || 'N/A',
+            }));
+        }).sort((a, b) => new Date(b?.date || 0) - new Date(a?.date || 0));
+
         return (
             <div className="client-report-view">
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1rem' }} className="no-print">
@@ -397,6 +408,45 @@ export function ClientModule({ currentUser, clients, setClients, cartera, salesH
                             )}
                         </tbody>
                     </table>
+
+                    <h4 style={{ borderBottom: '2px solid rgba(0, 229, 255, 0.18)', paddingBottom: '0.5rem' }}>Historial de Abonos</h4>
+                    {allClientAbonos.length === 0 ? (
+                        <p style={{ color: 'var(--text-secondary)' }}>No hay abonos registrados para este cliente.</p>
+                    ) : (
+                        <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '2rem' }}>
+                            <thead>
+                                <tr style={{ background: 'var(--surface-muted)' }}>
+                                    <th style={{ padding: '0.5rem', textAlign: 'left' }}>Fecha</th>
+                                    <th style={{ padding: '0.5rem', textAlign: 'left' }}>Factura #</th>
+                                    <th style={{ padding: '0.5rem', textAlign: 'left' }}>Metodo</th>
+                                    <th style={{ padding: '0.5rem', textAlign: 'left' }}>Referencia</th>
+                                    <th style={{ padding: '0.5rem', textAlign: 'right' }}>Monto</th>
+                                    <th style={{ padding: '0.5rem', textAlign: 'left' }}>Registrado por</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {allClientAbonos.map((a, idx) => (
+                                    <tr key={a?.id || idx} style={{ borderBottom: '1px solid rgba(0, 229, 255, 0.12)' }}>
+                                        <td style={{ padding: '0.5rem' }}>{a?.date ? new Date(a.date).toLocaleString() : '-'}</td>
+                                        <td style={{ padding: '0.5rem' }}>{a.invoiceId}</td>
+                                        <td style={{ padding: '0.5rem' }}><span className="badge">{a?.method || 'N/A'}</span></td>
+                                        <td style={{ padding: '0.5rem', color: 'var(--text-secondary)' }}>{a?.reference || '-'}</td>
+                                        <td style={{ padding: '0.5rem', textAlign: 'right', fontWeight: 700, color: '#10b981' }}>${Number(a?.amount || 0).toLocaleString()}</td>
+                                        <td style={{ padding: '0.5rem', color: 'var(--text-secondary)' }}>{a?.user_name || a?.user || '-'}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                            <tfoot>
+                                <tr>
+                                    <td colSpan="4" style={{ padding: '0.5rem', fontWeight: 700, textAlign: 'right' }}>Total abonado:</td>
+                                    <td style={{ padding: '0.5rem', textAlign: 'right', fontWeight: 700, color: '#10b981' }}>
+                                        ${allClientAbonos.reduce((s, a) => s + Number(a?.amount || 0), 0).toLocaleString()}
+                                    </td>
+                                    <td></td>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    )}
 
                     <h4 style={{ borderBottom: '2px solid rgba(0, 229, 255, 0.18)', paddingBottom: '0.5rem' }}>Asltimas Compras (Historial)</h4>
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>

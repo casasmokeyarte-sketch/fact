@@ -310,11 +310,15 @@ async function getCurrentCompanyId(userId) {
   try {
     const { data, error } = await supabase.rpc('current_company_id');
     if (!error && isUuid(data)) return data;
-  } catch {
-    // noop
+    if (error) console.warn('[getCurrentCompanyId] RPC error:', error?.message, error?.code);
+  } catch (e) {
+    console.warn('[getCurrentCompanyId] RPC exception:', e?.message);
   }
 
-  if (!isUuid(userId)) return null;
+  if (!isUuid(userId)) {
+    console.warn('[getCurrentCompanyId] userId no es UUID valido:', userId);
+    return null;
+  }
 
   try {
     const { data, error } = await supabase
@@ -323,8 +327,11 @@ async function getCurrentCompanyId(userId) {
       .eq('user_id', userId)
       .maybeSingle();
     if (error) throw error;
-    return isUuid(data?.company_id) ? data.company_id : null;
-  } catch {
+    const companyId = isUuid(data?.company_id) ? data.company_id : null;
+    if (!companyId) console.warn('[getCurrentCompanyId] Perfil sin company_id para userId:', userId, 'data:', data);
+    return companyId;
+  } catch (e) {
+    console.warn('[getCurrentCompanyId] Fallo lectura de perfil:', e?.message);
     return null;
   }
 }
@@ -498,6 +505,7 @@ export const dataService = {
   async getProducts() {
     const userId = await getAuthUserId();
     const companyId = await getCurrentCompanyId(userId);
+    console.log('[getProducts] userId:', userId, '| companyId:', companyId);
     const buildQuery = (filterCompany = true) => {
       let query = supabase.from('products').select('*').order('name');
       if (filterCompany) {
@@ -513,6 +521,7 @@ export const dataService = {
       error = retry.error;
     }
     if (error) throw error;
+    console.log('[getProducts] filas devueltas por Supabase:', (data || []).length, '| con company_id:', companyId ? 'SI' : 'NO (sin filtro)');
     return (data || [])
       .filter((p) => (p?.status ?? 'activo') !== 'inactivo')
       .map((p) => ({

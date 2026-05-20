@@ -337,7 +337,7 @@ export function printShippingGuideDocument(invoice, options = {}) {
 }
 
 export function printInvoiceDocument(invoice, mode = '58mm') {
-  const safeMode = mode === 'a4' ? 'a4' : '58mm';
+  const safeMode = mode === 'a4' ? 'a4' : (mode === 'half-carta' ? 'half-carta' : '58mm');
   const invoiceCode = String(
     invoice?.invoiceCode ||
     invoice?.mixedDetails?.invoiceCode ||
@@ -464,6 +464,19 @@ export function printInvoiceDocument(invoice, mode = '58mm') {
       th, td { font-size: 13px; }
       .total { font-size: 20px; }
     `
+    : (safeMode === 'half-carta'
+    ? `
+      @page { size: 5.5in 8.5in portrait; margin: 8mm; }
+      body { width: auto; margin: 0; padding: 0; font-size: 11px; }
+      .doc { max-width: 100%; margin: 0 auto; }
+      .logo { max-width: 60px !important; }
+      .company { font-size: 10px !important; }
+      .meta { font-size: 10px !important; gap: 4px !important; }
+      th, td { font-size: 11px; padding: 4px 5px !important; }
+      .total { font-size: 16px; }
+      .pay-details { font-size: 10px !important; }
+      .footer { font-size: 9px !important; }
+    `
     : `
       @page { size: 58mm auto; margin: 0; }
       body { width: 58mm; margin: 0 auto; padding: 2mm 1.5mm; }
@@ -472,7 +485,7 @@ export function printInvoiceDocument(invoice, mode = '58mm') {
       th, td { font-size: 10px; padding: 3px 2px !important; }
       .meta, .company, .footer { font-size: 9px !important; }
       .total { font-size: 16px; }
-    `;
+    `);
 
   popup.document.open();
   popup.document.write(`

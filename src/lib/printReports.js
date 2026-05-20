@@ -11,7 +11,7 @@ function escapeHtml(value) {
 }
 
 function buildPageCss(mode) {
-  const safeMode = mode === '58mm' ? '58mm' : 'a4';
+  const safeMode = mode === '58mm' ? '58mm' : (mode === 'half-carta' ? 'half-carta' : 'a4');
 
   if (safeMode === '58mm') {
     return `
@@ -25,6 +25,19 @@ function buildPageCss(mode) {
       table { width: 100% !important; table-layout: fixed; }
       th, td { font-size: 9px !important; padding: 3px 2px !important; word-break: break-word; }
       pre { font-size: 9px !important; }
+    `;
+  }
+
+  if (safeMode === 'half-carta') {
+    return `
+      @page { size: 5.5in 8.5in portrait; margin: 8mm; }
+      body { width: auto; margin: 0; padding: 0; font-size: 11px; }
+      .doc { max-width: 100%; margin: 0 auto; }
+      .logo { max-width: 60px !important; }
+      .company, .meta, .footer { font-size: 10px !important; }
+      h1 { font-size: 15px !important; }
+      th, td { font-size: 11px; padding: 4px 5px !important; }
+      pre { font-size: 10px !important; }
     `;
   }
 
