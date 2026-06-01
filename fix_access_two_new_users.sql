@@ -25,6 +25,28 @@ where lower(p.email) in (
 )
 order by p.email;
 
+-- Diagnostico consolidado: estado por email
+with target_emails as (
+  select 'j.sebascarrillo@hotmail.com'::text as email
+  union all
+  select 'kata.bermeo@gmail.com'::text as email
+)
+select
+  t.email,
+  u.id as auth_user_id,
+  p.user_id as profile_user_id,
+  p.company_id,
+  case
+    when u.id is null then 'NO_EXISTE_EN_AUTH_USERS'
+    when p.user_id is null then 'FALTA_PROFILE'
+    when p.company_id is null then 'SIN_COMPANY_ID'
+    else 'LISTO_PARA_LOGIN'
+  end as diagnostico
+from target_emails t
+left join auth.users u on lower(u.email) = t.email
+left join public.profiles p on p.user_id = u.id
+order by t.email;
+
 -- 2) Repara/crea perfil de esos usuarios con company_id valido
 do $$
 declare
@@ -81,6 +103,28 @@ where lower(p.email) in (
   'kata.bermeo@gmail.com'
 )
 order by p.email;
+
+-- Verificacion consolidada final
+with target_emails as (
+  select 'j.sebascarrillo@hotmail.com'::text as email
+  union all
+  select 'kata.bermeo@gmail.com'::text as email
+)
+select
+  t.email,
+  u.id as auth_user_id,
+  p.user_id as profile_user_id,
+  p.company_id,
+  case
+    when u.id is null then 'NO_EXISTE_EN_AUTH_USERS'
+    when p.user_id is null then 'FALTA_PROFILE'
+    when p.company_id is null then 'SIN_COMPANY_ID'
+    else 'OK'
+  end as estado_final
+from target_emails t
+left join auth.users u on lower(u.email) = t.email
+left join public.profiles p on p.user_id = u.id
+order by t.email;
 
 -- 4) (Opcional) Si no existe trigger de alta para futuros usuarios, recrearlo
 create or replace function public.handle_new_user()
