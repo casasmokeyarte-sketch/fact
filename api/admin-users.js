@@ -198,6 +198,64 @@ function isMissingAuthUserError(error) {
   );
 }
 
+async function listAllAuthUserIds(supabase) {
+  const ids = new Set();
+  let page = 1;
+  const perPage = 1000;
+
+  while (true) {
+    const { data, error } = await supabase.auth.admin.listUsers({ page, perPage });
+    if (error) throw error;
+    const users = Array.isArray(data?.users) ? data.users : [];
+    users.forEach((u) => {
+      if (u?.id) ids.add(String(u.id));
+    });
+    if (users.length < perPage) break;
+    page += 1;
+  }
+
+  return ids;
+}
+
+function getRowTimestamp(row) {
+  const updated = Date.parse(String(row?.updated_at || ''));
+  if (Number.isFinite(updated)) return updated;
+  const created = Date.parse(String(row?.created_at || ''));
+  if (Number.isFinite(created)) return created;
+  return 0;
+}
+
+function pickMostRecentProfile(a, b) {
+  return getRowTimestamp(b) > getRowTimestamp(a) ? b : a;
+}
+
+function dedupeProfiles(rows) {
+  const byId = new Map();
+  (rows || []).forEach((row) => {
+    const key = String(row?.user_id || '').trim();
+    if (!key) return;
+    if (!byId.has(key)) {
+      byId.set(key, row);
+      return;
+    }
+    byId.set(key, pickMostRecentProfile(byId.get(key), row));
+  });
+
+  const byEmail = new Map();
+  Array.from(byId.values()).forEach((row) => {
+    const emailKey = String(row?.email || '').trim().toLowerCase();
+    const key = emailKey || String(row?.user_id || '').trim();
+    if (!key) return;
+    if (!byEmail.has(key)) {
+      byEmail.set(key, row);
+      return;
+    }
+    byEmail.set(key, pickMostRecentProfile(byEmail.get(key), row));
+  });
+
+  return Array.from(byEmail.values());
+}
+
 export default async function handler(req, res) {
   if (req.method === 'OPTIONS') {
     res.statusCode = 204;
@@ -222,7 +280,27 @@ export default async function handler(req, res) {
         .limit(200);
 
       if (error) return json(res, 500, { ok: false, error: error.message || 'No se pudo listar usuarios.' });
-      return json(res, 200, { ok: true, users: (data || []).map(toUiUser) });
+
+      let authIds = null;
+      try {
+        authIds = await listAllAuthUserIds(supabase);
+      } catch (listError) {
+        console.error('[api/admin-users] listUsers failed, fallback sin filtro auth:', {
+          message: listError?.message || null,
+          status: listError?.status || null,
+          code: listError?.code || null,
+        });
+      }
+
+      const rows = Array.isArray(data) ? data : [];
+      const syncedRows = authIds
+        ? rows.filter((row) => authIds.has(String(row?.user_id || '')))
+        : rows;
+      const dedupedRows = dedupeProfiles(syncedRows)
+        .sort((a, b) => getRowTimestamp(b) - getRowTimestamp(a))
+        .slice(0, 200);
+
+      return json(res, 200, { ok: true, users: dedupedRows.map(toUiUser) });
     }
 
     if (req.method === 'POST') {
@@ -253,10 +331,21 @@ export default async function handler(req, res) {
         .from('profiles')
         .select('user_id')
         .eq('email', email)
+        .order('updated_at', { ascending: false })
+        .order('created_at', { ascending: false })
+        .limit(1)
         .maybeSingle();
 
       if (existingProfile?.user_id) {
-        return json(res, 409, { ok: false, error: 'Ya existe un usuario con ese nombre.' });
+        const { data: existingAuth, error: existingAuthError } = await supabase.auth.admin.getUserById(existingProfile.user_id);
+        if (existingAuthError || !existingAuth?.user) {
+          await supabase
+            .from('profiles')
+            .delete()
+            .eq('user_id', existingProfile.user_id);
+        } else {
+          return json(res, 409, { ok: false, error: 'Ya existe un usuario con ese nombre.' });
+        }
       }
 
       const { data: created, error: createError } = await supabase.auth.admin.createUser({
