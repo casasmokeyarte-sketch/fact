@@ -20,7 +20,7 @@ BEGIN
   -- Reusar uno existente si ya hay alguno (por ejecuciones parciales)
   SELECT company_id INTO v_company_id
   FROM public.profiles
-  WHERE company_id IS NOT NULL
+  WHERE company_id IS NOT NULL  
   ORDER BY created_at ASC NULLS LAST
   LIMIT 1;
 

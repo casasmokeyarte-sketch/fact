@@ -35,12 +35,7 @@ export function AuthPage({ onAuthSuccess }) {
 
     try {
       const usernameDomain = String(import.meta.env?.VITE_USERNAME_EMAIL_DOMAIN || '@fact.local').trim() || '@fact.local'
-      const normalizedDomain = usernameDomain.startsWith('@') ? usernameDomain : `@${usernameDomain}`
-      const normalizeLoginEmail = (value) => {
-        const raw = String(value || '').trim()
-        if (!raw) return ''
-        return raw.includes('@') ? raw : `${raw}${normalizedDomain}`
-      }
+      const normalizeLoginIdentifier = (value) => String(value || '').trim().toLowerCase()
 
       if (isRecoveryMode) {
         if (!recoveryPassword || recoveryPassword.length < 6) {
@@ -66,7 +61,9 @@ export function AuthPage({ onAuthSuccess }) {
         return
       }
 
-      const result = await signIn(normalizeLoginEmail(email), password)
+      const result = await signIn(normalizeLoginIdentifier(email), password, {
+        usernameDomain,
+      })
 
       if (result.error) {
         setError(result.error)

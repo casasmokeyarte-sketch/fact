@@ -528,6 +528,33 @@ const readCachedUsers = () => {
   }
 };
 
+const cleanOtherUsersCache = (currentUserId) => {
+  if (typeof window === 'undefined' || !currentUserId) return;
+  try {
+    const keysToRemove = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key) continue;
+      if (
+        (key.startsWith('fact_products_cache_') && !key.endsWith(currentUserId)) ||
+        (key.startsWith('fact_clients_cache_') && !key.endsWith(currentUserId)) ||
+        (key.startsWith('fact_product_images_') && !key.endsWith(currentUserId)) ||
+        (key.startsWith('fact_invoice_composer_') && !key.endsWith(currentUserId))
+      ) {
+        keysToRemove.push(key);
+      }
+    }
+    keysToRemove.forEach((key) => {
+      localStorage.removeItem(key);
+    });
+    if (keysToRemove.length > 0) {
+      console.log(`[Cache Cleanup] Se eliminaron ${keysToRemove.length} llaves de cache obsoletas.`);
+    }
+  } catch (e) {
+    console.warn('Error limpiando cache de otros usuarios:', e);
+  }
+};
+
 function HeaderClock() {
   const [now, setNow] = useState(() => new Date());
 
@@ -1482,6 +1509,10 @@ function App() {
   }
 
   const applyUserWithProfile = async (user) => {
+    if (user?.id) {
+      cleanOtherUsersCache(user.id);
+    }
+
     const sameUserSession =
       !!user?.id &&
       !!currentUser?.id &&
@@ -2222,9 +2253,25 @@ function App() {
         userCashBalancesHydratedRef.current = true;
       }
 
-      // Reconstruct carteras/debts from invoices
-      const pendingSales = enrichedSales.filter(s => s.status === 'pendiente');
-      setCartera(pendingSales);
+      // Reconstruct cartera from credit-related invoices across statuses.
+      // This preserves paid/cancelled/returned records for portfolio history views.
+      const carteraRows = enrichedSales.filter((sale) => {
+        const paymentMode = String(sale?.paymentMode || sale?.payment_mode || '').toLowerCase();
+        const mixedCredit = Number(sale?.mixedDetails?.credit ?? sale?.mixed_details?.credit ?? 0);
+        const hasCarteraData =
+          Array.isArray(sale?.abonos) && sale.abonos.length > 0
+          || (sale?.mixedDetails?.cartera && typeof sale.mixedDetails.cartera === 'object')
+          || (sale?.mixed_details?.cartera && typeof sale.mixed_details.cartera === 'object')
+          || Number(sale?.balance || 0) > 0;
+        const isCreditInvoice =
+          paymentMode.includes('credito')
+          || paymentMode.includes('credit')
+          || mixedCredit > 0
+          || !!sale?.dueDate
+          || !!sale?.due_date;
+        return isCreditInvoice || hasCarteraData;
+      });
+      setCartera(carteraRows);
     } catch (err) {
       console.error("Error cargando datos de Supabase:", err);
       if (!silent) {
@@ -2328,7 +2375,11 @@ function App() {
 
   useEffect(() => {
     if (!currentUser?.id) return;
-    localStorage.setItem(getActiveTabStorageKey(currentUser.id), activeTab);
+    try {
+      localStorage.setItem(getActiveTabStorageKey(currentUser.id), activeTab);
+    } catch (e) {
+      console.warn('Error guardando activeTab en localStorage:', e);
+    }
   }, [activeTab, currentUser?.id]);
 
   useEffect(() => {
@@ -2338,7 +2389,11 @@ function App() {
   }, [currentUser?.role, activeTab]);
 
   useEffect(() => {
-    localStorage.setItem(USER_CASH_BALANCES_STORAGE_KEY, JSON.stringify(userCashBalances));
+    try {
+      localStorage.setItem(USER_CASH_BALANCES_STORAGE_KEY, JSON.stringify(userCashBalances));
+    } catch (e) {
+      console.warn('Error guardando userCashBalances en localStorage:', e);
+    }
   }, [userCashBalances]);
 
   useEffect(() => {
@@ -2376,7 +2431,11 @@ function App() {
 
   useEffect(() => {
     if (!currentUser?.id) return;
-    localStorage.setItem(getQuickTrayStorageKey(currentUser.id), quickTrayOpen ? '1' : '0');
+    try {
+      localStorage.setItem(getQuickTrayStorageKey(currentUser.id), quickTrayOpen ? '1' : '0');
+    } catch (e) {
+      console.warn('Error guardando quickTrayOpen en localStorage:', e);
+    }
   }, [quickTrayOpen, currentUser?.id]);
 
   useEffect(() => {
@@ -2393,20 +2452,32 @@ function App() {
 
   useEffect(() => {
     if (!currentUser?.id) return;
-    localStorage.setItem(
-      getQuickLookupHistoryStorageKey(currentUser.id),
-      JSON.stringify(quickLookupHistory.slice(0, 8))
-    );
+    try {
+      localStorage.setItem(
+        getQuickLookupHistoryStorageKey(currentUser.id),
+        JSON.stringify(quickLookupHistory.slice(0, 8))
+      );
+    } catch (e) {
+      console.warn('Error guardando quickLookupHistory en localStorage:', e);
+    }
   }, [quickLookupHistory, currentUser?.id]);
 
   useEffect(() => {
     if (!currentUser?.id || !quickPanelPosition) return;
-    localStorage.setItem(getQuickPanelPositionStorageKey(currentUser.id), JSON.stringify(quickPanelPosition));
+    try {
+      localStorage.setItem(getQuickPanelPositionStorageKey(currentUser.id), JSON.stringify(quickPanelPosition));
+    } catch (e) {
+      console.warn('Error guardando quickPanelPosition en localStorage:', e);
+    }
   }, [quickPanelPosition, currentUser?.id]);
 
   useEffect(() => {
     if (!currentUser?.id || !promoPanelPosition) return;
-    localStorage.setItem(getPromoPanelPositionStorageKey(currentUser.id), JSON.stringify(promoPanelPosition));
+    try {
+      localStorage.setItem(getPromoPanelPositionStorageKey(currentUser.id), JSON.stringify(promoPanelPosition));
+    } catch (e) {
+      console.warn('Error guardando promoPanelPosition en localStorage:', e);
+    }
   }, [promoPanelPosition, currentUser?.id]);
 
   useEffect(() => {
@@ -5278,7 +5349,16 @@ function App() {
       const same = (s?.db_id && invoice?.db_id && s.db_id === invoice.db_id) || s.id === invoice.id;
       return same ? { ...s, status: 'anulada', mixedDetails: updatedInvoice.mixedDetails } : s;
     }));
-    setCartera((prev) => prev.filter((c) => c.id !== invoice.id));
+    setCartera((prev) => prev.map((c) => {
+      const same = (c?.db_id && invoice?.db_id && c.db_id === invoice.db_id) || c.id === invoice.id;
+      if (!same) return c;
+      return {
+        ...c,
+        status: 'anulada',
+        balance: 0,
+        mixedDetails: updatedInvoice.mixedDetails,
+      };
+    }));
     if (refundCashAmount > 0) {
       adjustUserCashBalance(cashOwner, -refundCashAmount);
     }
@@ -5346,7 +5426,16 @@ function App() {
       const same = (s?.db_id && invoice?.db_id && s.db_id === invoice.db_id) || s.id === invoice.id;
       return same ? { ...s, status: 'devuelta', mixedDetails: updatedInvoice.mixedDetails } : s;
     }));
-    setCartera((prev) => prev.filter((c) => c.id !== invoice.id));
+    setCartera((prev) => prev.map((c) => {
+      const same = (c?.db_id && invoice?.db_id && c.db_id === invoice.db_id) || c.id === invoice.id;
+      if (!same) return c;
+      return {
+        ...c,
+        status: 'devuelta',
+        balance: 0,
+        mixedDetails: updatedInvoice.mixedDetails,
+      };
+    }));
     if (refundCashAmount > 0) {
       adjustUserCashBalance(cashOwner, -refundCashAmount);
     }

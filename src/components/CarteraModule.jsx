@@ -223,6 +223,9 @@ export function CarteraModule({ currentUser, clients = [], paymentMethods = [], 
                         <option value="">Todos los estados</option>
                         <option value="pendiente">Pendientes</option>
                         <option value="pagado">Pagadas</option>
+                        <option value="anulada">Anuladas</option>
+                        <option value="devuelta">Devueltas</option>
+                        <option value="interna_cero">Interna Cero</option>
                     </select>
                     <select className="input-field" value={dueFilter} onChange={(e) => setDueFilter(e.target.value)}>
                         <option value="">Todos los vencimientos</option>

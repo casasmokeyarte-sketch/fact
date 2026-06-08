@@ -5,6 +5,44 @@ function isInvalidRefreshTokenError(error) {
   return blob.includes('invalid refresh token') || blob.includes('refresh token not found')
 }
 
+function normalizeDomain(domain) {
+  const trimmed = String(domain || '').trim().toLowerCase()
+  if (!trimmed) return '@fact.local'
+  return trimmed.startsWith('@') ? trimmed : `@${trimmed}`
+}
+
+function buildLoginEmailCandidates(identifier, usernameDomain) {
+  const raw = String(identifier || '').trim().toLowerCase()
+  if (!raw) return []
+
+  const candidates = [raw]
+  if (!raw.includes('@')) {
+    candidates.push(`${raw}${normalizeDomain(usernameDomain)}`)
+  }
+
+  return [...new Set(candidates)]
+}
+
+function mapSignInError(error, identifier, usernameDomain) {
+  const blob = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`.toLowerCase()
+  if (blob.includes('email not confirmed')) {
+    return 'Tu email no esta confirmado. Pide al administrador que valide el usuario o usa "Olvidaste tu contrasena".'
+  }
+  if (
+    blob.includes('invalid login credentials') ||
+    blob.includes('invalid_grant') ||
+    blob.includes('invalid grant')
+  ) {
+    const raw = String(identifier || '').trim()
+    if (raw && !raw.includes('@')) {
+      const suggestedDomain = normalizeDomain(usernameDomain)
+      return `Usuario o contrasena invalidos. Si ingresas solo usuario, se probara tambien con ${suggestedDomain}. Revisa el dominio configurado.`
+    }
+    return 'Usuario o contrasena invalidos.'
+  }
+  return error?.message || 'No se pudo iniciar sesion.'
+}
+
 // AUTENTICACIAN
 export async function signUp(email, password) {
   try {
@@ -22,23 +60,43 @@ export async function signUp(email, password) {
   }
 }
 
-export async function signIn(email, password) {
+export async function signIn(identifier, password, options = {}) {
   try {
-    let { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    })
-    if (error && isInvalidRefreshTokenError(error)) {
-      clearSupabaseAuthStorage()
-      const retry = await supabase.auth.signInWithPassword({
+    const candidates = buildLoginEmailCandidates(
+      identifier,
+      options?.usernameDomain || '@fact.local'
+    )
+
+    let lastError = null
+
+    for (const email of candidates) {
+      let { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
       })
-      data = retry.data
-      error = retry.error
+
+      if (error && isInvalidRefreshTokenError(error)) {
+        clearSupabaseAuthStorage()
+        const retry = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        })
+        data = retry.data
+        error = retry.error
+      }
+
+      if (!error) {
+        return { data, error: null }
+      }
+
+      lastError = error
     }
-    if (error) throw error
-    return { data, error: null }
+
+    if (lastError) {
+      throw new Error(mapSignInError(lastError, identifier, options?.usernameDomain))
+    }
+
+    throw new Error('Debes ingresar un usuario o email valido.')
   } catch (error) {
     return { data: null, error: error.message }
   }
