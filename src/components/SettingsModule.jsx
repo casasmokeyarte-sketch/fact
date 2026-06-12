@@ -61,6 +61,22 @@ export function SettingsModule({
     // New Category State
     const [newCategory, setNewCategory] = useState('');
     const [dayOffsetInput, setDayOffsetInput] = useState(() => Number(operationalDateSettings?.daysOffset || 0));
+
+    // Flash Reminders State
+    const [flashReminders, setFlashReminders] = useState([]);
+    const [remindersLoading, setRemindersLoading] = useState(false);
+    const [newReminder, setNewReminder] = useState({
+        id: null,
+        title: '',
+        description: '',
+        media_url: '',
+        media_type: 'none',
+        max_views: 1,
+        target_roles: [],
+        active: true
+    });
+    const [reminderSaveBusy, setReminderSaveBusy] = useState(false);
+    const [mediaFileError, setMediaFileError] = useState('');
     const [userDayOffsetInput, setUserDayOffsetInput] = useState(0);
     const [dayOffsetReason, setDayOffsetReason] = useState('');
     const [targetUserIdForDayOffset, setTargetUserIdForDayOffset] = useState('');
@@ -186,6 +202,139 @@ export function SettingsModule({
         if (String(currentUser?.role || '') !== 'Administrador') return;
         refreshUsersFromSupabase();
     }, [subTab, currentUser?.role, refreshUsersFromSupabase]);
+
+    const loadFlashReminders = async () => {
+        setRemindersLoading(true);
+        try {
+            const { data, error } = await supabase
+                .from('flash_reminders')
+                .select('*')
+                .order('created_at', { ascending: false });
+            if (error) throw error;
+            setFlashReminders(data || []);
+        } catch (err) {
+            console.error('Error cargando recordatorios:', err);
+        } finally {
+            setRemindersLoading(false);
+        }
+    };
+
+    React.useEffect(() => {
+        if (subTab === 'flash') {
+            loadFlashReminders();
+        }
+    }, [subTab]);
+
+    const handleSaveFlashReminder = async (e) => {
+        e.preventDefault();
+        if (!newReminder.title) return alert('El titulo es obligatorio.');
+        setReminderSaveBusy(true);
+        try {
+            const payload = {
+                title: newReminder.title,
+                description: newReminder.description || '',
+                media_url: newReminder.media_url || null,
+                media_type: newReminder.media_type || 'none',
+                max_views: Number(newReminder.max_views ?? 1),
+                target_roles: newReminder.target_roles || [],
+                active: newReminder.active !== false,
+                updated_at: new Date().toISOString()
+            };
+
+            if (newReminder.id) {
+                // Update
+                const { error } = await supabase
+                    .from('flash_reminders')
+                    .update(payload)
+                    .eq('id', newReminder.id);
+                if (error) throw error;
+                alert('Recordatorio actualizado.');
+            } else {
+                // Create
+                const { error } = await supabase
+                    .from('flash_reminders')
+                    .insert({
+                        ...payload,
+                        company_id: currentUser?.company_id || '09d70414-784e-449b-9efc-dbe23fd547ad'
+                    });
+                if (error) throw error;
+                alert('Recordatorio creado.');
+            }
+            // Reset form
+            setNewReminder({ id: null, title: '', description: '', media_url: '', media_type: 'none', max_views: 1, target_roles: [], active: true });
+            loadFlashReminders();
+        } catch (err) {
+            alert('Error al guardar recordatorio: ' + err.message);
+        } finally {
+            setReminderSaveBusy(false);
+        }
+    };
+
+    const handleDeleteFlashReminder = async (id) => {
+        if (!confirm('¿Seguro que deseas eliminar este recordatorio?')) return;
+        try {
+            const { error } = await supabase
+                .from('flash_reminders')
+                .delete()
+                .eq('id', id);
+            if (error) throw error;
+            alert('Recordatorio eliminado.');
+            loadFlashReminders();
+        } catch (err) {
+            alert('Error al eliminar recordatorio: ' + err.message);
+        }
+    };
+
+    const handleResetFlashReminderViews = async (id) => {
+        if (!confirm('¿Seguro que deseas reiniciar las visualizaciones? Todos los empleados volverán a ver este recordatorio.')) return;
+        try {
+            const { error } = await supabase
+                .from('flash_reminder_views')
+                .delete()
+                .eq('reminder_id', id);
+            if (error) throw error;
+            alert('Visualizaciones reiniciadas con éxito.');
+        } catch (err) {
+            alert('Error al reiniciar visualizaciones: ' + err.message);
+        }
+    };
+
+    const handleFlashMediaChange = async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        setMediaFileError('');
+        try {
+            const fileType = file.type || '';
+            const isImage = fileType.startsWith('image/');
+            const isVideo = fileType.startsWith('video/');
+
+            if (!isImage && !isVideo) {
+                throw new Error('Selecciona un archivo de imagen o video.');
+            }
+
+            const limit = isImage ? 2 * 1024 * 1024 : 10 * 1024 * 1024;
+            if (file.size > limit) {
+                throw new Error(`El archivo es demasiado grande (Límite: ${isImage ? '2MB' : '10MB'}).`);
+            }
+
+            const reader = new FileReader();
+            reader.onload = () => {
+                setNewReminder(prev => ({
+                    ...prev,
+                    media_url: String(reader.result || ''),
+                    media_type: isImage ? 'image' : 'video'
+                }));
+            };
+            reader.onerror = () => {
+                setMediaFileError('Error al leer el archivo.');
+            };
+            reader.readAsDataURL(file);
+        } catch (err) {
+            setMediaFileError(err.message);
+        } finally {
+            e.target.value = '';
+        }
+    };
 
     const defaultPermissions = {
         Administrador: {
@@ -586,6 +735,9 @@ export function SettingsModule({
                 <button className={`btn ${subTab === 'pagos' ? 'btn-primary' : ''}`} onClick={() => setSubTab('pagos')}>Pagos</button>
                 <button className={`btn ${subTab === 'categorias' ? 'btn-primary' : ''}`} onClick={() => setSubTab('categorias')}>Categorias</button>
                 <button className={`btn ${subTab === 'promociones' ? 'btn-primary' : ''}`} onClick={() => setSubTab('promociones')}>Promociones</button>
+                {currentUser?.role === 'Administrador' && (
+                    <button className={`btn ${subTab === 'flash' ? 'btn-primary' : ''}`} onClick={() => setSubTab('flash')}>Recordatorios Flash</button>
+                )}
                 <button className={`btn ${subTab === 'sistema' ? 'btn-primary' : ''}`} onClick={() => setSubTab('sistema')}>Sistema</button>
             </nav>
 
@@ -1574,6 +1726,272 @@ export function SettingsModule({
                                 {usersLoading ? 'Guardando...' : 'Guardar Cambios'}
                             </button>
                         </div>
+                    </div>
+                </div>
+            )}
+
+            {subTab === 'flash' && (
+                <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 2fr', gap: '2rem' }}>
+                    {/* Creation / Edition Form */}
+                    <div className="card">
+                        <h3 style={{ marginTop: 0 }}>
+                            {newReminder.id ? 'Editar Recordatorio' : 'Crear Recordatorio Flash'}
+                        </h3>
+                        <form onSubmit={handleSaveFlashReminder}>
+                            <div className="input-group">
+                                <label className="input-label">Título del Anuncio</label>
+                                <input
+                                    type="text"
+                                    className="input-field"
+                                    value={newReminder.title}
+                                    onChange={(e) => setNewReminder({ ...newReminder, title: e.target.value })}
+                                    placeholder="Ej: Reunión general, Promoción de la semana"
+                                    required
+                                />
+                            </div>
+
+                            <div className="input-group">
+                                <label className="input-label">Mensaje / Descripción</label>
+                                <textarea
+                                    className="input-field"
+                                    rows="4"
+                                    value={newReminder.description}
+                                    onChange={(e) => setNewReminder({ ...newReminder, description: e.target.value })}
+                                    placeholder="Escribe el mensaje que verán los empleados..."
+                                />
+                            </div>
+
+                            <div className="input-group">
+                                <label className="input-label">Adjuntar Foto o Video</label>
+                                <input
+                                    type="file"
+                                    accept="image/*,video/*"
+                                    className="input-field"
+                                    onChange={handleFlashMediaChange}
+                                />
+                                <div style={{ marginTop: '0.35rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                                    Imágenes (máx. 2MB) o Videos (máx. 10MB) se comprimen/convierten para almacenamiento local.
+                                </div>
+                                {!!mediaFileError && (
+                                    <div className="alert alert-danger" style={{ marginTop: '0.5rem', padding: '0.35rem' }}>
+                                        {mediaFileError}
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Media Preview inside Form */}
+                            {newReminder.media_url && (
+                                <div className="card card--muted" style={{ marginBottom: '1rem', padding: '0.5rem', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem' }}>
+                                    <strong>Vista previa del archivo</strong>
+                                    {newReminder.media_type === 'video' ? (
+                                        <video
+                                            src={newReminder.media_url}
+                                            controls
+                                            style={{ width: '100%', maxHeight: '180px', borderRadius: '0.5rem' }}
+                                        />
+                                    ) : (
+                                        <img
+                                            src={newReminder.media_url}
+                                            alt="Preview"
+                                            style={{ width: '100%', maxHeight: '180px', objectFit: 'contain', borderRadius: '0.5rem' }}
+                                        />
+                                    )}
+                                    <button
+                                        type="button"
+                                        className="btn"
+                                        style={{ width: '100%', padding: '4px 8px', fontSize: '0.85em', backgroundColor: 'var(--surface-danger)' }}
+                                        onClick={() => setNewReminder({ ...newReminder, media_url: '', media_type: 'none' })}
+                                    >
+                                        Quitar archivo
+                                    </button>
+                                </div>
+                            )}
+
+                            <div className="input-group">
+                                <label className="input-label">Repeticiones máximas por usuario</label>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    className="input-field"
+                                    value={newReminder.max_views}
+                                    onChange={(e) => setNewReminder({ ...newReminder, max_views: Number(e.target.value) })}
+                                    placeholder="0 = Sin límite, 1 = Solo una vez"
+                                />
+                                <div style={{ marginTop: '0.35rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                                    Cuántas veces le aparecerá el popup en pantalla a cada usuario.
+                                </div>
+                            </div>
+
+                            <div className="input-group">
+                                <label className="input-label">Roles objetivo</label>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '0.5rem' }}>
+                                    {['Administrador', 'Supervisor', 'Cajero'].map(role => (
+                                        <label key={role} style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
+                                            <input
+                                                type="checkbox"
+                                                checked={newReminder.target_roles.includes(role)}
+                                                onChange={(e) => {
+                                                    const checked = e.target.checked;
+                                                    let nextRoles = [...newReminder.target_roles];
+                                                    if (checked) {
+                                                        nextRoles.push(role);
+                                                    } else {
+                                                        nextRoles = nextRoles.filter(r => r !== role);
+                                                    }
+                                                    setNewReminder({ ...newReminder, target_roles: nextRoles });
+                                                }}
+                                            />
+                                            {role}
+                                        </label>
+                                    ))}
+                                </div>
+                                <div style={{ marginTop: '0.35rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                                    Si no marcas ninguno, se mostrará a todos los empleados.
+                                </div>
+                            </div>
+
+                            <div className="input-group" style={{ marginTop: '0.5rem' }}>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                                    <input
+                                        type="checkbox"
+                                        checked={newReminder.active}
+                                        onChange={(e) => setNewReminder({ ...newReminder, active: e.target.checked })}
+                                    />
+                                    Recordatorio Activo (Mostrar en pantalla)
+                                </label>
+                            </div>
+
+                            <div style={{ display: 'flex', gap: '0.5rem' }}>
+                                <button type="submit" className="btn btn-primary" style={{ flex: 1 }} disabled={reminderSaveBusy}>
+                                    {reminderSaveBusy ? 'Guardando...' : (newReminder.id ? 'Guardar' : 'Crear')}
+                                </button>
+                                {newReminder.id && (
+                                    <button
+                                        type="button"
+                                        className="btn"
+                                        style={{ flex: 1 }}
+                                        onClick={() => setNewReminder({ id: null, title: '', description: '', media_url: '', media_type: 'none', max_views: 1, target_roles: [], active: true })}
+                                    >
+                                        Cancelar
+                                    </button>
+                                )}
+                            </div>
+                        </form>
+                    </div>
+
+                    {/* Reminders List */}
+                    <div className="card">
+                        <h3 style={{ marginTop: 0 }}>Anuncios Configurados</h3>
+                        {remindersLoading ? (
+                            <p>Cargando anuncios...</p>
+                        ) : flashReminders.length === 0 ? (
+                            <p style={{ color: 'var(--text-secondary)' }}>No hay recordatorios configurados aún.</p>
+                        ) : (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+                                {flashReminders.map(r => (
+                                    <div
+                                        key={r.id}
+                                        className="card card--muted"
+                                        style={{
+                                            borderLeft: `4px solid ${r.active ? '#ffb400' : 'var(--border-soft)'}`,
+                                            padding: '1.25rem',
+                                            display: 'flex',
+                                            flexDirection: 'column',
+                                            gap: '0.75rem'
+                                        }}
+                                    >
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
+                                            <div>
+                                                <h4 style={{ margin: 0, color: r.active ? '#ffb400' : 'var(--text-secondary)' }}>
+                                                    {r.title}
+                                                </h4>
+                                                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                                                    Creado: {new Date(r.created_at).toLocaleString()} | Máx. vistas: {r.max_views === 0 ? 'Sin límite' : r.max_views}
+                                                </div>
+                                            </div>
+                                            <span
+                                                className="badge"
+                                                style={{
+                                                    backgroundColor: r.active ? 'var(--surface-success)' : 'var(--surface-muted)',
+                                                    borderColor: r.active ? 'rgba(0, 255, 154, 0.45)' : 'var(--border-soft)'
+                                                }}
+                                            >
+                                                {r.active ? 'Activo' : 'Pausado'}
+                                            </span>
+                                        </div>
+
+                                        {r.description && (
+                                            <p style={{ margin: 0, fontSize: '0.92rem', color: 'var(--text-primary)' }}>
+                                                {r.description}
+                                            </p>
+                                        )}
+
+                                        {r.media_url && (
+                                            <div style={{
+                                                maxHeight: '120px',
+                                                display: 'flex',
+                                                backgroundColor: '#0f172a',
+                                                borderRadius: '0.5rem',
+                                                overflow: 'hidden',
+                                                width: 'max-content',
+                                                border: '1px solid var(--border-soft)'
+                                            }}>
+                                                {r.media_type === 'video' ? (
+                                                    <video
+                                                        src={r.media_url}
+                                                        style={{ height: '120px', objectFit: 'contain' }}
+                                                    />
+                                                ) : (
+                                                    <img
+                                                        src={r.media_url}
+                                                        alt={r.title}
+                                                        style={{ height: '120px', objectFit: 'contain' }}
+                                                    />
+                                                )}
+                                            </div>
+                                        )}
+
+                                        <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                                            <strong>Destinatarios:</strong> {r.target_roles && r.target_roles.length > 0 ? r.target_roles.join(', ') : 'Todos los roles'}
+                                        </div>
+
+                                        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', borderTop: '1px solid var(--border-soft)', paddingTop: '0.75rem', marginTop: '0.25rem' }}>
+                                            <button
+                                                className="btn"
+                                                style={{ padding: '4px 10px', fontSize: '0.85em' }}
+                                                onClick={() => setNewReminder({
+                                                    id: r.id,
+                                                    title: r.title,
+                                                    description: r.description || '',
+                                                    media_url: r.media_url || '',
+                                                    media_type: r.media_type || 'none',
+                                                    max_views: r.max_views ?? 1,
+                                                    target_roles: r.target_roles || [],
+                                                    active: r.active !== false
+                                                })}
+                                            >
+                                                Editar
+                                            </button>
+                                            <button
+                                                className="btn"
+                                                style={{ padding: '4px 10px', fontSize: '0.85em', backgroundColor: 'var(--surface-muted)' }}
+                                                onClick={() => handleResetFlashReminderViews(r.id)}
+                                                title="Reinicia el conteo para que todos los usuarios vuelvan a ver el recordatorio"
+                                            >
+                                                🔄 Reiniciar vistas
+                                            </button>
+                                            <button
+                                                className="btn"
+                                                style={{ padding: '4px 10px', fontSize: '0.85em', backgroundColor: 'var(--surface-danger)', color: 'white' }}
+                                                onClick={() => handleDeleteFlashReminder(r.id)}
+                                            >
+                                                Eliminar
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                     </div>
                 </div>
             )}

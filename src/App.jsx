@@ -35,6 +35,7 @@ import { ReportsModule } from './components/ReportsModule'
 import { ShiftHistoryModule } from './components/ShiftHistoryModule'
 import { SystemHelpBubble } from './components/SystemHelpBubble'
 import { OperationsBoardBubble } from './components/OperationsBoardBubble'
+import { FlashReminderPopup } from './components/FlashReminderPopup'
 import { printShiftClosure, printShiftOpening } from './lib/printReports'
 import { getAdminApiBase, getAdminUsersUrl } from './lib/runtime.js'
 
@@ -838,6 +839,7 @@ function App() {
   const [expenses, setExpenses] = useState([]);
   const [externalCashReceipts, setExternalCashReceipts] = useState([]);
   const [purchases, setPurchases] = useState([]);
+  const [trades, setTrades] = useState([]);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [soundVolume, setSoundVolume] = useState(0.08);
   const [soundPreset, setSoundPreset] = useState('beep');
@@ -2091,7 +2093,7 @@ function App() {
       }
 
       if (showLoader) setLoading(true);
-      const [dbProducts, dbClients, dbSales, dbExpenses, dbExternalCashReceipts, dbPurchases, dbLogs, dbShiftHistory, dbUserCashBalances] = await Promise.all([
+      const [dbProducts, dbClients, dbSales, dbExpenses, dbExternalCashReceipts, dbPurchases, dbLogs, dbShiftHistory, dbUserCashBalances, dbTrades] = await Promise.all([
         dataService.getProducts(),
         dataService.getClients(),
         dataService.getInvoices(),
@@ -2100,7 +2102,8 @@ function App() {
         dataService.getPurchases(),
         dataService.getAuditLogs(),
         dataService.getShiftHistory(),
-        dataService.getUserCashBalances()
+        dataService.getUserCashBalances(),
+        dataService.getTrades()
       ]);
 
       const protectedProducts = protectRecentProductWrites(dbProducts || [], protectedProductWritesRef.current);
@@ -2184,6 +2187,10 @@ function App() {
         id: shiftRow?.user_id || null,
         name: shiftRow?.user_name || shiftRow?.user || null,
       }));
+      (dbTrades || []).forEach((trade) => collectUserCandidate({
+        id: trade?.userId || trade?.user_id || null,
+        name: trade?.userName || trade?.user_name || null,
+      }));
       Object.entries(dbUserCashBalances || {}).forEach(([cashKey]) => collectUserCandidate({
         id: cashKey,
         name: currentUsers.find((user) => String(getCashUserKey(user)) === String(cashKey))?.name || null,
@@ -2247,6 +2254,11 @@ function App() {
       setPurchases(enrichedPurchases);
       setAuditLogs(dbLogs || []);
       setShiftHistory(enrichedShiftHistory);
+      const enrichedTrades = (dbTrades || []).map((trade) => ({
+        ...trade,
+        user_name: trade?.userName || trade?.user_name || userNameById[String(trade?.userId || '')] || null,
+      }));
+      setTrades(enrichedTrades);
       if (dbUserCashBalances && typeof dbUserCashBalances === 'object') {
         setUserCashBalances(dbUserCashBalances);
         lastSyncedUserCashBalancesRef.current = JSON.stringify(dbUserCashBalances);
@@ -4142,6 +4154,11 @@ function App() {
         isRecordOwnedByUser(abono, userRef)
       );
 
+    const shiftTrades = (trades || []).filter((trade) =>
+      isDateInRange(trade.createdAt || trade.created_at, startIso, endIso) &&
+      isRecordOwnedByUser(trade, userRef)
+    );
+
     const salesBreakdown = shiftSales.reduce((acc, sale) => {
       const saleBreakdown = getSalePaymentBreakdown(sale);
       acc.gross += saleBreakdown.gross;
@@ -4195,6 +4212,7 @@ function App() {
       shiftCashLogs,
       shiftExternalCashReceipts,
       shiftCarteraAbonos,
+      shiftTrades,
       salesBreakdown,
       abonosBreakdown,
       externalCashReceiptsBreakdown,
@@ -4259,7 +4277,12 @@ function App() {
         isRecordOwnedByUser(abono, userRef)
       );
 
-    return { sales, expenses: expensesForDay, purchases: purchasesForDay, cashLogs, externalCashReceipts, carteraAbonos };
+    const tradesForDay = (trades || []).filter((trade) =>
+      hasSameOperationalDay(trade?.createdAt || trade?.created_at) &&
+      isRecordOwnedByUser(trade, userRef)
+    );
+
+    return { sales, expenses: expensesForDay, purchases: purchasesForDay, cashLogs, externalCashReceipts, carteraAbonos, trades: tradesForDay };
   };
 
   const buildShiftSystemAccounts = (summary) => ({
@@ -4321,12 +4344,14 @@ function App() {
       summary.shiftCashLogs.length > 0 ||
       summary.shiftExternalCashReceipts.length > 0 ||
       summary.shiftCarteraAbonos.length > 0 ||
+      (summary.shiftTrades && summary.shiftTrades.length > 0) ||
       sameDayFallback.sales.length > 0 ||
       sameDayFallback.expenses.length > 0 ||
       sameDayFallback.purchases.length > 0 ||
       sameDayFallback.cashLogs.length > 0 ||
       sameDayFallback.externalCashReceipts.length > 0 ||
-      sameDayFallback.carteraAbonos.length > 0;
+      sameDayFallback.carteraAbonos.length > 0 ||
+      (sameDayFallback.trades && sameDayFallback.trades.length > 0);
     const isAdminUser = normalizeRole(currentUser?.role) === 'Administrador';
     let emptyCloseReason = '';
 
@@ -4490,6 +4515,17 @@ function App() {
       'FACTURACION DETALLADA',
       ...(shiftSalesDetailedLines.length > 0 ? shiftSalesDetailedLines : ['Sin facturas registradas en esta jornada.']),
       '------------------------------------------',
+      'TRUEQUES REALIZADOS',
+      ...(summary.shiftTrades && summary.shiftTrades.length > 0
+        ? summary.shiftTrades.map((t) => {
+            const outPart = `${t.productNameGiven} x${t.quantityGiven}`;
+            const inPart = t.affectsInventory
+              ? `${t.productNameReceived} x${t.quantityReceived}`
+              : `Concepto: ${t.productNameReceived || 'N/A'}`;
+            return `Trueque: Cliente ${t.clientName || 'N/A'} | Entregado: ${outPart} | Recibido: ${inPart} | Nota: ${t.notes || 'Sin nota'}`;
+          })
+        : ['Sin trueques registrados en esta jornada.']),
+      '------------------------------------------',
       'CONTROL DE INVENTARIO POR TURNO',
       ...(inventoryClosureRows.length > 0
         ? inventoryClosureRows.map((row) => (
@@ -4521,6 +4557,7 @@ function App() {
       authorized: authorizedMismatch,
       closedWithoutMovements: !hasAnyUserMovement,
       closeWithoutMovementsReason: hasAnyUserMovement ? '' : emptyCloseReason,
+      trades: summary.shiftTrades || [],
       reconciliation: {
         enteredAccounts,
         systemAccounts,
@@ -4961,6 +4998,11 @@ function App() {
 
   const handleFacturar = async (mixedData = null, extraDiscount = 0, invoiceMeta = {}) => {
     if (items.length === 0) return alert("Agregue productos primero");
+    const trimmedClientName = String(clientName || '').trim();
+    const isOcasional = !trimmedClientName || trimmedClientName === CLIENT_OCASIONAL;
+    if (!isOcasional && !selectedClient) {
+      return alert("Para facturar a un cliente con nombre propio, debe registrarlo primero en el módulo de Clientes. No se permite escribir nombres manualmente sobre Cliente Ocasional.");
+    }
     if (String(selectedReferrerDocument || '').trim() && !selectedClient?.document) {
       return alert("Los referidos solo aplican para clientes creados desde el modulo de Clientes. No use Cliente Ocasional ni clientes digitados manualmente.");
     }
@@ -6885,6 +6927,7 @@ function App() {
               cartera={cartera}
               users={users}
               userCashBalances={userCashBalances}
+              trades={trades}
             />
           )}
           {activeTab === 'bitacora' && <AuditLog logs={auditLogs} />}
@@ -6956,6 +6999,29 @@ function App() {
                   await updateStockInDB('ventas', productIdGiven, nextGivenStock);
                   if (affectsInventory) {
                     await updateStockInDB('ventas', productIdReceived, nextReceivedStock);
+                  }
+
+                  const client = registeredClients.find(c => String(c.id) === String(trade.clientId));
+                  const clientDoc = client?.document || '';
+
+                  const saved = await dataService.saveTrade({
+                    companyId: liveProfile?.company_id,
+                    userId: currentUser?.id,
+                    userName: currentUser?.name || currentUser?.email || 'Sistema',
+                    clientName: trade?.clientName,
+                    clientDoc,
+                    productIdGiven,
+                    productNameGiven: trade?.productNameGiven,
+                    quantityGiven,
+                    productIdReceived: affectsInventory ? productIdReceived : null,
+                    productNameReceived: trade?.productNameReceived,
+                    quantityReceived: affectsInventory ? quantityReceived : 0,
+                    affectsInventory,
+                    notes: trade?.notes,
+                  });
+
+                  if (Array.isArray(saved) && saved.length > 0) {
+                    setTrades(prev => [saved[0], ...prev]);
                   }
 
                   await addLog({
@@ -7187,6 +7253,7 @@ function App() {
         }}
       />
       <SystemHelpBubble currentUser={currentUser} onLog={addLog} />
+      <FlashReminderPopup currentUser={currentUser} shift={shift} />
       {adminAuthModal.open && (
         <div className="modal-overlay" style={{
           position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,

@@ -17,6 +17,7 @@ export function ReportsModule({
     cartera,
     users = [],
     userCashBalances = {},
+    trades = [],
     onLog
 }) {
     const [reportType, setReportType] = useState('ventas');
@@ -72,6 +73,7 @@ export function ReportsModule({
             cartera: { key: 'date', direction: 'desc' },
             saldos: { key: 'balance', direction: 'desc' },
             asesores: { key: 'salesTotal', direction: 'desc' },
+            trueques: { key: 'date', direction: 'desc' },
         };
         setTableSort(defaults[reportType] || { key: '', direction: 'asc' });
     }, [reportType]);
@@ -173,8 +175,8 @@ export function ReportsModule({
         };
     };
 
-    const shouldShowDateFilters = ['ventas', 'gastos', 'cuentasPorPagar', 'compras', 'bitacora', 'cartera'].includes(reportType);
-    const shouldShowUserFilter = ['ventas', 'gastos', 'cuentasPorPagar', 'compras', 'bitacora'].includes(reportType);
+    const shouldShowDateFilters = ['ventas', 'gastos', 'cuentasPorPagar', 'compras', 'bitacora', 'cartera', 'trueques'].includes(reportType);
+    const shouldShowUserFilter = ['ventas', 'gastos', 'cuentasPorPagar', 'compras', 'bitacora', 'trueques'].includes(reportType);
     const salesPaymentOptions = useMemo(() => (
         Array.from(new Set((sales || []).map((row) => String(row?.paymentMode || '').trim()).filter(Boolean))).sort()
     ), [sales]);
@@ -960,6 +962,68 @@ export function ReportsModule({
                 );
             }
 
+            case 'trueques': {
+                const filteredTrades = (trades || [])
+                    .filter((t) =>
+                        String(t?.clientName || '').toLowerCase().includes(f) ||
+                        String(t?.productNameGiven || '').toLowerCase().includes(f) ||
+                        String(t?.productNameReceived || '').toLowerCase().includes(f)
+                    )
+                    .filter((t) => isDateWithinRange(t?.createdAt || t?.created_at))
+                    .filter((t) => matchesUserFilter(t));
+                const columns = {
+                    date: { getValue: (t) => t?.createdAt || t?.created_at, type: 'date' },
+                    user: { getValue: (t) => resolveUserLabel(t), type: 'string' },
+                    client: { getValue: (t) => t?.clientName || '', type: 'string' },
+                    productGiven: { getValue: (t) => t?.productNameGiven || '', type: 'string' },
+                    qtyGiven: { getValue: (t) => Number(t?.quantityGiven || 0), type: 'number' },
+                    productReceived: { getValue: (t) => t?.productNameReceived || '', type: 'string' },
+                    qtyReceived: { getValue: (t) => Number(t?.quantityReceived || 0), type: 'number' },
+                    inventory: { getValue: (t) => (t?.affectsInventory ? 'Sí' : 'No'), type: 'string' },
+                };
+                const sortedTrades = sortRows(filteredTrades, columns, 'date');
+                const pagination = paginateRows(sortedTrades, printAllRows);
+                return (
+                    <>
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th><SortButton label="Fecha" sortKey="date" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                    <th><SortButton label="Usuario" sortKey="user" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                    <th><SortButton label="Cliente" sortKey="client" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                    <th><SortButton label="Entregado" sortKey="productGiven" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                    <th>Cant.</th>
+                                    <th><SortButton label="Recibido" sortKey="productReceived" sortConfig={tableSort} onChange={setTableSortKey} /></th>
+                                    <th>Cant.</th>
+                                    <th>Afecta Inv.</th>
+                                    <th>Notas</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {pagination.pageItems.length === 0 ? (
+                                    <tr><td colSpan="9" style={{ textAlign: 'center' }}>No hay trueques registrados para el filtro actual</td></tr>
+                                ) : (
+                                    pagination.pageItems.map((t, i) => (
+                                        <tr key={i}>
+                                            <td>{t?.createdAt || t?.created_at ? new Date(t.createdAt || t.created_at).toLocaleString() : 'N/A'}</td>
+                                            <td>{resolveUserLabel(t)}</td>
+                                            <td>{t.clientName}</td>
+                                            <td>{t.productNameGiven}</td>
+                                            <td>{t.quantityGiven}</td>
+                                            <td>{t.productNameReceived}</td>
+                                            <td>{t.affectsInventory ? t.quantityReceived : '-'}</td>
+                                            <td>{t.affectsInventory ? 'Sí' : 'No'}</td>
+                                            <td>{t.notes || '-'}</td>
+                                        </tr>
+                                    ))
+                                )}
+                            </tbody>
+                        </table>
+                        {!printAllRows && <PaginationControls page={pagination.page} totalPages={pagination.totalPages} totalItems={pagination.totalItems} pageSize={pagination.pageSize} onPageChange={setReportPage} />}
+                    </>
+                );
+            }
+
             default:
                 return null;
         }
@@ -1003,6 +1067,7 @@ export function ReportsModule({
                         <option value="cuentasPorPagar">Cuentas por Pagar</option>
                         <option value="compras">Historial de Compras</option>
                         <option value="cartera">Reporte de Cartera (Deudas)</option>
+                        <option value="trueques">Reporte de Trueques</option>
                         <option value="inventario">Inventario Detallado</option>
                         <option value="clientes">Listado de Clientes</option>
                         <option value="bitacora">Bitacora / Auditoria</option>

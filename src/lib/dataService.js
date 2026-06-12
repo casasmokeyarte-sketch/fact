@@ -445,6 +445,27 @@ function normalizeCommercialNoteRow(row) {
   };
 }
 
+function normalizeTradeRow(row) {
+  if (!row || typeof row !== 'object') return null;
+  return {
+    id: row.id,
+    companyId: row.company_id ?? null,
+    userId: row.user_id ?? null,
+    userName: row.user_name ?? '',
+    clientName: row.client_name ?? '',
+    clientDoc: row.client_doc ?? '',
+    productIdGiven: row.product_id_given ?? null,
+    productNameGiven: row.product_name_given ?? '',
+    quantityGiven: Number(row.quantity_given ?? 0),
+    productIdReceived: row.product_id_received ?? null,
+    productNameReceived: row.product_name_received ?? '',
+    quantityReceived: Number(row.quantity_received ?? 0),
+    affectsInventory: row.affects_inventory !== false,
+    notes: row.notes ?? '',
+    createdAt: row.created_at ?? null,
+  };
+}
+
 function normalizeCreditLevel(value) {
   return String(value ?? '').trim().toUpperCase();
 }
@@ -2053,6 +2074,70 @@ export const dataService = {
         return null;
       }
       reportClientSyncIssue('commercial_notes', payload, error);
+      throw error;
+    }
+  },
+
+  async getTrades(companyId = null) {
+    try {
+      let query = supabase
+        .from('trades')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(300);
+
+      if (isUuid(companyId)) {
+        query = query.eq('company_id', companyId);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+
+      return (data || []).map(normalizeTradeRow).filter(Boolean);
+    } catch (error) {
+      if (isMissingRelationError(error)) {
+        console.warn('Tabla trades no existe aun en Supabase. Se usa respaldo local.');
+        return null;
+      }
+      throw error;
+    }
+  },
+
+  async saveTrade(trade) {
+    const authUserId = await getAuthUserId();
+    const companyId = await getCurrentCompanyId(authUserId);
+    const payload = {
+      id: trade?.id || undefined,
+      company_id: isUuid(trade?.companyId) ? trade.companyId : (isUuid(companyId) ? companyId : null),
+      user_id: isUuid(trade?.userId) ? trade.userId : authUserId,
+      user_name: trade?.userName ?? null,
+      client_name: trade?.clientName ?? null,
+      client_doc: trade?.clientDoc ?? null,
+      product_id_given: isUuid(trade?.productIdGiven) ? trade.productIdGiven : null,
+      product_name_given: trade?.productNameGiven ?? null,
+      quantity_given: Number(trade?.quantityGiven ?? 0),
+      product_id_received: isUuid(trade?.productIdReceived) ? trade.productIdReceived : null,
+      product_name_received: trade?.productNameReceived ?? null,
+      quantity_received: Number(trade?.quantityReceived ?? 0),
+      affects_inventory: trade?.affectsInventory !== false,
+      notes: trade?.notes ?? null,
+      created_at: trade?.createdAt ?? new Date().toISOString(),
+    };
+
+    try {
+      const { data, error } = await supabase
+        .from('trades')
+        .upsert(payload, { onConflict: 'id' })
+        .select();
+
+      if (error) throw error;
+      return (data || []).map(normalizeTradeRow).filter(Boolean);
+    } catch (error) {
+      if (isMissingRelationError(error)) {
+        console.warn('No se pudo sincronizar trades porque la tabla no existe aun.');
+        return null;
+      }
+      reportClientSyncIssue('trades', payload, error);
       throw error;
     }
   },

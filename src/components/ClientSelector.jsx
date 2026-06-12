@@ -35,7 +35,34 @@ export function ClientSelector({
     };
 
     const handleBlur = () => {
-        if (!clientName.trim()) {
+        const trimmed = String(clientName || '').trim();
+        if (!trimmed) {
+            setClientName(CLIENT_OCASIONAL);
+            setSelectedClient(null);
+            return;
+        }
+
+        // Check if the trimmed value matches CLIENT_OCASIONAL
+        if (normalizeText(trimmed) === normalizeText(CLIENT_OCASIONAL)) {
+            setClientName(CLIENT_OCASIONAL);
+            setSelectedClient(null);
+            return;
+        }
+
+        // Check if it matches a registered client
+        const byName = normalizeText(trimmed);
+        const byDoc = normalizeDoc(trimmed);
+        const found = registeredClients.find((c) =>
+            normalizeText(c.name) === byName ||
+            normalizeText(c.document) === byName ||
+            (byDoc && normalizeDoc(c.document) === byDoc)
+        );
+
+        if (found) {
+            setClientName(found.name);
+            setSelectedClient(found);
+        } else {
+            alert("Para facturar a un cliente con nombre propio, debe registrarlo primero en el módulo de Clientes. No se permite escribir nombres manualmente sobre Cliente Ocasional.");
             setClientName(CLIENT_OCASIONAL);
             setSelectedClient(null);
         }
