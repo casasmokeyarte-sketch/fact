@@ -5527,6 +5527,154 @@ function App() {
     alert(`Factura ${invoice.id} eliminada y stock actualizado.`);
   };
 
+  const onCancelTrade = async (trade, reason) => {
+    if (!trade) return;
+    const currentStatus = String(trade?.status || 'completado').toLowerCase();
+    if (currentStatus === 'anulada') {
+      return alert('Este trueque ya fue anulado.');
+    }
+
+    const productIdGiven = trade.productIdGiven;
+    const productIdReceived = trade.productIdReceived;
+    const quantityGiven = Number(trade.quantityGiven || 0);
+    const quantityReceived = Number(trade.quantityReceived || 0);
+    const affectsInventory = trade.affectsInventory !== false;
+
+    const currentGivenStock = Number(stock?.ventas?.[productIdGiven] || 0);
+    const nextGivenStock = currentGivenStock + quantityGiven;
+
+    let nextReceivedStock = 0;
+    let currentReceivedStock = 0;
+    if (affectsInventory && productIdReceived) {
+      currentReceivedStock = Number(stock?.ventas?.[productIdReceived] || 0);
+      nextReceivedStock = currentReceivedStock - quantityReceived;
+      if (nextReceivedStock < 0) {
+        return alert(`No se puede anular el trueque porque el stock del producto recibido (${trade.productNameReceived}) quedaría en negativo (${nextReceivedStock}).`);
+      }
+    }
+
+    const nextStock = {
+      ...stock,
+      ventas: {
+        ...stock.ventas,
+        [productIdGiven]: nextGivenStock,
+        ...(affectsInventory && productIdReceived ? { [productIdReceived]: nextReceivedStock } : {})
+      }
+    };
+    setStock(nextStock);
+
+    try {
+      await updateStockInDB('ventas', productIdGiven, nextGivenStock);
+      if (affectsInventory && productIdReceived) {
+        await updateStockInDB('ventas', productIdReceived, nextReceivedStock);
+      }
+
+      const updatedTrade = {
+        ...trade,
+        status: 'anulada',
+        cancelledAt: new Date().toISOString(),
+        cancelledBy: currentUser?.name || currentUser?.email || 'Sistema',
+        cancellationReason: reason
+      };
+
+      const saved = await dataService.saveTrade(updatedTrade);
+
+      if (Array.isArray(saved) && saved.length > 0) {
+        setTrades(prev => prev.map(t => t.id === trade.id ? saved[0] : t));
+      } else {
+        setTrades(prev => prev.map(t => t.id === trade.id ? updatedTrade : t));
+      }
+
+      await addLog({
+        module: 'Trueque',
+        action: 'Anular Trueque',
+        details: `Se anulo trueque de cliente ${trade.clientName || 'Cliente'}. Motivo: ${reason}. Se reintegró ${trade.productNameGiven} x${quantityGiven} y se descontó ${trade.productNameReceived || 'concepto externo'} x${quantityReceived}.`
+      });
+
+      alert('Trueque anulado exitosamente. Inventario restablecido.');
+    } catch (error) {
+      setStock((prev) => ({
+        ...prev,
+        ventas: {
+          ...prev.ventas,
+          [productIdGiven]: currentGivenStock,
+          ...(affectsInventory && productIdReceived ? { [productIdReceived]: currentReceivedStock } : {})
+        }
+      }));
+      try {
+        await updateStockInDB('ventas', productIdGiven, currentGivenStock);
+        if (affectsInventory && productIdReceived) {
+          await updateStockInDB('ventas', productIdReceived, currentReceivedStock);
+        }
+      } catch (rollbackError) {
+        console.error('Error in rollback DB stock during cancellation:', rollbackError);
+      }
+      alert(`Error al anular trueque: ${error.message}`);
+    }
+  };
+
+  const onDeleteTrade = async (trade) => {
+    if (!trade) return;
+    const currentStatus = String(trade?.status || 'completado').toLowerCase();
+
+    if (currentStatus !== 'anulada') {
+      const productIdGiven = trade.productIdGiven;
+      const productIdReceived = trade.productIdReceived;
+      const quantityGiven = Number(trade.quantityGiven || 0);
+      const quantityReceived = Number(trade.quantityReceived || 0);
+      const affectsInventory = trade.affectsInventory !== false;
+
+      const currentGivenStock = Number(stock?.ventas?.[productIdGiven] || 0);
+      const nextGivenStock = currentGivenStock + quantityGiven;
+
+      let nextReceivedStock = 0;
+      let currentReceivedStock = 0;
+      if (affectsInventory && productIdReceived) {
+        currentReceivedStock = Number(stock?.ventas?.[productIdReceived] || 0);
+        nextReceivedStock = currentReceivedStock - quantityReceived;
+      }
+
+      if (affectsInventory && productIdReceived && nextReceivedStock < 0) {
+        if (!confirm(`El stock del producto recibido (${trade.productNameReceived}) quedaría en negativo (${nextReceivedStock}) al eliminar el trueque. ¿Desea continuar de todos modos?`)) {
+          return;
+        }
+      }
+
+      setStock((prev) => ({
+        ...prev,
+        ventas: {
+          ...prev.ventas,
+          [productIdGiven]: nextGivenStock,
+          ...(affectsInventory && productIdReceived ? { [productIdReceived]: nextReceivedStock } : {})
+        }
+      }));
+
+      try {
+        await updateStockInDB('ventas', productIdGiven, nextGivenStock);
+        if (affectsInventory && productIdReceived) {
+          await updateStockInDB('ventas', productIdReceived, nextReceivedStock);
+        }
+      } catch (error) {
+        console.error('Error updating stock on trade deletion:', error);
+      }
+    }
+
+    try {
+      await dataService.deleteTrade(trade.id);
+      setTrades(prev => prev.filter(t => t.id !== trade.id));
+
+      await addLog({
+        module: 'Trueque',
+        action: 'Eliminar Trueque',
+        details: `Trueque del cliente ${trade.clientName || 'Cliente'} eliminado por Admin. Stock revertido si correspondia.`
+      });
+
+      alert('Trueque eliminado exitosamente.');
+    } catch (error) {
+      alert(`Error al eliminar trueque: ${error.message}`);
+    }
+  };
+
   const cleanScannedCode = (value) => String(value ?? '').trim().replace(/\s+/g, '');
 
   const findProductByBarcode = (barcodeValue) => {
@@ -7231,6 +7379,9 @@ function App() {
               onDeleteInvoice={onDeleteInvoice}
               onCancelInvoice={onCancelInvoice}
               onReturnInvoice={onReturnInvoice}
+              trades={trades}
+              onCancelTrade={onCancelTrade}
+              onDeleteTrade={onDeleteTrade}
               onLog={addLog}
               preselectedProductId={preselectedProductId}
               setPreselectedProductId={setPreselectedProductId}

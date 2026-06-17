@@ -591,3 +591,139 @@ export function printInvoiceDocument(invoice, mode = '58mm') {
   `);
   popup.document.close();
 }
+
+export function printTradeDocument(trade, mode = '58mm') {
+  const safeMode = mode === 'a4' ? 'a4' : '58mm';
+  const tradeId = String(trade?.id || 'N/A').slice(0, 8);
+  const tradeUser = String(trade?.userName || 'Sistema');
+  const logoUrl = getAssetUrl(COMPANY_INFO.logo);
+  const normalizedStatus = String(trade?.status || 'completado').trim().toLowerCase();
+  const isCancelled = normalizedStatus === 'anulada' || normalizedStatus === 'cancelada';
+  const statusStampLabel = isCancelled ? 'ANULADO' : '';
+  const statusStampColor = '#b91c1c';
+  const statusDetailsHtml = isCancelled
+    ? `
+      <div class="status-note">
+        <div><strong>Documento:</strong> ANULADO</div>
+        <div><strong>Fecha:</strong> ${escapeHtml(trade?.cancelledAt ? new Date(trade.cancelledAt).toLocaleString() : 'N/A')}</div>
+        <div><strong>Responsable:</strong> ${escapeHtml(trade?.cancelledBy || 'N/A')}</div>
+        <div><strong>Motivo:</strong> ${escapeHtml(trade?.cancellationReason || 'N/A')}</div>
+      </div>
+    `
+    : '';
+
+  const affectsInventory = trade?.affectsInventory !== false;
+
+  const popup = window.open('', '_blank', 'width=1000,height=780');
+  if (!popup) {
+    alert('Permita ventanas emergentes para imprimir.');
+    return;
+  }
+
+  const pageCss = safeMode === 'a4'
+    ? `
+      @page { size: A4 portrait; margin: 12mm; }
+      body { width: auto; margin: 0; padding: 0; }
+      .doc { max-width: 760px; margin: 0 auto; }
+      th, td { font-size: 13px; }
+      .section-title { font-size: 14px; margin-top: 12px; margin-bottom: 6px; border-bottom: 2px solid #e5e7eb; padding-bottom: 4px; }
+    `
+    : `
+      @page { size: 58mm auto; margin: 0; }
+      body { width: 58mm; margin: 0 auto; padding: 2mm 1.5mm; }
+      .doc { width: 58mm; margin: 0 auto; }
+      .logo { max-width: 34mm !important; }
+      th, td { font-size: 10px; padding: 3px 2px !important; }
+      .meta, .company, .footer { font-size: 9px !important; }
+      .section-title { font-size: 11px; margin-top: 8px; margin-bottom: 4px; border-bottom: 1px solid #e5e7eb; padding-bottom: 2px; }
+    `;
+
+  popup.document.open();
+  popup.document.write(`
+    <html>
+      <head>
+        <title>Trueque #${escapeHtml(tradeId)}</title>
+        <style>
+          * { box-sizing: border-box; }
+          body { font-family: Arial, sans-serif; color: #111827; }
+          .doc { border: 1px solid #e5e7eb; padding: 10px; }
+          .head { text-align: center; border-bottom: 1px solid #d1d5db; padding-bottom: 8px; margin-bottom: 10px; }
+          .logo { max-width: 90px; margin-bottom: 6px; }
+          .company { font-size: 11px; line-height: 1.2; }
+          .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; font-size: 11px; }
+          .section-title { font-weight: bold; text-transform: uppercase; color: #374151; }
+          .trade-detail-row { display: flex; justify-content: space-between; font-size: 11px; padding: 4px 0; border-bottom: 1px dashed #e5e7eb; }
+          .status-stamp {
+            margin: 0 auto 10px;
+            width: fit-content;
+            padding: 6px 18px;
+            border: 3px solid ${statusStampColor};
+            color: ${statusStampColor};
+            font-weight: 800;
+            letter-spacing: 2px;
+            transform: rotate(-9deg);
+            opacity: 0.88;
+            font-size: 20px;
+          }
+          .status-note {
+            margin-top: 10px;
+            padding: 10px;
+            border: 1px dashed ${statusStampColor};
+            background: #fef2f2;
+            color: #1f2937;
+            font-size: 11px;
+            line-height: 1.45;
+          }
+          .footer { margin-top: 12px; font-size: 10px; color: #4b5563; text-align: center; }
+          ${pageCss}
+        </style>
+      </head>
+      <body>
+        <div class="doc">
+          <div class="head">
+            <img src="${escapeHtml(logoUrl)}" alt="Logo" class="logo" />
+            <div class="company"><strong>${escapeHtml(COMPANY_INFO.name)}</strong></div>
+            <div class="company">NIT: ${escapeHtml(COMPANY_INFO.nit)}</div>
+            <div class="company">${escapeHtml(COMPANY_INFO.address)}</div>
+            <div class="company">Tel: ${escapeHtml(COMPANY_INFO.phone)} | ${escapeHtml(COMPANY_INFO.email)}</div>
+          </div>
+          ${statusStampLabel ? `<div class="status-stamp">${escapeHtml(statusStampLabel)}</div>` : ''}
+          <div class="meta">
+            <div>
+              <div><strong>Consecutivo:</strong> ${escapeHtml(tradeId)}</div>
+              <div><strong>Fecha:</strong> ${escapeHtml(new Date(trade?.createdAt || Date.now()).toLocaleString())}</div>
+            </div>
+            <div>
+              <div><strong>Cliente:</strong> ${escapeHtml(trade?.clientName || 'Cliente Ocasional')}</div>
+              <div><strong>Documento:</strong> ${escapeHtml(trade?.clientDoc || 'N/A')}</div>
+              <div><strong>Atendio:</strong> ${escapeHtml(tradeUser)}</div>
+            </div>
+          </div>
+
+          <div class="section-title">Detalle de Trueque</div>
+          <div class="trade-detail-row">
+            <span><strong>Entregado:</strong> ${escapeHtml(trade?.productNameGiven || 'Producto')}</span>
+            <span>x${Number(trade?.quantityGiven || 0)}</span>
+          </div>
+          <div class="trade-detail-row">
+            <span><strong>Recibido:</strong> ${escapeHtml(trade?.productNameReceived || 'Concepto')}</span>
+            <span>${affectsInventory ? `x${Number(trade?.quantityReceived || 0)}` : '(No afecta inv.)'}</span>
+          </div>
+
+          ${trade?.notes ? `
+            <div style="margin-top: 8px; font-size: 11px;">
+              <strong>Observaciones:</strong> ${escapeHtml(trade.notes)}
+            </div>
+          ` : ''}
+
+          ${statusDetailsHtml}
+          <div class="footer">Comprobante de Trueque</div>
+        </div>
+        <script>
+          setTimeout(() => { window.focus(); window.print(); }, 180);
+        </script>
+      </body>
+    </html>
+  `);
+  popup.document.close();
+}

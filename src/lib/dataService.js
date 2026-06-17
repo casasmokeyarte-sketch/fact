@@ -463,6 +463,10 @@ function normalizeTradeRow(row) {
     affectsInventory: row.affects_inventory !== false,
     notes: row.notes ?? '',
     createdAt: row.created_at ?? null,
+    status: row.status ?? 'completado',
+    cancelledAt: row.cancelled_at ?? null,
+    cancelledBy: row.cancelled_by ?? null,
+    cancellationReason: row.cancellation_reason ?? null,
   };
 }
 
@@ -2122,6 +2126,10 @@ export const dataService = {
       affects_inventory: trade?.affectsInventory !== false,
       notes: trade?.notes ?? null,
       created_at: trade?.createdAt ?? new Date().toISOString(),
+      status: trade?.status ?? 'completado',
+      cancelled_at: trade?.cancelledAt ?? null,
+      cancelled_by: trade?.cancelledBy ?? null,
+      cancellation_reason: trade?.cancellationReason ?? null,
     };
 
     try {
@@ -2140,5 +2148,14 @@ export const dataService = {
       reportClientSyncIssue('trades', payload, error);
       throw error;
     }
+  },
+
+  async deleteTrade(tradeId) {
+    if (!tradeId) throw new Error('tradeId requerido');
+    const { error } = await supabase
+      .from('trades')
+      .delete()
+      .eq('id', tradeId);
+    if (error) throw error;
   },
 };

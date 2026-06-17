@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { printInvoiceDocument, printShippingGuideDocument } from '../lib/printInvoice.js';
+import { printInvoiceDocument, printShippingGuideDocument, printTradeDocument } from '../lib/printInvoice.js';
 import { ShippingGuideFormModal } from './ShippingGuideFormModal';
 import { PaginationControls } from './PaginationControls';
 import { usePagination } from '../lib/usePagination';
@@ -12,15 +12,19 @@ export function HistorialModule({
   sales,
   products = [],
   logs = [],
+  trades = [],
   currentUser,
   isAdmin,
   onDeleteInvoice,
   onCancelInvoice,
   onReturnInvoice,
+  onCancelTrade,
+  onDeleteTrade,
   onLog,
   preselectedProductId = '',
   setPreselectedProductId
 }) {
+  const [activeSubTab, setActiveSubTab] = useState('facturas'); // 'facturas' | 'trueques' | 'movimientos'
   const [searchTerm, setSearchTerm] = useState('');
   const [advisorFilter, setAdvisorFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
@@ -34,22 +38,32 @@ export function HistorialModule({
   const [openProductMenuId, setOpenProductMenuId] = useState(null);
   const [productMovementView, setProductMovementView] = useState(null);
 
+  // States for Trades History
+  const [tradeSearchTerm, setTradeSearchTerm] = useState('');
+  const [tradeAdvisorFilter, setTradeAdvisorFilter] = useState('');
+  const [tradeStatusFilter, setTradeStatusFilter] = useState('');
+  const [tradeDateFrom, setTradeDateFrom] = useState('');
+  const [tradeDateTo, setTradeDateTo] = useState('');
+  const [previewTrade, setPreviewTrade] = useState(null);
+  const [openTradeMenuId, setOpenTradeMenuId] = useState(null);
+
   useEffect(() => {
     setInvoiceScope(isAdmin ? 'all' : 'mine');
   }, [isAdmin]);
 
   useEffect(() => {
     const handleOutsideClick = (event) => {
-      if (!openInvoiceMenuId && !openProductMenuId) return;
+      if (!openInvoiceMenuId && !openProductMenuId && !openTradeMenuId) return;
       const root = event.target?.closest?.('[data-menu-root="1"]');
       if (!root) {
         setOpenInvoiceMenuId(null);
         setOpenProductMenuId(null);
+        setOpenTradeMenuId(null);
       }
     };
     document.addEventListener('mousedown', handleOutsideClick);
     return () => document.removeEventListener('mousedown', handleOutsideClick);
-  }, [openInvoiceMenuId, openProductMenuId]);
+  }, [openInvoiceMenuId, openProductMenuId, openTradeMenuId]);
 
   const getInvoiceCode = (invoice) => (
     invoice?.invoiceCode ||
@@ -185,6 +199,79 @@ export function HistorialModule({
     'timestamp',
     'desc'
   );
+
+  const isTradeDateInSelectedRange = (value) => {
+    const dateKey = normalizeDateKey(value);
+    if (!dateKey) return false;
+    if (tradeDateFrom && dateKey < tradeDateFrom) return false;
+    if (tradeDateTo && dateKey > tradeDateTo) return false;
+    return true;
+  };
+
+  const tradeAdvisorOptions = useMemo(() => (
+    Array.from(new Set((trades || []).map((trade) => trade?.userName).filter(Boolean))).sort()
+  ), [trades]);
+
+  const filteredTrades = useMemo(() => {
+    return (trades || []).filter((t) => {
+      const normalizedSearch = tradeSearchTerm.toLowerCase();
+      const matchSearch =
+        String(t?.clientName || '').toLowerCase().includes(normalizedSearch) ||
+        String(t?.productNameGiven || '').toLowerCase().includes(normalizedSearch) ||
+        String(t?.productNameReceived || '').toLowerCase().includes(normalizedSearch) ||
+        String(t?.notes || '').toLowerCase().includes(normalizedSearch);
+
+      const matchAdvisor = !tradeAdvisorFilter || t.userName === tradeAdvisorFilter;
+      const matchStatus = !tradeStatusFilter || String(t?.status || 'completado').toLowerCase() === tradeStatusFilter;
+      const matchDate = isTradeDateInSelectedRange(t?.createdAt);
+
+      return matchSearch && matchAdvisor && matchStatus && matchDate;
+    });
+  }, [trades, tradeSearchTerm, tradeAdvisorFilter, tradeStatusFilter, tradeDateFrom, tradeDateTo]);
+
+  const { sortedRows: sortedTrades, sortConfig: tradeSort, setSortKey: setTradeSortKey } = useTableSort(
+    filteredTrades,
+    {
+      date: { getValue: (t) => t?.createdAt || '', type: 'date' },
+      client: { getValue: (t) => t?.clientName || '', type: 'string' },
+      user: { getValue: (t) => t?.userName || '', type: 'string' },
+      productGiven: { getValue: (t) => t?.productNameGiven || '', type: 'string' },
+      productReceived: { getValue: (t) => t?.productNameReceived || '', type: 'string' },
+      status: { getValue: (t) => t?.status || 'completado', type: 'string' },
+    },
+    'date',
+    'desc'
+  );
+
+  const tradePagination = usePagination(sortedTrades, 15);
+
+  const handleCancelTrade = (trade) => {
+    if (!isAdmin) return alert('Solo el administrador puede anular trueques.');
+    const reason = String(prompt('Motivo de anulacion (obligatorio):') || '').trim();
+    if (reason.length < 10) return alert('Debe ingresar un motivo minimo de 10 caracteres.');
+    onCancelTrade?.(trade, reason);
+    setOpenTradeMenuId(null);
+  };
+
+  const handleDeleteTrade = (trade) => {
+    if (!isAdmin) return alert('Solo el administrador puede eliminar trueques.');
+    if (confirm(`¿Seguro de eliminar este trueque? El stock será devuelto si correspondía.`)) {
+      onDeleteTrade?.(trade);
+    }
+    setOpenTradeMenuId(null);
+  };
+
+  const handlePrintTrade = (trade, mode = '58mm') => {
+    printTradeDocument(trade, mode);
+    onLog?.({ module: 'Historial', action: 'Reimpresion Trueque', details: `Trueque #${String(trade.id).slice(0, 8)} reimpreso (${mode})` });
+    setOpenTradeMenuId(null);
+  };
+
+  const handlePreviewTrade = (trade) => {
+    setPreviewTrade(trade);
+    onLog?.({ module: 'Historial', action: 'Vista Previa Trueque', details: `Vista previa trueque #${String(trade.id).slice(0, 8)}` });
+    setOpenTradeMenuId(null);
+  };
 
   const salesPagination = usePagination(sortedSales, 15);
   const movementPagination = usePagination(sortedMovements, 15);
@@ -570,243 +657,402 @@ export function HistorialModule({
 
   return (
     <div className="historial-module">
-      <div className="card" style={{ marginBottom: '1rem' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-          <h3 style={{ margin: 0 }}>Movimientos de Facturacion</h3>
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
-            <button className={`btn ${movementScope === 'mine' ? 'btn-primary' : ''}`} onClick={() => setMovementScope('mine')}>
-              Mis movimientos
-            </button>
-            {isAdmin && (
-              <button className={`btn ${movementScope === 'all' ? 'btn-primary' : ''}`} onClick={() => setMovementScope('all')}>
-                Todos
-              </button>
-            )}
-          </div>
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(180px, 1fr) minmax(180px, 1fr)', gap: '0.75rem', marginTop: '0.75rem' }}>
-          <input type="date" className="input-field" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
-          <input type="date" className="input-field" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
-        </div>
-        <div className="table-container" style={{ marginTop: '0.75rem' }}>
-	          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-	            <thead>
-	              <tr style={{ borderBottom: '1px solid #e2e8f0', textAlign: 'left' }}>
-	                <th style={{ padding: '0.5rem' }}>
-	                  <SortButton label="Fecha" sortKey="timestamp" sortConfig={movementSort} onChange={setMovementSortKey} />
-	                </th>
-	                <th style={{ padding: '0.5rem' }}>
-	                  <SortButton label="Usuario" sortKey="user" sortConfig={movementSort} onChange={setMovementSortKey} />
-	                </th>
-	                <th style={{ padding: '0.5rem' }}>
-	                  <SortButton label="Accion" sortKey="action" sortConfig={movementSort} onChange={setMovementSortKey} />
-	                </th>
-	                <th style={{ padding: '0.5rem' }}>
-	                  <SortButton label="Detalle" sortKey="details" sortConfig={movementSort} onChange={setMovementSortKey} />
-	                </th>
-	              </tr>
-	            </thead>
-            <tbody>
-              {movementPagination.totalItems === 0 ? (
-                <tr><td colSpan="4" style={{ padding: '0.75rem', textAlign: 'center' }}>Sin movimientos para el filtro actual.</td></tr>
-              ) : (
-                movementPagination.pageItems.map((log, index) => (
-                  <tr key={`${log?.timestamp || index}-${index}`} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                    <td style={{ padding: '0.5rem' }}>{log?.timestamp ? new Date(log.timestamp).toLocaleString() : 'N/A'}</td>
-                    <td style={{ padding: '0.5rem' }}>{log?.user_name || log?.user || 'Sistema'}</td>
-                    <td style={{ padding: '0.5rem' }}>{log?.action || 'N/A'}</td>
-                    <td style={{ padding: '0.5rem' }}>{log?.details || ''}</td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-        <PaginationControls
-          page={movementPagination.page}
-          totalPages={movementPagination.totalPages}
-          totalItems={movementPagination.totalItems}
-          pageSize={movementPagination.pageSize}
-          onPageChange={movementPagination.setPage}
-        />
+      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem', borderBottom: '1px solid rgba(255, 0, 214, 0.28)', paddingBottom: '0.75rem', flexWrap: 'wrap' }}>
+        <button
+          className={`btn ${activeSubTab === 'facturas' ? 'btn-primary' : ''}`}
+          onClick={() => setActiveSubTab('facturas')}
+          style={{ textShadow: activeSubTab === 'facturas' ? '0 0 8px rgba(255,255,255,0.5)' : 'none' }}
+        >
+          📄 Facturas
+        </button>
+        <button
+          className={`btn ${activeSubTab === 'trueques' ? 'btn-primary' : ''}`}
+          onClick={() => setActiveSubTab('trueques')}
+          style={{ textShadow: activeSubTab === 'trueques' ? '0 0 8px rgba(255,255,255,0.5)' : 'none' }}
+        >
+          🔄 Trueques
+        </button>
+        <button
+          className={`btn ${activeSubTab === 'movimientos' ? 'btn-primary' : ''}`}
+          onClick={() => setActiveSubTab('movimientos')}
+          style={{ textShadow: activeSubTab === 'movimientos' ? '0 0 8px rgba(255,255,255,0.5)' : 'none' }}
+        >
+          📝 Bitácora de Facturas
+        </button>
       </div>
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-        <h2>Historial de Facturas</h2>
-        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-          <button className={`btn ${invoiceScope === 'mine' ? 'btn-primary' : ''}`} onClick={() => setInvoiceScope('mine')}>
-            Mis facturas
-          </button>
-          {isAdmin && (
-            <button className={`btn ${invoiceScope === 'all' ? 'btn-primary' : ''}`} onClick={() => setInvoiceScope('all')}>
-              Todas
-            </button>
-          )}
-          <input
-            type="text"
-            className="input-field"
-            placeholder="Buscar por factura o cliente..."
-            style={{ maxWidth: '300px' }}
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
+      {activeSubTab === 'movimientos' && (
+        <div className="card" style={{ marginBottom: '1rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <h3 style={{ margin: 0 }}>Movimientos de Facturacion</h3>
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <button className={`btn ${movementScope === 'mine' ? 'btn-primary' : ''}`} onClick={() => setMovementScope('mine')}>
+                Mis movimientos
+              </button>
+              {isAdmin && (
+                <button className={`btn ${movementScope === 'all' ? 'btn-primary' : ''}`} onClick={() => setMovementScope('all')}>
+                  Todos
+                </button>
+              )}
+            </div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(180px, 1fr) minmax(180px, 1fr)', gap: '0.75rem', marginTop: '0.75rem' }}>
+            <input type="date" className="input-field" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+            <input type="date" className="input-field" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+          </div>
+          <div className="table-container" style={{ marginTop: '0.75rem' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid #e2e8f0', textAlign: 'left' }}>
+                  <th style={{ padding: '0.5rem' }}>
+                    <SortButton label="Fecha" sortKey="timestamp" sortConfig={movementSort} onChange={setMovementSortKey} />
+                  </th>
+                  <th style={{ padding: '0.5rem' }}>
+                    <SortButton label="Usuario" sortKey="user" sortConfig={movementSort} onChange={setMovementSortKey} />
+                  </th>
+                  <th style={{ padding: '0.5rem' }}>
+                    <SortButton label="Accion" sortKey="action" sortConfig={movementSort} onChange={setMovementSortKey} />
+                  </th>
+                  <th style={{ padding: '0.5rem' }}>
+                    <SortButton label="Detalle" sortKey="details" sortConfig={movementSort} onChange={setMovementSortKey} />
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {movementPagination.totalItems === 0 ? (
+                  <tr><td colSpan="4" style={{ padding: '0.75rem', textAlign: 'center' }}>Sin movimientos para el filtro actual.</td></tr>
+                ) : (
+                  movementPagination.pageItems.map((log, index) => (
+                    <tr key={`${log?.timestamp || index}-${index}`} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                      <td style={{ padding: '0.5rem' }}>{log?.timestamp ? new Date(log.timestamp).toLocaleString() : 'N/A'}</td>
+                      <td style={{ padding: '0.5rem' }}>{log?.user_name || log?.user || 'Sistema'}</td>
+                      <td style={{ padding: '0.5rem' }}>{log?.action || 'N/A'}</td>
+                      <td style={{ padding: '0.5rem' }}>{log?.details || ''}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+          <PaginationControls
+            page={movementPagination.page}
+            totalPages={movementPagination.totalPages}
+            totalItems={movementPagination.totalItems}
+            pageSize={movementPagination.pageSize}
+            onPageChange={movementPagination.setPage}
           />
         </div>
-      </div>
-      <div className="card" style={{ marginBottom: '1rem' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(160px, 1fr))', gap: '0.75rem' }}>
-          <select className="input-field" value={advisorFilter} onChange={(e) => setAdvisorFilter(e.target.value)}>
-            <option value="">Todos los asesores</option>
-            {advisorOptions.map((advisor) => (
-              <option key={advisor} value={advisor}>{advisor}</option>
-            ))}
-          </select>
-          <select className="input-field" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
-            <option value="">Todos los estados</option>
-            <option value="pagado">Pagado</option>
-            <option value="pendiente">Pendiente</option>
-            <option value="anulada">Anulada</option>
-            <option value="devuelta">Devuelta</option>
-            <option value="interna_cero">Interna $0</option>
-          </select>
-          <select className="input-field" value={paymentFilter} onChange={(e) => setPaymentFilter(e.target.value)}>
-            <option value="">Todos los pagos</option>
-            {paymentOptions.map((payment) => (
-              <option key={payment} value={payment}>{payment}</option>
-            ))}
-          </select>
-          <input type="date" className="input-field" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
-          <input type="date" className="input-field" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
-        </div>
-      </div>
+      )}
 
-      <div className="card">
-        <div className="table-container">
-	          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-	            <thead>
-	              <tr style={{ borderBottom: '2px solid #e2e8f0', textAlign: 'left' }}>
-	                <th style={{ padding: '1rem' }}>
-	                  <SortButton label="ID / Fecha" sortKey="date" sortConfig={salesSort} onChange={setSalesSortKey} />
-	                </th>
-	                <th style={{ padding: '1rem' }}>
-	                  <SortButton label="Cliente" sortKey="client" sortConfig={salesSort} onChange={setSalesSortKey} />
-	                </th>
-	                <th style={{ padding: '1rem' }}>
-	                  <SortButton label="Usuario" sortKey="user" sortConfig={salesSort} onChange={setSalesSortKey} />
-	                </th>
-	                <th style={{ padding: '1rem' }}>
-	                  <SortButton label="Productos" sortKey="products" sortConfig={salesSort} onChange={setSalesSortKey} />
-	                </th>
-	                <th style={{ padding: '1rem' }}>
-	                  <SortButton label="Pago" sortKey="payment" sortConfig={salesSort} onChange={setSalesSortKey} />
-	                </th>
-	                <th style={{ padding: '1rem' }}>
-	                  <SortButton label="Estado" sortKey="status" sortConfig={salesSort} onChange={setSalesSortKey} />
-	                </th>
-	                <th style={{ padding: '1rem', textAlign: 'right' }}>
-	                  <SortButton label="Total" sortKey="total" sortConfig={salesSort} onChange={setSalesSortKey} />
-	                </th>
-	                <th style={{ padding: '1rem', textAlign: 'center' }}>Acciones</th>
-	              </tr>
-	            </thead>
-            <tbody>
-              {salesPagination.totalItems === 0 ? (
-                <tr><td colSpan="8" style={{ textAlign: 'center', padding: '3rem' }}>No se encontraron ventas</td></tr>
-              ) : (
-                salesPagination.pageItems.map((s) => {
-                  const invoiceKey = getInvoiceKey(s);
-                  const invoiceMenuOpen = openInvoiceMenuId === invoiceKey;
-                  return (
-                    <tr key={invoiceKey} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                      <td style={{ padding: '1rem' }}>
-                        <div style={{ fontWeight: 'bold' }}>#{getInvoiceCode(s)}</div>
-                        <div style={{ fontSize: '0.75rem', color: '#64748b' }}>{new Date(s.date).toLocaleString()}</div>
-                      </td>
-                      <td style={{ padding: '1rem' }}>{s.clientName || 'Cliente Ocasional'}</td>
-                      <td style={{ padding: '1rem' }}>{getInvoiceUser(s)}</td>
-                      <td style={{ padding: '1rem' }}>
-                        <div style={{ fontSize: '0.85rem', display: 'grid', gap: '0.2rem' }}>
-                          {(s.items || []).map((it, idx) => {
-                            const productMenuId = `${invoiceKey}-${idx}`;
-                            const isOpen = openProductMenuId === productMenuId;
-                            return (
-                              <div key={`${productMenuId}-${it?.id || it?.name || 'item'}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.35rem' }}>
-                                <span>{it.name} x{it.quantity}</span>
-                                <div data-menu-root="1" style={{ position: 'relative' }}>
-                                  <button
-                                    className="btn"
-                                    style={{ padding: '0 6px', lineHeight: 1, minHeight: '22px' }}
-                                    title="Opciones del producto"
-                                    onClick={() => setOpenProductMenuId((prev) => (prev === productMenuId ? null : productMenuId))}
-                                  >
-                                    {'\u22EE'}
-                                  </button>
-                                  {isOpen && (
-                                    <div className="card" style={{ position: 'absolute', right: 0, top: '105%', minWidth: '190px', zIndex: 20, padding: '0.4rem' }}>
-                                      <button className="btn" style={{ width: '100%' }} onClick={() => openProductMovements(s, it)}>
-                                        Ver movimientos del producto
+      {activeSubTab === 'facturas' && (
+        <>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+            <h2>Historial de Facturas</h2>
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              <button className={`btn ${invoiceScope === 'mine' ? 'btn-primary' : ''}`} onClick={() => setInvoiceScope('mine')}>
+                Mis facturas
+              </button>
+              {isAdmin && (
+                <button className={`btn ${invoiceScope === 'all' ? 'btn-primary' : ''}`} onClick={() => setInvoiceScope('all')}>
+                  Todas
+                </button>
+              )}
+              <input
+                type="text"
+                className="input-field"
+                placeholder="Buscar por factura o cliente..."
+                style={{ maxWidth: '300px' }}
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="card" style={{ marginBottom: '1rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(160px, 1fr))', gap: '0.75rem' }}>
+              <select className="input-field" value={advisorFilter} onChange={(e) => setAdvisorFilter(e.target.value)}>
+                <option value="">Todos los asesores</option>
+                {advisorOptions.map((advisor) => (
+                  <option key={advisor} value={advisor}>{advisor}</option>
+                ))}
+              </select>
+              <select className="input-field" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+                <option value="">Todos los estados</option>
+                <option value="pagado">Pagado</option>
+                <option value="pendiente">Pendiente</option>
+                <option value="anulada">Anulada</option>
+                <option value="devuelta">Devuelta</option>
+                <option value="interna_cero">Interna $0</option>
+              </select>
+              <select className="input-field" value={paymentFilter} onChange={(e) => setPaymentFilter(e.target.value)}>
+                <option value="">Todos los pagos</option>
+                {paymentOptions.map((payment) => (
+                  <option key={payment} value={payment}>{payment}</option>
+                ))}
+              </select>
+              <input type="date" className="input-field" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+              <input type="date" className="input-field" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="table-container">
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ borderBottom: '2px solid #e2e8f0', textAlign: 'left' }}>
+                    <th style={{ padding: '1rem' }}>
+                      <SortButton label="ID / Fecha" sortKey="date" sortConfig={salesSort} onChange={setSalesSortKey} />
+                    </th>
+                    <th style={{ padding: '1rem' }}>
+                      <SortButton label="Cliente" sortKey="client" sortConfig={salesSort} onChange={setSalesSortKey} />
+                    </th>
+                    <th style={{ padding: '1rem' }}>
+                      <SortButton label="Usuario" sortKey="user" sortConfig={salesSort} onChange={setSalesSortKey} />
+                    </th>
+                    <th style={{ padding: '1rem' }}>
+                      <SortButton label="Productos" sortKey="products" sortConfig={salesSort} onChange={setSalesSortKey} />
+                    </th>
+                    <th style={{ padding: '1rem' }}>
+                      <SortButton label="Pago" sortKey="payment" sortConfig={salesSort} onChange={setSalesSortKey} />
+                    </th>
+                    <th style={{ padding: '1rem' }}>
+                      <SortButton label="Estado" sortKey="status" sortConfig={salesSort} onChange={setSalesSortKey} />
+                    </th>
+                    <th style={{ padding: '1rem', textAlign: 'right' }}>
+                      <SortButton label="Total" sortKey="total" sortConfig={salesSort} onChange={setSalesSortKey} />
+                    </th>
+                    <th style={{ padding: '1rem', textAlign: 'center' }}>Acciones</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {salesPagination.totalItems === 0 ? (
+                    <tr><td colSpan="8" style={{ textAlign: 'center', padding: '3rem' }}>No se encontraron ventas</td></tr>
+                  ) : (
+                    salesPagination.pageItems.map((s) => {
+                      const invoiceKey = getInvoiceKey(s);
+                      const invoiceMenuOpen = openInvoiceMenuId === invoiceKey;
+                      return (
+                        <tr key={invoiceKey} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                          <td style={{ padding: '1rem' }}>
+                            <div style={{ fontWeight: 'bold' }}>#{getInvoiceCode(s)}</div>
+                            <div style={{ fontSize: '0.75rem', color: '#64748b' }}>{new Date(s.date).toLocaleString()}</div>
+                          </td>
+                          <td style={{ padding: '1rem' }}>{s.clientName || 'Cliente Ocasional'}</td>
+                          <td style={{ padding: '1rem' }}>{getInvoiceUser(s)}</td>
+                          <td style={{ padding: '1rem' }}>
+                            <div style={{ fontSize: '0.85rem', display: 'grid', gap: '0.2rem' }}>
+                              {(s.items || []).map((it, idx) => {
+                                const productMenuId = `${invoiceKey}-${idx}`;
+                                const isOpen = openProductMenuId === productMenuId;
+                                return (
+                                  <div key={`${productMenuId}-${it?.id || it?.name || 'item'}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.35rem' }}>
+                                    <span>{it.name} x{it.quantity}</span>
+                                    <div data-menu-root="1" style={{ position: 'relative' }}>
+                                      <button
+                                        className="btn"
+                                        style={{ padding: '0 6px', lineHeight: 1, minHeight: '22px' }}
+                                        title="Opciones del producto"
+                                        onClick={() => setOpenProductMenuId((prev) => (prev === productMenuId ? null : productMenuId))}
+                                      >
+                                        {'\u22EE'}
                                       </button>
+                                      {isOpen && (
+                                        <div className="card" style={{ position: 'absolute', right: 0, top: '105%', minWidth: '190px', zIndex: 20, padding: '0.4rem' }}>
+                                          <button className="btn" style={{ width: '100%' }} onClick={() => openProductMovements(s, it)}>
+                                            Ver movimientos del producto
+                                          </button>
+                                        </div>
+                                      )}
                                     </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </td>
+                          <td style={{ padding: '1rem' }}>
+                            <span className="badge">{s.paymentMode}</span>
+                          </td>
+                          <td style={{ padding: '1rem' }}>
+                            {renderInvoiceStatusBadge(s)}
+                          </td>
+                          <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold' }}>
+                            ${Number(s.total || 0).toLocaleString()}
+                          </td>
+                          <td style={{ padding: '1rem', textAlign: 'center' }}>
+                            <div data-menu-root="1" style={{ position: 'relative', display: 'inline-block' }}>
+                              <button
+                                  className="btn"
+                                  style={{ padding: '4px 10px' }}
+                                  title="Opciones de la factura"
+                                  onClick={() => setOpenInvoiceMenuId((prev) => (prev === invoiceKey ? null : invoiceKey))}
+                                >
+                                  {'\u22EE'}
+                                </button>
+                                {invoiceMenuOpen && (
+                                  <div className="card" style={{ position: 'absolute', right: 0, top: '105%', minWidth: '220px', zIndex: 30, padding: '0.4rem' }}>
+                                    <button className="btn" style={{ width: '100%', marginBottom: '0.3rem' }} onClick={() => handlePreview(s)}>Ver factura</button>
+                                    <button className="btn" style={{ width: '100%', marginBottom: '0.3rem' }} onClick={() => handlePrint(s, '58mm')}>Imprimir 58mm</button>
+                                    <button className="btn" style={{ width: '100%', marginBottom: '0.3rem' }} onClick={() => handlePrint(s, 'a4')}>Imprimir A4</button>
+                                    <button className="btn" style={{ width: '100%', marginBottom: '0.3rem' }} onClick={() => handlePrintShippingGuide(s, 'pagado')}>Guia de envio pagada</button>
+                                    <button className="btn" style={{ width: '100%', marginBottom: '0.3rem' }} onClick={() => handlePrintShippingGuide(s, 'pendiente')}>Guia de envio pendiente</button>
+                                    {isAdmin && !['anulada', 'devuelta'].includes(String(s?.status || '').toLowerCase()) && (
+                                      <>
+                                        <button className="btn" style={{ width: '100%', marginBottom: '0.3rem', borderColor: '#b45309', color: '#b45309' }} onClick={() => handleCancel(s)}>Anular</button>
+                                        <button className="btn" style={{ width: '100%', marginBottom: '0.3rem', borderColor: '#0369a1', color: '#0369a1' }} onClick={() => handleReturn(s)}>Devolver</button>
+                                      </>
+                                    )}
+                                    {isAdmin && (
+                                      <button className="btn" style={{ width: '100%', color: '#e11d48', borderColor: '#e11d48' }} onClick={() => handleDelete(s)}>Eliminar</button>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              <PaginationControls
+                page={salesPagination.page}
+                totalPages={salesPagination.totalPages}
+                totalItems={salesPagination.totalItems}
+                pageSize={salesPagination.pageSize}
+                onPageChange={salesPagination.setPage}
+              />
+            </div>
+          </>
+        )}
+
+      {activeSubTab === 'trueques' && (
+        <>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+            <h2>Historial de Trueques</h2>
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              <input
+                type="text"
+                className="input-field"
+                placeholder="Buscar por cliente, nota o producto..."
+                style={{ maxWidth: '300px' }}
+                value={tradeSearchTerm}
+                onChange={(e) => setTradeSearchTerm(e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="card" style={{ marginBottom: '1rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(160px, 1fr))', gap: '0.75rem' }}>
+              <select className="input-field" value={tradeAdvisorFilter} onChange={(e) => setTradeAdvisorFilter(e.target.value)}>
+                <option value="">Todos los asesores</option>
+                {tradeAdvisorOptions.map((advisor) => (
+                  <option key={advisor} value={advisor}>{advisor}</option>
+                ))}
+              </select>
+              <select className="input-field" value={tradeStatusFilter} onChange={(e) => setTradeStatusFilter(e.target.value)}>
+                <option value="">Todos los estados</option>
+                <option value="completado">Completado</option>
+                <option value="anulada">Anulado</option>
+              </select>
+              <input type="date" className="input-field" value={tradeDateFrom} onChange={(e) => setTradeDateFrom(e.target.value)} />
+              <input type="date" className="input-field" value={tradeDateTo} onChange={(e) => setTradeDateTo(e.target.value)} />
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="table-container">
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ borderBottom: '2px solid #e2e8f0', textAlign: 'left' }}>
+                    <th style={{ padding: '1rem' }}>
+                      <SortButton label="ID / Fecha" sortKey="date" sortConfig={tradeSort} onChange={setTradeSortKey} />
+                    </th>
+                    <th style={{ padding: '1rem' }}>
+                      <SortButton label="Cliente" sortKey="client" sortConfig={tradeSort} onChange={setTradeSortKey} />
+                    </th>
+                    <th style={{ padding: '1rem' }}>
+                      <SortButton label="Usuario" sortKey="user" sortConfig={tradeSort} onChange={setTradeSortKey} />
+                    </th>
+                    <th style={{ padding: '1rem' }}>
+                      <SortButton label="Entregado" sortKey="productGiven" sortConfig={tradeSort} onChange={setTradeSortKey} />
+                    </th>
+                    <th style={{ padding: '1rem' }}>
+                      <SortButton label="Recibido" sortKey="productReceived" sortConfig={tradeSort} onChange={setTradeSortKey} />
+                    </th>
+                    <th style={{ padding: '1rem' }}>
+                      <SortButton label="Estado" sortKey="status" sortConfig={tradeSort} onChange={setTradeSortKey} />
+                    </th>
+                    <th style={{ padding: '1rem', textAlign: 'center' }}>Acciones</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {tradePagination.totalItems === 0 ? (
+                    <tr><td colSpan="7" style={{ textAlign: 'center', padding: '3rem' }}>No se encontraron trueques</td></tr>
+                  ) : (
+                    tradePagination.pageItems.map((t) => {
+                      const tradeKey = String(t.id);
+                      const tradeMenuOpen = openTradeMenuId === tradeKey;
+                      const isCancelled = String(t.status || '').toLowerCase() === 'anulada';
+                      return (
+                        <tr key={tradeKey} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                          <td style={{ padding: '1rem' }}>
+                            <div style={{ fontWeight: 'bold' }}>#{tradeKey.slice(0, 8)}</div>
+                            <div style={{ fontSize: '0.75rem', color: '#64748b' }}>{new Date(t.createdAt).toLocaleString()}</div>
+                          </td>
+                          <td style={{ padding: '1rem' }}>{t.clientName || 'Cliente Ocasional'}</td>
+                          <td style={{ padding: '1rem' }}>{t.userName || 'Sistema'}</td>
+                          <td style={{ padding: '1rem' }}>{t.productNameGiven} x{t.quantityGiven}</td>
+                          <td style={{ padding: '1rem' }}>
+                            {t.productNameReceived || 'Concepto externo'} {t.affectsInventory ? `x${t.quantityReceived}` : '(No afecta inv.)'}
+                          </td>
+                          <td style={{ padding: '1rem' }}>
+                            {isCancelled ? (
+                              <span className="badge" style={{ backgroundColor: '#fef2f2', color: '#b91c1c', border: '1px solid #b91c1c', fontWeight: 800 }}>ANULADO</span>
+                            ) : (
+                              <span className="badge">completado</span>
+                            )}
+                          </td>
+                          <td style={{ padding: '1rem', textAlign: 'center' }}>
+                            <div data-menu-root="1" style={{ position: 'relative', display: 'inline-block' }}>
+                              <button
+                                className="btn"
+                                style={{ padding: '4px 10px' }}
+                                title="Opciones de trueque"
+                                onClick={() => setOpenTradeMenuId((prev) => (prev === tradeKey ? null : tradeKey))}
+                              >
+                                {'\u22EE'}
+                              </button>
+                              {tradeMenuOpen && (
+                                <div className="card" style={{ position: 'absolute', right: 0, top: '105%', minWidth: '220px', zIndex: 30, padding: '0.4rem' }}>
+                                  <button className="btn" style={{ width: '100%', marginBottom: '0.3rem' }} onClick={() => handlePreviewTrade(t)}>Ver trueque</button>
+                                  <button className="btn" style={{ width: '100%', marginBottom: '0.3rem' }} onClick={() => handlePrintTrade(t, '58mm')}>Imprimir 58mm</button>
+                                  <button className="btn" style={{ width: '100%', marginBottom: '0.3rem' }} onClick={() => handlePrintTrade(t, 'a4')}>Imprimir A4</button>
+                                  {isAdmin && !isCancelled && (
+                                    <button className="btn" style={{ width: '100%', marginBottom: '0.3rem', borderColor: '#b45309', color: '#b45309' }} onClick={() => handleCancelTrade(t)}>Anular</button>
+                                  )}
+                                  {isAdmin && (
+                                    <button className="btn" style={{ width: '100%', color: '#e11d48', borderColor: '#e11d48' }} onClick={() => handleDeleteTrade(t)}>Eliminar</button>
                                   )}
                                 </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </td>
-                      <td style={{ padding: '1rem' }}>
-                        <span className="badge">{s.paymentMode}</span>
-                      </td>
-                      <td style={{ padding: '1rem' }}>
-                        {renderInvoiceStatusBadge(s)}
-                      </td>
-                      <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold' }}>
-                        ${Number(s.total || 0).toLocaleString()}
-                      </td>
-                      <td style={{ padding: '1rem', textAlign: 'center' }}>
-                        <div data-menu-root="1" style={{ position: 'relative', display: 'inline-block' }}>
-                          <button
-                            className="btn"
-                            style={{ padding: '4px 10px' }}
-                            title="Opciones de la factura"
-                            onClick={() => setOpenInvoiceMenuId((prev) => (prev === invoiceKey ? null : invoiceKey))}
-                          >
-                            {'\u22EE'}
-                          </button>
-                          {invoiceMenuOpen && (
-                            <div className="card" style={{ position: 'absolute', right: 0, top: '105%', minWidth: '220px', zIndex: 30, padding: '0.4rem' }}>
-                              <button className="btn" style={{ width: '100%', marginBottom: '0.3rem' }} onClick={() => handlePreview(s)}>Ver factura</button>
-                              <button className="btn" style={{ width: '100%', marginBottom: '0.3rem' }} onClick={() => handlePrint(s, '58mm')}>Imprimir 58mm</button>
-                              <button className="btn" style={{ width: '100%', marginBottom: '0.3rem' }} onClick={() => handlePrint(s, 'a4')}>Imprimir A4</button>
-                              <button className="btn" style={{ width: '100%', marginBottom: '0.3rem' }} onClick={() => handlePrintShippingGuide(s, 'pagado')}>Guia de envio pagada</button>
-                              <button className="btn" style={{ width: '100%', marginBottom: '0.3rem' }} onClick={() => handlePrintShippingGuide(s, 'pendiente')}>Guia de envio pendiente</button>
-                              {isAdmin && !['anulada', 'devuelta'].includes(String(s?.status || '').toLowerCase()) && (
-                                <>
-                                  <button className="btn" style={{ width: '100%', marginBottom: '0.3rem', borderColor: '#b45309', color: '#b45309' }} onClick={() => handleCancel(s)}>Anular</button>
-                                  <button className="btn" style={{ width: '100%', marginBottom: '0.3rem', borderColor: '#0369a1', color: '#0369a1' }} onClick={() => handleReturn(s)}>Devolver</button>
-                                </>
-                              )}
-                              {isAdmin && (
-                                <button className="btn" style={{ width: '100%', color: '#e11d48', borderColor: '#e11d48' }} onClick={() => handleDelete(s)}>Eliminar</button>
                               )}
                             </div>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-        <PaginationControls
-          page={salesPagination.page}
-          totalPages={salesPagination.totalPages}
-          totalItems={salesPagination.totalItems}
-          pageSize={salesPagination.pageSize}
-          onPageChange={salesPagination.setPage}
-        />
-      </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <PaginationControls
+              page={tradePagination.page}
+              totalPages={tradePagination.totalPages}
+              totalItems={tradePagination.totalItems}
+              pageSize={tradePagination.pageSize}
+              onPageChange={tradePagination.setPage}
+            />
+          </div>
+        </>
+      )}
 
       {productMovementView && (
         <div style={{
@@ -893,6 +1139,76 @@ export function HistorialModule({
             />
           </div>
         </div>
+      )}
+
+      {previewTrade && (
+        (() => {
+          const statusMeta = previewTrade.status === 'anulada' ? {
+            label: 'ANULADO',
+            color: '#b91c1c',
+            bg: '#fef2f2'
+          } : null;
+
+          return (
+            <div style={{
+              position: 'fixed',
+              inset: 0,
+              backgroundColor: 'rgba(15, 23, 42, 0.6)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 1200,
+              padding: '1rem'
+            }}>
+              <div className="card" style={{ width: 'min(720px, 100%)', maxHeight: '90vh', overflow: 'auto' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                  <h3 style={{ margin: 0 }}>Vista previa trueque #{String(previewTrade.id || '').slice(0, 8)}</h3>
+                  <button className="btn" onClick={() => setPreviewTrade(null)}>Cerrar</button>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
+                  <div><strong>Fecha:</strong> {previewTrade?.createdAt ? new Date(previewTrade.createdAt).toLocaleString() : 'N/A'}</div>
+                  <div><strong>Cliente:</strong> {previewTrade?.clientName || 'Cliente Ocasional'}</div>
+                  <div><strong>Documento:</strong> {previewTrade?.clientDoc || 'N/A'}</div>
+                  <div><strong>Usuario:</strong> {previewTrade?.userName || 'Sistema'}</div>
+                </div>
+
+                {statusMeta && (
+                  <div className="card" style={{ marginBottom: '0.75rem', border: `2px solid ${statusMeta.color}`, backgroundColor: statusMeta.bg }}>
+                    <div style={{ fontSize: '1.2rem', fontWeight: 800, color: statusMeta.color, letterSpacing: '1px' }}>{statusMeta.label}</div>
+                    {previewTrade?.cancelledAt && <div><strong>Fecha:</strong> {new Date(previewTrade.cancelledAt).toLocaleString()}</div>}
+                    {previewTrade?.cancelledBy && <div><strong>Responsable:</strong> {previewTrade.cancelledBy}</div>}
+                    {previewTrade?.cancellationReason && <div><strong>Motivo:</strong> {previewTrade.cancellationReason}</div>}
+                  </div>
+                )}
+
+                <div className="card" style={{ margin: '1rem 0', padding: '1rem' }}>
+                  <h4 style={{ margin: '0 0 0.5rem 0' }}>Detalle de Intercambio</h4>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0', borderBottom: '1px solid #e2e8f0' }}>
+                    <span><strong>Entregado:</strong> {previewTrade.productNameGiven}</span>
+                    <span>x{previewTrade.quantityGiven}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0' }}>
+                    <span><strong>Recibido:</strong> {previewTrade.productNameReceived || 'Concepto externo'}</span>
+                    <span>{previewTrade.affectsInventory ? `x${previewTrade.quantityReceived}` : '(No afectó inventario)'}</span>
+                  </div>
+                </div>
+
+                {previewTrade.notes && (
+                  <div style={{ marginBottom: '1rem' }}>
+                    <strong>Observaciones:</strong>
+                    <p style={{ margin: '0.25rem 0 0 0', color: '#64748b' }}>{previewTrade.notes}</p>
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.75rem' }}>
+                  <button className="btn" onClick={() => { printTradeDocument(previewTrade, '58mm'); setPreviewTrade(null); }}>Imprimir 58mm</button>
+                  <button className="btn btn-primary" onClick={() => { printTradeDocument(previewTrade, 'a4'); setPreviewTrade(null); }}>Imprimir A4</button>
+                </div>
+              </div>
+            </div>
+          );
+        })()
       )}
 
       {previewInvoice && (
