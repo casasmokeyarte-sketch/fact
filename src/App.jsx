@@ -98,27 +98,25 @@ const getAllowedMenuItemsForUser = (user) => {
   const currentRole = normalizeRole(user?.role);
   const isCashierRole = currentRole === 'Cajero';
   const isSupervisorRole = currentRole === 'Supervisor';
+  const hasModulePermission = (tab) => {
+    const permission = user?.permissions?.[tab];
+    return permission === true || (typeof permission === 'object' && permission !== null);
+  };
 
   if (currentRole === 'Administrador') return MENU_ITEMS;
 
   if (isCashierRole) {
     return MENU_ITEMS.filter((item) => (
       ['facturacion', 'inventario', 'codigos', 'clientes', 'cartera', 'historial', 'caja', 'trueque', 'gastos', 'recibosCajaExternos', 'notas']
-        .includes(item.tab)
+        .includes(item.tab) && hasModulePermission(item.tab)
     ));
   }
 
   if (isSupervisorRole) {
-    return MENU_ITEMS.filter((item) => {
-      const permission = user?.permissions?.[item.tab];
-      return permission === true || (typeof permission === 'object' && permission !== null);
-    });
+    return MENU_ITEMS.filter((item) => hasModulePermission(item.tab));
   }
 
-  return MENU_ITEMS.filter((item) => {
-    const permission = user?.permissions?.[item.tab];
-    return permission === true || (typeof permission === 'object' && permission !== null);
-  });
+  return MENU_ITEMS.filter((item) => hasModulePermission(item.tab));
 };
 
 const OPEN_SHIFT_STORAGE_KEY = 'fact_open_shift';
@@ -539,8 +537,7 @@ const cleanOtherUsersCache = (currentUserId) => {
       if (
         (key.startsWith('fact_products_cache_') && !key.endsWith(currentUserId)) ||
         (key.startsWith('fact_clients_cache_') && !key.endsWith(currentUserId)) ||
-        (key.startsWith('fact_product_images_') && !key.endsWith(currentUserId)) ||
-        (key.startsWith('fact_invoice_composer_') && !key.endsWith(currentUserId))
+        (key.startsWith('fact_product_images_') && !key.endsWith(currentUserId))
       ) {
         keysToRemove.push(key);
       }
@@ -896,6 +893,7 @@ function App() {
   const userCashBalancesHydratedRef = useRef(false);
   const lastSyncedUserCashBalancesRef = useRef('');
   const usersRef = useRef([]);
+  const invoiceComposerHydratedUserIdRef = useRef('');
 
   useEffect(() => {
     const handleGesture = () => {
@@ -1511,10 +1509,6 @@ function App() {
   }
 
   const applyUserWithProfile = async (user) => {
-    if (user?.id) {
-      cleanOtherUsersCache(user.id);
-    }
-
     const sameUserSession =
       !!user?.id &&
       !!currentUser?.id &&
@@ -1527,6 +1521,10 @@ function App() {
       return;
     }
 
+    if (user?.id) {
+      cleanOtherUsersCache(user.id);
+    }
+    invoiceComposerHydratedUserIdRef.current = '';
     setShiftRestored(false);
     try {
       const { data: profile, error: profileError } = await getProfile(user.id);
@@ -1551,6 +1549,7 @@ function App() {
       restoreFloatingPanelPosition(user.id, 'promo');
       restoreCloudCache(user.id);
       restoreInvoiceComposer(user.id);
+      invoiceComposerHydratedUserIdRef.current = String(user.id);
     } catch (err) {
       console.error('Error loading profile:', err);
       setIsLoggedIn(true);
@@ -1571,6 +1570,7 @@ function App() {
       restoreFloatingPanelPosition(user.id, 'promo');
       restoreCloudCache(user.id);
       restoreInvoiceComposer(user.id);
+      invoiceComposerHydratedUserIdRef.current = String(user.id);
     } finally {
       setShiftRestored(true);
     }
@@ -1986,6 +1986,7 @@ function App() {
       setCurrentUser(null);
       setActiveTab('home');
       setShiftRestored(false);
+      invoiceComposerHydratedUserIdRef.current = '';
       cloudDataHydratedRef.current = false;
       cloudDataHydratedUserIdRef.current = '';
     }
@@ -2002,6 +2003,7 @@ function App() {
     setProfileLoaded(false);
     setShiftRestored(false);
     setShift(null);
+    invoiceComposerHydratedUserIdRef.current = '';
     cloudDataHydratedRef.current = false;
     cloudDataHydratedUserIdRef.current = '';
 
@@ -2009,6 +2011,11 @@ function App() {
       alert(message);
     } catch {}
   }, []);
+
+  useEffect(() => {
+    if (!currentUser?.id || liveProfile?.active !== false) return;
+    forceRelogin('Este usuario fue desactivado por un administrador. Su historial permanece guardado.');
+  }, [currentUser?.id, liveProfile?.active, forceRelogin]);
 
   const syncPendingOpenShift = useCallback(async (userId = currentUser?.id, fallbackShift = shift) => {
     if (!userId || pendingOpenShiftSyncRef.current) return false;
@@ -2513,6 +2520,7 @@ function App() {
 
   useEffect(() => {
     if (!currentUser?.id) return;
+    if (invoiceComposerHydratedUserIdRef.current !== String(currentUser.id)) return;
 
     const safeClientName = String(clientName || '').trim();
     const safePaymentRef = String(paymentRef || '').trim();

@@ -98,8 +98,6 @@ export const normalizePermissionsForRole = (role, permissions) => {
   if (normalizedRole === 'Cajero') {
     return {
       ...base,
-      inventario: true,
-      codigos: true,
       compras: false
     };
   }

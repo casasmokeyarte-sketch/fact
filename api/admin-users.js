@@ -1,5 +1,22 @@
 import { createClient } from '@supabase/supabase-js';
 
+const PROFILE_SELECT = 'user_id,email,display_name,role,company_id,permissions,active,created_at,updated_at';
+const LEGACY_PROFILE_SELECT = 'user_id,email,display_name,role,company_id,permissions,created_at,updated_at';
+const USER_HISTORY_REFERENCES = [
+  { table: 'shift_history', column: 'user_id', label: 'cierres de jornada' },
+  { table: 'invoices', column: 'user_id', label: 'facturas' },
+  { table: 'expenses', column: 'user_id', label: 'gastos' },
+  { table: 'purchases', column: 'user_id', label: 'compras' },
+  { table: 'audit_logs', column: 'user_id', label: 'bitacora' },
+  { table: 'trades', column: 'user_id', label: 'trueques' },
+  { table: 'external_cash_receipts', column: 'user_id', label: 'recibos de caja' },
+  { table: 'commercial_notes', column: 'user_id', label: 'notas comerciales' },
+  { table: 'user_cash_balances', column: 'user_id', label: 'saldos de caja' },
+  { table: 'inventory_transfer_requests', column: 'created_by', label: 'traslados de inventario' },
+  { table: 'inventory_transfer_requests', column: 'target_user_id', label: 'traslados recibidos' },
+  { table: 'inventory_transfer_requests', column: 'resolved_by', label: 'traslados resueltos' },
+];
+
 function json(res, status, payload) {
   res.statusCode = status;
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -182,6 +199,7 @@ function toUiUser(profileRow) {
     role: normalizeRole(profileRow?.role),
     company_id: profileRow?.company_id || null,
     permissions,
+    active: profileRow?.active !== false,
     authorization_key: permissions?.authorizationKey || '',
     created_at: profileRow?.created_at || null,
     updated_at: profileRow?.updated_at || null,
@@ -196,6 +214,45 @@ function isMissingAuthUserError(error) {
     message.includes('no rows') ||
     message.includes('does not exist')
   );
+}
+
+function isMissingSchemaObjectError(error) {
+  const code = String(error?.code || '');
+  const message = String(error?.message || '').toLowerCase();
+  return (
+    ['42P01', '42703', 'PGRST204', 'PGRST205'].includes(code) ||
+    message.includes('does not exist') ||
+    message.includes('could not find the table') ||
+    message.includes('could not find the') && message.includes('column')
+  );
+}
+
+async function selectProfiles(supabase, configureQuery) {
+  const run = (columns) => configureQuery(supabase.from('profiles').select(columns));
+  let result = await run(PROFILE_SELECT);
+  if (result.error && isMissingSchemaObjectError(result.error)) {
+    result = await run(LEGACY_PROFILE_SELECT);
+  }
+  return result;
+}
+
+async function findUserHistory(supabase, userId) {
+  const found = [];
+
+  for (const reference of USER_HISTORY_REFERENCES) {
+    const { count, error } = await supabase
+      .from(reference.table)
+      .select('*', { count: 'exact', head: true })
+      .eq(reference.column, userId);
+
+    if (error) {
+      if (isMissingSchemaObjectError(error)) continue;
+      throw error;
+    }
+    if (Number(count || 0) > 0) found.push(reference.label);
+  }
+
+  return Array.from(new Set(found));
 }
 
 async function listAllAuthUserIds(supabase) {
@@ -272,12 +329,13 @@ export default async function handler(req, res) {
     const companyId = auth.companyId;
 
     if (req.method === 'GET') {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('user_id,email,display_name,role,company_id,permissions,created_at,updated_at')
-        .eq('company_id', companyId)
-        .order('created_at', { ascending: false })
-        .limit(200);
+      const { data, error } = await selectProfiles(
+        supabase,
+        (query) => query
+          .eq('company_id', companyId)
+          .order('created_at', { ascending: false })
+          .limit(200)
+      );
 
       if (error) return json(res, 500, { ok: false, error: error.message || 'No se pudo listar usuarios.' });
 
@@ -385,11 +443,10 @@ export default async function handler(req, res) {
         return json(res, 500, { ok: false, error: `Usuario creado, pero no se pudo actualizar perfil: ${upsertError.message}` });
       }
 
-      const { data: freshProfile, error: freshError } = await supabase
-        .from('profiles')
-        .select('user_id,email,display_name,role,company_id,permissions,created_at,updated_at')
-        .eq('user_id', userId)
-        .maybeSingle();
+      const { data: freshProfile, error: freshError } = await selectProfiles(
+        supabase,
+        (query) => query.eq('user_id', userId).maybeSingle()
+      );
 
       if (freshError) return json(res, 200, { ok: true, user: { id: userId, email, name, username, role, permissions } });
       return json(res, 200, { ok: true, user: toUiUser(freshProfile) });
@@ -404,17 +461,30 @@ export default async function handler(req, res) {
       const nextEmail = String(body?.email || '').trim().toLowerCase();
       const nextAuthorizationKey = String(body?.authorization_key || body?.authorizationKey || '').trim();
       const nextPassword = String(body?.password || '').trim();
+      const requestedActive = typeof body?.active === 'boolean' ? body.active : null;
 
       if (!userId) return json(res, 400, { ok: false, error: 'Falta user_id.' });
+      if (requestedActive === false && String(userId) === String(auth.user?.id || '')) {
+        return json(res, 400, { ok: false, error: 'No puedes desactivar tu propio usuario.' });
+      }
 
       const { data: existingProfile, error: existingProfileError } = await supabase
         .from('profiles')
-        .select('company_id')
+        .select(requestedActive === null ? 'company_id' : 'company_id,active')
         .eq('user_id', userId)
         .maybeSingle();
 
       if (existingProfileError) {
+        if (requestedActive !== null && isMissingSchemaObjectError(existingProfileError)) {
+          return json(res, 409, {
+            ok: false,
+            error: 'Falta aplicar la migracion user_deactivation_and_inventory_access.sql en Supabase.'
+          });
+        }
         return json(res, 500, { ok: false, error: existingProfileError.message || 'No se pudo consultar el perfil actual.' });
+      }
+      if (!existingProfile || String(existingProfile.company_id || '') !== String(companyId || '')) {
+        return json(res, 404, { ok: false, error: 'El usuario no pertenece a esta organizacion.' });
       }
 
       const mergedPermissions = {
@@ -431,9 +501,29 @@ export default async function handler(req, res) {
         updated_at: new Date().toISOString(),
       };
       if (displayName) payload.display_name = displayName;
+      if (requestedActive !== null) payload.active = requestedActive;
+
+      if (requestedActive !== null) {
+        const { error: activeAuthError } = await supabase.auth.admin.updateUserById(userId, {
+          ban_duration: requestedActive ? 'none' : '876000h',
+        });
+        if (activeAuthError) {
+          return json(res, 500, {
+            ok: false,
+            error: activeAuthError.message || 'No se pudo cambiar el acceso del usuario.'
+          });
+        }
+      }
 
       const { error } = await supabase.from('profiles').upsert(payload, { onConflict: 'user_id' });
-      if (error) return json(res, 500, { ok: false, error: error.message || 'No se pudo actualizar usuario.' });
+      if (error) {
+        if (requestedActive !== null) {
+          await supabase.auth.admin.updateUserById(userId, {
+            ban_duration: requestedActive ? '876000h' : 'none',
+          });
+        }
+        return json(res, 500, { ok: false, error: error.message || 'No se pudo actualizar usuario.' });
+      }
 
       if (displayName || nextPassword) {
         const authPayload = {
@@ -465,11 +555,10 @@ export default async function handler(req, res) {
         }
       }
 
-      const { data: freshProfile, error: freshError } = await supabase
-        .from('profiles')
-        .select('user_id,email,display_name,role,company_id,permissions,created_at,updated_at')
-        .eq('user_id', userId)
-        .maybeSingle();
+      const { data: freshProfile, error: freshError } = await selectProfiles(
+        supabase,
+        (query) => query.eq('user_id', userId).maybeSingle()
+      );
 
       if (freshError) return json(res, 200, { ok: true });
       return json(res, 200, { ok: true, user: toUiUser(freshProfile) });
@@ -483,20 +572,49 @@ export default async function handler(req, res) {
         return json(res, 400, { ok: false, error: 'No puedes eliminar tu propio usuario.' });
       }
 
-      const { error: deleteShiftHistoryError } = await supabase
-        .from('shift_history')
-        .delete()
-        .eq('user_id', userId);
-
-      if (deleteShiftHistoryError) {
-        console.error('[api/admin-users] shift_history cleanup failed:', {
-          userId,
-          message: deleteShiftHistoryError.message || null,
-          code: deleteShiftHistoryError.code || null,
-          details: deleteShiftHistoryError.details || null,
-          hint: deleteShiftHistoryError.hint || null,
+      const { data: targetProfile, error: targetProfileError } = await supabase
+        .from('profiles')
+        .select('company_id,active')
+        .eq('user_id', userId)
+        .maybeSingle();
+      if (targetProfileError) {
+        if (isMissingSchemaObjectError(targetProfileError)) {
+          return json(res, 409, {
+            ok: false,
+            error: 'Falta aplicar la migracion user_deactivation_and_inventory_access.sql en Supabase.'
+          });
+        }
+        return json(res, 500, { ok: false, error: 'No se pudo validar el usuario antes de eliminarlo.' });
+      }
+      if (!targetProfile || String(targetProfile.company_id || '') !== String(companyId || '')) {
+        return json(res, 404, { ok: false, error: 'El usuario no pertenece a esta organizacion.' });
+      }
+      if (targetProfile.active !== false) {
+        return json(res, 409, {
+          ok: false,
+          error: 'Primero debe desactivar al usuario antes de solicitar su eliminacion permanente.'
         });
-        return json(res, 500, { ok: false, error: deleteShiftHistoryError.message || 'No se pudo limpiar el historial de cierres del usuario.' });
+      }
+
+      let historyLabels = [];
+      try {
+        historyLabels = await findUserHistory(supabase, userId);
+      } catch (historyError) {
+        console.error('[api/admin-users] history validation failed:', {
+          userId,
+          message: historyError?.message || null,
+          code: historyError?.code || null,
+        });
+        return json(res, 500, {
+          ok: false,
+          error: 'No se pudo verificar de forma segura el historial del usuario.'
+        });
+      }
+      if (historyLabels.length > 0) {
+        return json(res, 409, {
+          ok: false,
+          error: `El usuario conserva ${historyLabels.join(', ')}. Desactivalo para bloquear su acceso sin borrar el historial.`
+        });
       }
 
       const { error: deleteAuthError } = await supabase.auth.admin.deleteUser(userId);

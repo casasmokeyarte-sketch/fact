@@ -18,6 +18,7 @@ export interface Profile {
   role?: string | null
   company_id?: string | null
   permissions?: Record<string, unknown> | null
+  active?: boolean | null
   created_at?: string | null
   updated_at?: string | null
 }
@@ -331,4 +332,3 @@ export function bindAuthProfileInvalidation(
     data.subscription.unsubscribe()
   }
 }
-

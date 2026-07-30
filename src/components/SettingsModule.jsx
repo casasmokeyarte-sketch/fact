@@ -450,7 +450,10 @@ export function SettingsModule({
             return alert('Ese registro no corresponde a un usuario real de Supabase. Refresque la lista oficial antes de eliminar.');
         }
         const label = userRow?.username || userRow?.email || userRow?.name || 'usuario';
-        const ok = confirm(`Eliminar al usuario ${label}?\n\nEsta accion lo borra de Supabase Auth y su perfil.`);
+        if (userRow?.active !== false) {
+            return alert('Primero debe desactivar al usuario. La eliminacion permanente solo esta disponible para usuarios inactivos sin historial.');
+        }
+        const ok = confirm(`Eliminar permanentemente al usuario ${label}?\n\nSolo se completara si no tiene facturas, turnos ni otros movimientos.`);
         if (!ok) return;
 
         setUsersLoading(true);
@@ -478,6 +481,59 @@ export function SettingsModule({
             alert('Usuario eliminado.');
         } catch (err) {
             alert(err?.message || 'Error eliminando usuario.');
+        } finally {
+            setUsersLoading(false);
+        }
+    };
+
+    const handleSetUserActive = async (userRow, nextActive) => {
+        if (!userRow?.id) return;
+        if (!UUID_REGEX.test(String(userRow.id || '').trim())) {
+            return alert('Ese registro no corresponde a un usuario real de Supabase.');
+        }
+        if (String(userRow.id) === String(currentUser?.id || '') && !nextActive) {
+            return alert('No puede desactivar su propio usuario.');
+        }
+
+        const label = userRow?.username || userRow?.email || userRow?.name || 'usuario';
+        const actionLabel = nextActive ? 'reactivar' : 'desactivar';
+        const ok = confirm(
+            nextActive
+                ? `Reactivar al usuario ${label}? Podra volver a iniciar sesion.`
+                : `Desactivar al usuario ${label}?\n\nSe bloqueara su acceso, pero se conservaran sus facturas, turnos y movimientos.`
+        );
+        if (!ok) return;
+
+        setUsersLoading(true);
+        try {
+            if (!adminUsersUrl) throw new Error('La administracion de usuarios no esta disponible en este entorno.');
+            const { data: { session } } = await supabase.auth.getSession();
+            const token = session?.access_token;
+            if (!token) throw new Error('Sesion no valida.');
+
+            const res = await fetch(adminUsersUrl, {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${token}`
+                },
+                body: JSON.stringify({
+                    user_id: userRow.id,
+                    role: userRow.role,
+                    permissions: userRow.permissions || {},
+                    active: nextActive,
+                })
+            });
+
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || !data?.ok) {
+                throw new Error(data?.error || `No se pudo ${actionLabel} el usuario.`);
+            }
+
+            await refreshUsersFromSupabase();
+            alert(nextActive ? 'Usuario reactivado.' : 'Usuario desactivado. Su historial fue conservado.');
+        } catch (err) {
+            alert(err?.message || `Error al ${actionLabel} el usuario.`);
         } finally {
             setUsersLoading(false);
         }
@@ -791,7 +847,7 @@ export function SettingsModule({
                     </div>
 
                     <div className="card">
-                        <h3 style={{ marginTop: 0 }}>Usuarios Activos</h3>
+                        <h3 style={{ marginTop: 0 }}>Usuarios de la organizacion</h3>
                         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                             <thead>
                                 <tr style={{ borderBottom: '1px solid #ccc' }}>
@@ -804,6 +860,7 @@ export function SettingsModule({
                                     <th style={{ textAlign: 'left', padding: '0.5rem' }}>
                                         <SortButton label="Rol" sortKey="role" sortConfig={usersSort} onChange={setUsersSortKey} />
                                     </th>
+                                    <th style={{ textAlign: 'left', padding: '0.5rem' }}>Estado</th>
                                     <th style={{ textAlign: 'right', padding: '0.5rem' }}>Acciones</th>
                                 </tr>
                             </thead>
@@ -822,6 +879,17 @@ export function SettingsModule({
                                                     }}
                                                 >
                                                     {u.role}
+                                                </span>
+                                            </td>
+                                            <td style={{ padding: '0.5rem' }}>
+                                                <span
+                                                    className="badge"
+                                                    style={{
+                                                        backgroundColor: u.active === false ? 'var(--surface-muted)' : 'var(--surface-success)',
+                                                        borderColor: u.active === false ? 'var(--border-soft)' : 'rgba(0, 255, 154, 0.45)',
+                                                    }}
+                                                >
+                                                    {u.active === false ? 'Inactivo' : 'Activo'}
                                                 </span>
                                             </td>
                                             <td style={{ padding: '0.5rem', textAlign: 'right', display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
@@ -843,17 +911,27 @@ export function SettingsModule({
                                                     className="btn"
                                                     style={{ padding: '2px 8px', fontSize: '0.8em' }}
                                                     onClick={() => {
-                                                        if (u.username === 'Admin') return alert("No se puede eliminar al administrador principal");
-                                                        handleDeleteUser(u);
+                                                        if (u.username === 'Admin') return alert("No se puede desactivar al administrador principal");
+                                                        handleSetUserActive(u, u.active === false);
                                                     }}
                                                 >
-                                                    {'\uD83D\uDDD1\uFE0F'}
+                                                    {u.active === false ? 'Reactivar' : 'Desactivar'}
                                                 </button>
+                                                {u.active === false && (
+                                                    <button
+                                                        className="btn"
+                                                        style={{ padding: '2px 8px', fontSize: '0.8em' }}
+                                                        onClick={() => handleDeleteUser(u)}
+                                                        title="Eliminar permanentemente solo si no tiene historial"
+                                                    >
+                                                        {'\uD83D\uDDD1\uFE0F'}
+                                                    </button>
+                                                )}
                                             </td>
                                         </tr>
                                         {editingPermissionsUser?.id === u.id && (
                                             <tr>
-                                                <td colSpan="4" style={{ padding: '1rem', backgroundColor: 'var(--surface-muted)' }}>
+                                                <td colSpan="5" style={{ padding: '1rem', backgroundColor: 'var(--surface-muted)' }}>
                                                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '10px' }}>
                                                         {Object.keys(defaultPermissions.Administrador).map(module => (
                                                             <label key={module} style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '0.85em', textTransform: 'capitalize' }}>

@@ -796,12 +796,20 @@ export function InventoryModule({ currentUser, products, setProducts, onDeletePr
 
             {isCajero && (
                 <div className="card" style={{ marginBottom: '1rem', backgroundColor: 'var(--surface-muted)', border: '1px solid var(--border-soft)' }}>
-                    <strong>Inventario por turno</strong>
+                    <strong>Control de inventario por turno</strong>
                     <p style={{ margin: '0.45rem 0 0', color: 'var(--text-secondary)' }}>
-                        La entrega y devolucion de inventario ya no se solicita desde este modulo.
-                        Ahora se registra al abrir y cerrar la jornada con validacion del supervisor.
+                        Puede consultar todos los productos autorizados para su empresa en este modulo.
+                        La entrega y devolucion del inventario del turno se registra al abrir y cerrar la jornada con validacion del supervisor.
                         {shift?.startTime ? ' Su turno actual ya tiene control de inventario activo.' : ' Inicie jornada para recibir inventario del turno.'}
                     </p>
+                </div>
+            )}
+
+            {view === 'list' && (products || []).length === 0 && (
+                <div className="alert alert-warning" style={{ marginBottom: '1rem' }}>
+                    No se recibieron productos para este usuario. Si la empresa ya tiene inventario,
+                    un administrador debe verificar que el perfil y los productos tengan el mismo company_id
+                    y que las politicas RLS de products esten actualizadas.
                 </div>
             )}
 
