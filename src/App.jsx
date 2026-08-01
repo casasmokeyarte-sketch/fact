@@ -4699,7 +4699,33 @@ function App() {
     if (String(item?.status || '').toLowerCase() === 'agotado') {
       return alert('Este articulo esta marcado como AGOTADO.');
     }
-    setItems([...items, { ...item, total: Number(item.price || 0) * Number(item.quantity || 0) }]);
+    const addedQuantity = Math.max(1, Math.trunc(Number(item?.quantity || 1)));
+    const addedPrice = Number(item?.price || 0);
+    setItems((currentItems) => {
+      const matchingIndex = currentItems.findIndex((current) => (
+        String(current?.id || current?.barcode || current?.name || '') === String(item?.id || item?.barcode || item?.name || '') &&
+        Number(current?.price || 0) === addedPrice &&
+        !!current?.isGift === !!item?.isGift
+      ));
+
+      if (matchingIndex < 0) {
+        return [...currentItems, {
+          ...item,
+          quantity: addedQuantity,
+          total: addedPrice * addedQuantity,
+        }];
+      }
+
+      return currentItems.map((current, index) => {
+        if (index !== matchingIndex) return current;
+        const nextQuantity = Number(current?.quantity || 0) + addedQuantity;
+        return {
+          ...current,
+          quantity: nextQuantity,
+          total: Number(current?.price || 0) * nextQuantity,
+        };
+      });
+    });
 
     addLog({
       module: 'Facturacion',
@@ -4719,6 +4745,15 @@ function App() {
       action: 'Eliminar Item',
       details: `Se elimino ${item.name} del carrito`
     });
+  };
+
+  const handleChangeItemQuantity = (index, nextQuantity) => {
+    const safeQuantity = Math.max(1, Math.trunc(Number(nextQuantity || 1)));
+    setItems((currentItems) => currentItems.map((item, itemIndex) => (
+      itemIndex === index
+        ? { ...item, quantity: safeQuantity, total: Number(item?.price || 0) * safeQuantity }
+        : item
+    )));
   };
 
   const subtotal = items.reduce((sum, item) => sum + item.total, 0);
@@ -6298,22 +6333,9 @@ function App() {
           {activeTab === 'home' && renderHome()}
           {activeTab === 'facturacion' && (
             <main className="facturacion-layout">
-              <div className="left-column">
-                <ClientSelector
-                  clientName={clientName}
-                  setClientName={setClientName}
-                  registeredClients={registeredClients}
-                  setSelectedClient={setSelectedClient}
-                  selectedClient={selectedClient}
-                  selectedReferrerDocument={selectedReferrerDocument}
-                  setSelectedReferrerDocument={setSelectedReferrerDocument}
-                  selectedClientPendingBalance={selectedClientPendingBalance}
-                  selectedClientAvailableCredit={selectedClientAvailableCredit}
-                />
-
-                <div style={{ margin: '2rem 0' }}>
+              <div className="left-column pos-catalog-column">
+                <div className="pos-catalog-shell">
                   <ProductSelector onAddItem={handleAddItem} isAdmin={isAdminAuth} products={products} />
-                  <InvoiceTable items={items} onRemoveItem={handleRemoveItem} />
                 </div>
 
                 {/* Hidden Printable Invoice Template */}
@@ -6367,6 +6389,22 @@ function App() {
               </div>
 
               <div className="right-column facturacion-right-column">
+                <ClientSelector
+                  clientName={clientName}
+                  setClientName={setClientName}
+                  registeredClients={registeredClients}
+                  setSelectedClient={setSelectedClient}
+                  selectedClient={selectedClient}
+                  selectedReferrerDocument={selectedReferrerDocument}
+                  setSelectedReferrerDocument={setSelectedReferrerDocument}
+                  selectedClientPendingBalance={selectedClientPendingBalance}
+                  selectedClientAvailableCredit={selectedClientAvailableCredit}
+                />
+                <InvoiceTable
+                  items={items}
+                  onRemoveItem={handleRemoveItem}
+                  onChangeQuantity={handleChangeItemQuantity}
+                />
                 <PaymentSummary
                   subtotal={subtotal}
                   deliveryFee={deliveryFee}

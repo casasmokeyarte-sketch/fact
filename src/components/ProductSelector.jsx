@@ -1,113 +1,151 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+
+const normalizeCode = (value) => String(value ?? '').trim().replace(/\s+/g, '');
+
+const getCategoryIcon = (category) => {
+  const normalized = String(category || '').toLowerCase();
+  if (normalized.includes('cafe') || normalized.includes('café')) return '☕';
+  if (normalized.includes('pan') || normalized.includes('pastel') || normalized.includes('reposter')) return '🥐';
+  if (normalized.includes('dulce') || normalized.includes('snack') || normalized.includes('confiter')) return '🍬';
+  if (normalized.includes('bebida') || normalized.includes('jugo')) return '🥤';
+  if (normalized.includes('comida') || normalized.includes('alimento')) return '🍽️';
+  return '📦';
+};
 
 export function ProductSelector({ onAddItem, isAdmin, products }) {
-  const [selectedProductId, setSelectedProductId] = useState('');
   const [quantity, setQuantity] = useState(1);
   const [isGift, setIsGift] = useState(false);
   const [barcodeInput, setBarcodeInput] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
+  const [activeCategory, setActiveCategory] = useState('TODOS');
   const scannerInputRef = useRef(null);
+  const searchInputRef = useRef(null);
   const scanBufferRef = useRef('');
   const scanLastKeyAtRef = useRef(0);
 
-  const isProductVisibleForSale = (product) => product?.is_visible !== false;
-  const isProductOutOfStockFlag = (product) => String(product?.status || '').toLowerCase() === 'agotado';
-  const saleableProducts = (products || []).filter((p) => isProductVisibleForSale(p));
-  const normalizedSearchTerm = String(searchTerm || '').trim().toLowerCase();
-  const filteredProducts = saleableProducts.filter((product) => {
-    if (!normalizedSearchTerm) return true;
-    const haystack = [
-      product?.name || '',
-      product?.barcode || '',
-      product?.category || '',
-    ].join(' ').toLowerCase();
-    return haystack.includes(normalizedSearchTerm);
-  });
-  const selectedProduct = saleableProducts.find((p) => String(p.id) === String(selectedProductId)) || null;
+  const saleableProducts = useMemo(
+    () => (products || []).filter((product) => product?.is_visible !== false),
+    [products]
+  );
 
-  const normalizeCode = (value) => String(value ?? '').trim().replace(/\s+/g, '');
-  const findProductByBarcode = (value) => {
+  const categories = useMemo(() => {
+    const unique = Array.from(new Set(
+      saleableProducts
+        .map((product) => String(product?.category || 'General').trim() || 'General')
+        .filter(Boolean)
+    ));
+    return unique.sort((a, b) => a.localeCompare(b, 'es'));
+  }, [saleableProducts]);
+
+  const normalizedSearchTerm = String(searchTerm || '').trim().toLowerCase();
+  const filteredProducts = useMemo(() => saleableProducts.filter((product) => {
+    const productCategory = String(product?.category || 'General').trim() || 'General';
+    if (activeCategory !== 'TODOS' && productCategory !== activeCategory) return false;
+    if (!normalizedSearchTerm) return true;
+
+    return [product?.name, product?.barcode, productCategory]
+      .map((value) => String(value || '').toLowerCase())
+      .join(' ')
+      .includes(normalizedSearchTerm);
+  }), [activeCategory, normalizedSearchTerm, saleableProducts]);
+
+  const isProductOutOfStock = useCallback(
+    (product) => String(product?.status || '').toLowerCase() === 'agotado',
+    []
+  );
+
+  const focusScanner = useCallback(() => scannerInputRef.current?.focus(), []);
+
+  const findProductByBarcode = useCallback((value) => {
     const scanned = normalizeCode(value);
     if (!scanned) return null;
-
     const scannedDigits = scanned.replace(/\D/g, '');
-    return (
-      saleableProducts.find((p) => {
-        const productBarcode = normalizeCode(p.barcode);
-        if (!productBarcode) return false;
-        if (productBarcode === scanned) return true;
-        const productDigits = productBarcode.replace(/\D/g, '');
-        return scannedDigits && productDigits && scannedDigits === productDigits;
-      }) || null
-    );
-  };
 
-  const processScannedCode = (rawValue) => {
+    return saleableProducts.find((product) => {
+      const productBarcode = normalizeCode(product?.barcode);
+      if (!productBarcode) return false;
+      if (productBarcode === scanned) return true;
+      const productDigits = productBarcode.replace(/\D/g, '');
+      return !!(scannedDigits && productDigits && scannedDigits === productDigits);
+    }) || null;
+  }, [saleableProducts]);
+
+  const addProduct = useCallback((product, options = {}) => {
+    if (!product) return;
+    if (isProductOutOfStock(product)) {
+      alert('Este articulo esta marcado como AGOTADO.');
+      return;
+    }
+
+    const gift = options.isGift ?? isGift;
+    if (gift && !isAdmin) {
+      alert('Debe estar autorizado por el administrador para marcar un regalo.');
+      return;
+    }
+
+    const selectedQuantity = Math.max(1, Math.trunc(Number(options.quantity ?? quantity) || 1));
+    const finalPrice = gift ? 0 : Number(product?.price || 0);
+    onAddItem({
+      ...product,
+      price: finalPrice,
+      isGift: gift,
+      quantity: selectedQuantity,
+      total: finalPrice * selectedQuantity,
+    });
+  }, [isAdmin, isGift, isProductOutOfStock, onAddItem, quantity]);
+
+  const processScannedCode = useCallback((rawValue) => {
     const normalized = normalizeCode(rawValue);
     if (!normalized) return;
 
     const product = findProductByBarcode(normalized);
     if (product) {
-      if (isProductOutOfStockFlag(product)) {
-        alert('Este articulo esta marcado como AGOTADO.');
-        setBarcodeInput('');
-        focusScanner();
-        return;
-      }
-      const finalPrice = product.price;
-      onAddItem({
-        ...product,
-        quantity: 1,
-        isGift: false,
-        price: finalPrice,
-        total: finalPrice * 1
-      });
+      addProduct(product, { quantity: 1, isGift: false });
       setBarcodeInput('');
       focusScanner();
       return;
     }
 
     if (normalized.length > 3) {
-      alert("Producto no encontrado por Codigo de barras");
+      alert('Producto no encontrado por codigo de barras.');
       setBarcodeInput('');
       focusScanner();
     }
-  };
+  }, [addProduct, findProductByBarcode, focusScanner]);
 
-  const handleBarcodeScan = (e) => {
-    if (e.key !== 'Enter') return;
-    e.preventDefault();
+  const handleBarcodeScan = (event) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
     processScannedCode(barcodeInput);
   };
 
-  const focusScanner = () => scannerInputRef.current?.focus();
-
   useEffect(() => {
-    const handleKeyDown = (e) => {
-      if (e.key === 'F2') {
-        e.preventDefault();
+    const handleShortcuts = (event) => {
+      if (event.key === 'F2') {
+        event.preventDefault();
         focusScanner();
       }
+      if (event.key === 'F3') {
+        event.preventDefault();
+        searchInputRef.current?.focus();
+      }
     };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+    window.addEventListener('keydown', handleShortcuts);
+    return () => window.removeEventListener('keydown', handleShortcuts);
+  }, [focusScanner]);
 
   useEffect(() => {
     const isTypingTarget = (target) => {
       if (!target || !(target instanceof HTMLElement)) return false;
-      return target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable;
+      return ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || target.isContentEditable;
     };
 
     const handleGlobalScanner = (event) => {
       if (event.ctrlKey || event.altKey || event.metaKey) return;
-      if (event.target === scannerInputRef.current) return;
-      if (isTypingTarget(event.target)) return;
+      if (event.target === scannerInputRef.current || isTypingTarget(event.target)) return;
 
       const now = Date.now();
-      if (now - scanLastKeyAtRef.current > 120) {
-        scanBufferRef.current = '';
-      }
+      if (now - scanLastKeyAtRef.current > 120) scanBufferRef.current = '';
       scanLastKeyAtRef.current = now;
 
       if (event.key === 'Enter' || event.key === 'Tab') {
@@ -128,175 +166,136 @@ export function ProductSelector({ onAddItem, isAdmin, products }) {
 
     window.addEventListener('keydown', handleGlobalScanner, true);
     return () => window.removeEventListener('keydown', handleGlobalScanner, true);
-  }, [saleableProducts]);
-
-  useEffect(() => {
-    focusScanner();
-  }, []);
-
-  const handleAddClick = () => {
-    const product = saleableProducts.find(p => String(p.id) === String(selectedProductId));
-    if (!product) return alert("Seleccione un producto");
-    if (isProductOutOfStockFlag(product)) return alert('Este articulo esta marcado como AGOTADO.');
-
-    if (isGift && !isAdmin) {
-      return alert("Debe estar autorizado por el administrador para marcar un regalo.");
-    }
-
-    const finalPrice = isGift ? 0 : product.price;
-    onAddItem({
-      ...product,
-      price: finalPrice,
-      isGift,
-      quantity: Number(quantity),
-      total: finalPrice * Number(quantity)
-    });
-    setSelectedProductId('');
-    setQuantity(1);
-    setIsGift(false);
-    setSearchTerm('');
-  };
+  }, [processScannedCode]);
 
   return (
-    <div className="card">
-      <h3 style={{ marginTop: 0 }}>Agregar Producto</h3>
-      <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+    <section className="pos-catalog card" aria-label="Catalogo de productos">
+      <div className="pos-catalog__header">
+        <div>
+          <span className="pos-catalog__eyebrow">FACTURACION RAPIDA</span>
+          <h2>Catalogo tactil</h2>
+          <p>Toque un producto para agregarlo a la factura.</p>
+        </div>
+        <div className="pos-catalog__counter">{filteredProducts.length} productos</div>
+      </div>
 
-        <div className="input-group" style={{ width: '220px', marginBottom: 0 }}>
-          <label className="input-label">Escanear Codigo</label>
+      <div className="pos-toolbar">
+        <label className="pos-search">
+          <span aria-hidden="true">🔎</span>
+          <input
+            ref={searchInputRef}
+            type="search"
+            value={searchTerm}
+            onChange={(event) => setSearchTerm(event.target.value)}
+            placeholder="Buscar cafe, pan, dulce o codigo..."
+            autoComplete="off"
+          />
+          {searchTerm && (
+            <button type="button" onClick={() => setSearchTerm('')} aria-label="Limpiar busqueda">×</button>
+          )}
+        </label>
+
+        <label className="pos-scanner">
+          <span>Codigo</span>
           <input
             ref={scannerInputRef}
             type="text"
-            className="input-field"
             value={barcodeInput}
-            onChange={(e) => setBarcodeInput(e.target.value)}
+            onChange={(event) => setBarcodeInput(event.target.value)}
             onKeyDown={handleBarcodeScan}
-            placeholder="Pase el lector y Enter"
+            placeholder="Escanear + Enter"
             autoComplete="off"
           />
-        </div>
-
-        <div className="input-group" style={{ flex: 2, minWidth: '200px', marginBottom: 0 }}>
-          <label className="input-label" style={{ display: 'flex', justifyContent: 'space-between' }}>
-            <span>YZ Buscar Producto o Escanear</span>
-            <button className="btn" onClick={focusScanner} style={{ padding: '2px 8px', fontSize: '0.7rem', backgroundColor: '#e2e8f0' }}>Focus Scanner (F2)</button>
-          </label>
-          <input
-            type="text"
-            className="input-field"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Buscar por nombre, categoria o codigo"
-            style={{ marginBottom: '0.5rem' }}
-          />
-          <select
-            className="input-field"
-            value={selectedProductId}
-            onChange={(e) => setSelectedProductId(e.target.value)}
-          >
-            <option value="">Seleccione o pase el escAner...</option>
-            {filteredProducts.map((p, idx) => (
-              <option key={`${p.id}-${idx}`} value={p.id}>
-                {p.name} - ${p.price} [Codigo: {p.barcode}]
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="input-group" style={{ width: '80px', marginBottom: 0 }}>
-          <label className="input-label">Cant.</label>
-          <input
-            type="number"
-            className="input-field"
-            value={quantity}
-            min="1"
-            onChange={(e) => setQuantity(e.target.value)}
-          />
-        </div>
-
-        <div className="input-group" style={{ marginBottom: 0, display: 'flex', alignItems: 'center', gap: '5px', alignSelf: 'center', marginTop: 'auto' }}>
-          <input
-            type="checkbox"
-            id="gift"
-            checked={isGift}
-            onChange={(e) => setIsGift(e.target.checked)}
-          />
-          <label htmlFor="gift" style={{ cursor: 'pointer', fontSize: '0.9rem' }}>YZ Regalo</label>
-        </div>
-
-        <button className="btn btn-primary" style={{ marginBottom: 0 }} onClick={handleAddClick}>
-          Agregar
-        </button>
+          <button type="button" onClick={focusScanner}>F2</button>
+        </label>
       </div>
 
-      {(selectedProduct || normalizedSearchTerm) && (
-        <div style={{ marginTop: '1rem', display: 'grid', gridTemplateColumns: 'minmax(220px, 280px) 1fr', gap: '1rem' }}>
-          <div className="card card--muted" style={{ padding: '0.9rem', minHeight: '220px' }}>
-            {selectedProduct ? (
-              <>
-                {selectedProduct.image_url ? (
-                  <img
-                    src={selectedProduct.image_url}
-                    alt={selectedProduct.name || 'Producto'}
-                    style={{ width: '100%', height: '180px', objectFit: 'contain', borderRadius: '0.9rem', backgroundColor: 'var(--surface-muted)', marginBottom: '0.75rem' }}
-                  />
-                ) : (
-                  <div style={{ width: '100%', height: '180px', borderRadius: '0.9rem', border: '1px dashed var(--border-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>
-                    Sin imagen
-                  </div>
-                )}
-                <div style={{ fontWeight: 800 }}>{selectedProduct.name}</div>
-                <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>{selectedProduct.category || 'General'}</div>
-                <div style={{ marginTop: '0.4rem', fontWeight: 700 }}>${Number(selectedProduct.price || 0).toLocaleString()}</div>
-              </>
-            ) : (
-              <div style={{ color: 'var(--text-secondary)' }}>Seleccione un producto para ver su imagen.</div>
-            )}
-          </div>
+      <div className="pos-category-strip" aria-label="Categorias de productos">
+        <button
+          type="button"
+          className={activeCategory === 'TODOS' ? 'active' : ''}
+          onClick={() => setActiveCategory('TODOS')}
+        >
+          <span>✨</span> Todos
+        </button>
+        {categories.map((category) => (
+          <button
+            key={category}
+            type="button"
+            className={activeCategory === category ? 'active' : ''}
+            onClick={() => setActiveCategory(category)}
+          >
+            <span>{getCategoryIcon(category)}</span> {category}
+          </button>
+        ))}
+      </div>
 
-          <div className="card card--muted" style={{ padding: '0.9rem' }}>
-            <div style={{ fontWeight: 700, marginBottom: '0.75rem' }}>
-              Resultados visibles: {filteredProducts.length}
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(145px, 1fr))', gap: '0.75rem', maxHeight: '260px', overflowY: 'auto' }}>
-              {filteredProducts.slice(0, 18).map((product) => {
-                const isSelected = String(product.id) === String(selectedProductId);
-                const isOut = isProductOutOfStockFlag(product);
-                return (
-                  <button
-                    key={product.id}
-                    type="button"
-                    className="btn"
-                    onClick={() => setSelectedProductId(product.id)}
-                    style={{
-                      textAlign: 'left',
-                      padding: '0.55rem',
-                      borderColor: isSelected ? '#2563eb' : 'var(--border-soft)',
-                      backgroundColor: isSelected ? 'rgba(37, 99, 235, 0.08)' : 'transparent',
-                      opacity: isOut ? 0.65 : 1
-                    }}
-                  >
-                    {product.image_url ? (
-                      <img
-                        src={product.image_url}
-                        alt={product.name || 'Producto'}
-                        style={{ width: '100%', height: '96px', objectFit: 'cover', borderRadius: '0.7rem', marginBottom: '0.5rem', backgroundColor: 'var(--surface-muted)' }}
-                      />
-                    ) : (
-                      <div style={{ width: '100%', height: '96px', borderRadius: '0.7rem', marginBottom: '0.5rem', border: '1px dashed var(--border-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
-                        Sin imagen
-                      </div>
-                    )}
-                    <div style={{ fontWeight: 700, fontSize: '0.9rem', lineHeight: 1.2 }}>{product.name}</div>
-                    <div style={{ color: 'var(--text-secondary)', fontSize: '0.78rem', marginTop: '0.2rem' }}>{product.category || 'General'}</div>
-                    <div style={{ marginTop: '0.35rem', fontWeight: 700 }}>${Number(product.price || 0).toLocaleString()}</div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+      <div className="pos-sale-options">
+        <div className="pos-quantity-control" aria-label="Cantidad a agregar">
+          <span>Cantidad</span>
+          <button type="button" onClick={() => setQuantity((current) => Math.max(1, Number(current || 1) - 1))}>−</button>
+          <input
+            type="number"
+            min="1"
+            value={quantity}
+            onChange={(event) => setQuantity(Math.max(1, Math.trunc(Number(event.target.value) || 1)))}
+            aria-label="Cantidad"
+          />
+          <button type="button" onClick={() => setQuantity((current) => Number(current || 1) + 1)}>+</button>
+        </div>
+
+        <label className="pos-gift-toggle">
+          <input type="checkbox" checked={isGift} onChange={(event) => setIsGift(event.target.checked)} />
+          <span>Marcar como regalo</span>
+        </label>
+      </div>
+
+      {filteredProducts.length > 0 ? (
+        <div className="pos-product-grid">
+          {filteredProducts.map((product) => {
+            const outOfStock = isProductOutOfStock(product);
+            const category = String(product?.category || 'General').trim() || 'General';
+            return (
+              <button
+                key={product.id}
+                type="button"
+                className={`pos-product-card${outOfStock ? ' is-out' : ''}`}
+                onClick={() => addProduct(product)}
+                disabled={outOfStock}
+                aria-label={`Agregar ${product.name} por $${Number(product.price || 0).toLocaleString('es-CO')}`}
+              >
+                <div className="pos-product-card__media">
+                  <div className="pos-product-card__fallback" aria-hidden="true">
+                    <span>{getCategoryIcon(category)}</span>
+                  </div>
+                  {product.image_url && (
+                    <img
+                      src={product.image_url}
+                      alt={product.name || 'Producto'}
+                      loading="lazy"
+                      onError={(event) => { event.currentTarget.style.display = 'none'; }}
+                    />
+                  )}
+                  <span className={`pos-stock-badge${outOfStock ? ' is-out' : ''}`}>
+                    {outOfStock ? 'Agotado' : `Stock ${Math.max(0, Number(product?.stock || 0))}`}
+                  </span>
+                </div>
+                <div className="pos-product-card__body">
+                  <span className="pos-product-card__category">{category}</span>
+                  <strong>{product.name}</strong>
+                  <span className="pos-product-card__price">${Number(product.price || 0).toLocaleString('es-CO')}</span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="pos-empty-state">
+          <span aria-hidden="true">🔍</span>
+          <strong>No encontramos productos</strong>
+          <p>Cambie la categoria o borre el texto de busqueda.</p>
         </div>
       )}
-    </div>
+    </section>
   );
 }

@@ -2,12 +2,9 @@ import React from 'react';
 import { useTableSort } from '../lib/useTableSort';
 import { SortButton } from './SortButton';
 
-export function InvoiceTable({ items, onRemoveItem }) {
-    if (items.length === 0) {
-        return <div className="card" style={{ textAlign: 'center', padding: '2rem', color: '#64748b' }}>No hay productos en la factura</div>;
-    }
-
-    const indexedItems = items.map((item, index) => ({ ...item, __rowIndex: index }));
+export function InvoiceTable({ items, onRemoveItem, onChangeQuantity }) {
+    const safeItems = Array.isArray(items) ? items : [];
+    const indexedItems = safeItems.map((item, index) => ({ ...item, __rowIndex: index }));
 
     const { sortedRows, sortConfig, setSortKey } = useTableSort(
         indexedItems,
@@ -20,8 +17,26 @@ export function InvoiceTable({ items, onRemoveItem }) {
         ''
     );
 
+    if (safeItems.length === 0) {
+        return (
+            <div className="card pos-order-empty">
+                <span aria-hidden="true">🛒</span>
+                <strong>Factura vacia</strong>
+                <p>Toque un producto del catalogo para comenzar.</p>
+            </div>
+        );
+    }
+
     return (
-        <div className="card" style={{ overflowX: 'auto' }}>
+        <div className="card pos-order-card">
+            <div className="pos-order-card__header">
+                <div>
+                    <span className="pos-catalog__eyebrow">ORDEN ACTUAL</span>
+                    <h3>Productos facturados</h3>
+                </div>
+                <span className="pos-order-count">{safeItems.reduce((sum, item) => sum + Number(item?.quantity || 0), 0)} unidades</span>
+            </div>
+            <div className="pos-order-table-wrap">
             <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
                 <thead>
                     <tr style={{ borderBottom: '1px solid #e2e8f0' }}>
@@ -52,22 +67,38 @@ export function InvoiceTable({ items, onRemoveItem }) {
                             <td style={{ padding: '0.75rem' }}>
                                 {item.name} {item.isGift && <span style={{ backgroundColor: '#fee2e2', color: '#b91c1c', fontSize: '0.7em', padding: '1px 4px', borderRadius: '4px', marginLeft: '5px' }}>REGALO</span>}
                             </td>
-                            <td style={{ padding: '0.75rem' }}>{item.quantity}</td>
+                            <td style={{ padding: '0.75rem' }}>
+                                <div className="pos-line-quantity">
+                                    <button
+                                        type="button"
+                                        onClick={() => onChangeQuantity?.(item.__rowIndex, Math.max(1, Number(item.quantity || 1) - 1))}
+                                        aria-label={`Reducir cantidad de ${item.name}`}
+                                    >−</button>
+                                    <strong>{item.quantity}</strong>
+                                    <button
+                                        type="button"
+                                        onClick={() => onChangeQuantity?.(item.__rowIndex, Number(item.quantity || 0) + 1)}
+                                        aria-label={`Aumentar cantidad de ${item.name}`}
+                                    >+</button>
+                                </div>
+                            </td>
                             <td style={{ padding: '0.75rem' }}>${item.price.toLocaleString()}</td>
                             <td style={{ padding: '0.75rem' }}>${item.total.toLocaleString()}</td>
                             <td style={{ padding: '0.75rem' }}>
                                 <button
                                     className="btn btn-danger"
-                                    style={{ padding: '0.25rem 0.5rem', fontSize: '0.875rem' }}
+                                    style={{ minWidth: '44px', minHeight: '44px', padding: '0.35rem 0.55rem', fontSize: '1rem' }}
                                     onClick={() => onRemoveItem(item.__rowIndex)}
+                                    aria-label={`Eliminar ${item.name}`}
                                 >
-                                    Eliminar
+                                    ×
                                 </button>
                             </td>
                         </tr>
                     ))}
                 </tbody>
             </table>
+            </div>
         </div>
     );
 }

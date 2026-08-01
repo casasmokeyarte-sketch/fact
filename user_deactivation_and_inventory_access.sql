@@ -36,7 +36,9 @@ $$;
 
 grant execute on function public.current_company_id() to authenticated;
 
--- Completar solo los perfiles que aun no tienen empresa.
+-- Este proyecto opera una sola organizacion. Se toma la empresa del
+-- Administrador principal y se alinea a Supervisores/Cajeros que hayan
+-- quedado asociados por error a otro company_id.
 do $$
 declare
   v_company_id uuid;
@@ -56,16 +58,10 @@ begin
 
   update public.profiles
   set company_id = v_company_id
-  where company_id is null;
+  where company_id is distinct from v_company_id;
 end $$;
 
--- Completar company_id de productos antiguos.
-update public.products product
-set company_id = profile.company_id
-from public.profiles profile
-where product.company_id is null
-  and product.user_id = profile.user_id;
-
+-- Todos los productos pertenecen a la misma organizacion de Casa Smoke.
 update public.products
 set company_id = (
   select company_id
@@ -76,7 +72,15 @@ set company_id = (
     created_at asc nulls last
   limit 1
 )
-where company_id is null;
+where company_id is distinct from (
+  select company_id
+  from public.profiles
+  where company_id is not null
+  order by
+    case when lower(coalesce(role, '')) = 'administrador' then 0 else 1 end,
+    created_at asc nulls last
+  limit 1
+);
 
 -- 3) RLS: todos los integrantes activos de la misma empresa pueden consultar.
 alter table public.products enable row level security;
@@ -171,4 +175,6 @@ create index if not exists idx_products_company_id
 select
   (select count(*) from public.profiles where company_id is null) as perfiles_sin_empresa,
   (select count(*) from public.products where company_id is null) as productos_sin_empresa,
+  (select count(distinct company_id) from public.profiles) as empresas_en_perfiles,
+  (select count(distinct company_id) from public.products) as empresas_en_productos,
   (select count(*) from public.profiles where active = false) as usuarios_inactivos;
